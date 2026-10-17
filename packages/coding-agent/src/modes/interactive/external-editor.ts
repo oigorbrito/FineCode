@@ -1,7 +1,8 @@
-import { spawn } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { APP_NAME } from "../../config.ts";
+import { spawnProcess } from "../../utils/child-process.ts";
 import { stripBom } from "../../utils/text.ts";
 
 export interface ExternalEditorOptions {
@@ -11,21 +12,75 @@ export interface ExternalEditorOptions {
 
 export type ExternalEditorResult = { status: "complete"; content: string } | { status: "failed" };
 
+function parseExternalEditorCommand(command: string): string[] | undefined {
+	const args: string[] = [];
+	let current = "";
+	let quote: '"' | "'" | undefined;
+	let hasToken = false;
+
+	for (let i = 0; i < command.length; i++) {
+		const char = command[i]!;
+		const next = command[i + 1];
+
+		if (quote) {
+			if (char === quote) {
+				quote = undefined;
+				hasToken = true;
+			} else if (char === "\\" && next === quote) {
+				current += next;
+				i++;
+				hasToken = true;
+			} else {
+				current += char;
+				hasToken = true;
+			}
+			continue;
+		}
+
+		if (char === '"' || char === "'") {
+			quote = char;
+			hasToken = true;
+		} else if (/\s/.test(char)) {
+			if (hasToken) {
+				args.push(current);
+				current = "";
+				hasToken = false;
+			}
+		} else if (char === "\\" && next && /[\s"']/.test(next)) {
+			current += next;
+			i++;
+			hasToken = true;
+		} else {
+			current += char;
+			hasToken = true;
+		}
+	}
+
+	if (quote) return undefined;
+	if (hasToken) args.push(current);
+	return args;
+}
+
 export async function editInExternalEditor(options: ExternalEditorOptions): Promise<ExternalEditorResult> {
-	const directory = mkdtempSync(join(tmpdir(), "pi-editor-"));
+	const directory = mkdtempSync(join(tmpdir(), "finecode-editor-"));
 	const filePath = join(directory, "prompt.md");
 	try {
 		writeFileSync(filePath, options.content, "utf-8");
-		const [editor, ...editorArgs] = options.command.split(" ");
-		process.stdout.write(`Launching external editor: ${options.command}\nPi will resume when the editor exits.\n`);
+		const commandArgs = parseExternalEditorCommand(options.command);
+		if (!commandArgs?.length) return { status: "failed" };
+		const [editor, ...editorArgs] = commandArgs;
+		if (!editor) return { status: "failed" };
+		const appDisplayName = APP_NAME === "finecode" ? "FineCode" : "Pi";
+		process.stdout.write(
+			`Launching external editor: ${options.command}\n${appDisplayName} will resume when the editor exits.\n`,
+		);
 
 		// Do not use spawnSync here. On Windows, synchronous child_process calls can keep
 		// Node/libuv's console input read active after the parent pauses stdin, racing
 		// vim/nvim for the console input buffer until Ctrl+C cancels the pending read.
 		const exitCode = await new Promise<number | null>((resolve) => {
-			const child = spawn(editor, [...editorArgs, filePath], {
+			const child = spawnProcess(editor, [...editorArgs, filePath], {
 				stdio: "inherit",
-				shell: process.platform === "win32",
 			});
 			child.on("error", () => resolve(null));
 			child.on("close", (code) => resolve(code));
