@@ -71,14 +71,6 @@ def main():
         records.append((f"{kind}:{number}", f"[Pi issue #{number}] {issue['title']}",
                         issue["html_url"], status, issue.get("updated_at")))
 
-    for pr in pages(f"/repos/{SOURCE}/pulls?state=all&sort=updated&direction=desc"):
-        if not recent(pr.get("updated_at")):
-            break
-        number = pr["number"]
-        status = "merged" if pr.get("merged_at") else pr["state"]
-        records.append((f"pr:{number}", f"[Pi PR #{number}] {pr['title']}",
-                        pr["html_url"], status, pr.get("updated_at")))
-
     for release in pages(f"/repos/{SOURCE}/releases", limit=1):
         if not recent(release.get("published_at")):
             continue
