@@ -1,4 +1,4 @@
-name: Import Pi upstream PRs (drafts only)
+name: Sync Pi upstream PRs (manual merge only)
 
 on:
   schedule:
@@ -14,7 +14,7 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  import-review-drafts:
+  sync-review-prs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout FineCode
@@ -22,7 +22,7 @@ jobs:
         with:
           persist-credentials: true
           fetch-depth: 0
-      - name: Stage at most three upstream PRs as drafts (never merge)
+      - name: Import and incrementally update Pi PRs (never merge)
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_REPOSITORY: ${{ github.repository }}
