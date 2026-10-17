@@ -1,4 +1,4 @@
-// Issue triage: sync issues, triage new ones with a pi-durable agent, and serve a small web UI for decisions.
+// Upstream activity: sync issues and PRs locally, triage new issues, and serve the review UI.
 // See README.md.
 import { randomBytes, timingSafeEqual } from "node:crypto";
 import { chmodSync, existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
@@ -6,7 +6,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ModelThinkingLevel } from "@earendil-works/pi-ai";
-import { Corpus, issueStatus, REPO } from "./github.ts";
+import { Corpus, issueStatus, type PullRequestDecisionStatus, REPO } from "./github.ts";
 import { PRIORITIES, type Priority, Triage } from "./triage.ts";
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
@@ -82,6 +82,7 @@ async function view() {
 		});
 	return {
 		repo: REPO,
+		pullRequests: corpus.allPullRequests().sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)),
 		model: `${provider}/${modelId}`,
 		inboxSince: state.inboxSince,
 		categories: triage.categories.map(({ name, owner }) => ({ name, owner })),
@@ -143,6 +144,24 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
 		}
 		const numbers = Array.isArray(body.numbers) ? body.numbers.map(Number) : [Number(body.number)];
 		for (const number of numbers) await triage.decide(number, { priority, category });
+		return send(res, 200, "{}");
+	}
+	if (req.method === "POST" && url.pathname === "/api/pr-decide") {
+		const body = await readJson(req);
+		const statuses: PullRequestDecisionStatus[] = ["pending", "port", "adapt", "decline"];
+		if (typeof body.status !== "string" || !statuses.includes(body.status as PullRequestDecisionStatus)) {
+			return send(res, 400, '{"error":"bad pull request decision"}');
+		}
+		const number = Number(body.number);
+		if (!Number.isSafeInteger(number) || number < 1) return send(res, 400, '{"error":"bad pull request number"}');
+		if (!corpus.allPullRequests().some((pullRequest) => pullRequest.number === number)) {
+			return send(res, 404, '{"error":"pull request not found"}');
+		}
+		corpus.decidePullRequest(
+			number,
+			body.status as PullRequestDecisionStatus,
+			typeof body.note === "string" ? body.note.slice(0, 16_000) : "",
+		);
 		return send(res, 200, "{}");
 	}
 	send(res, 404, '{"error":"not found"}');
