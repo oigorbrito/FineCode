@@ -187,13 +187,25 @@ def main():
             original = api(f"/repos/{SOURCE}/pulls/{match.group(1)}")
             items.append(original)
             known.add(original["number"])
-    # Rotate the worklist so older PRs are not starved by the newest ones.
+    # Prioritize already-imported PRs before attempting additional imports.
+    existing_numbers = set()
+    for mirror in local:
+        match = re.match(r"upstream/pi-pr-(\\d+)$", mirror.get("head", {}).get("ref", ""))
+        if match:
+            existing_numbers.add(int(match.group(1)))
+    pending_updates = [p for p in items if p["number"] in existing_numbers]
+    pending_new = [p for p in items if p["number"] not in existing_numbers]
     max_checked = max(1, int(os.environ.get("MAX_UPSTREAM_PR_CHECKS", "10")))
-    if items:
-        offset = ((int(os.environ.get("GITHUB_RUN_NUMBER", "1")) - 1) * max_checked) % len(items)
-        selected = (items[offset:] + items[:offset])[:max_checked]
-    else:
-        selected = []
+
+    def choose_rotating(values, count):
+        if not values or count <= 0:
+            return []
+        offset = ((int(os.environ.get("GITHUB_RUN_NUMBER", "1")) - 1) * count) % len(values)
+        return (values[offset:] + values[:offset])[:count]
+
+    update_count = min(len(pending_updates), max_checked)
+    selected = choose_rotating(pending_updates, update_count)
+    selected += choose_rotating(pending_new, max_checked - update_count)
     for pr in selected:
         seen += 1
         try:
@@ -219,8 +231,8 @@ def main():
         if created >= MAX_NEW:
             break
     print(f"Reviewed {seen}; created {created} PRs; conflicts {conflicts}; failures {failures}; blocked {blocked}", flush=True)
-    if created == 0 and (failures or conflicts or blocked):
-        raise SystemExit("No PR imported: review API permissions and patch compatibility.")
+    if failures or blocked:
+        raise SystemExit("Upstream synchronization encountered operational failures; review logs.")
 
 
 
