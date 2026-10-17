@@ -38,46 +38,107 @@ def git(*args, ok=True, input_data=None):
 
 
 def existing_pr(branch):
-    q = f"/repos/{TARGET}/pulls?state=all&head={TARGET.split('/')[0]}:{branch}&per_page=10"
-    return bool(api(q))
+    q = f"/repos/{TARGET}/pulls?state=all&head={TARGET.split('/')[0]}:{branch}&per_page=20"
+    entries = api(q)
+    return next((p for p in entries if p.get("head", {}).get("ref") == branch), None)
+
+
+def git_sha(ref="HEAD"):
+    return git("rev-parse", ref).stdout.decode().strip()
+
+
+def metadata(upstream, source_sha, tip_sha):
+    state = "merged" if upstream.get("merged_at") else upstream["state"]
+    return (
+        f"**Upstream:** {upstream['html_url']}\\n\\n"
+        f"**Upstream status:** {state}; draft={upstream.get('draft', False)}\\n\\n"
+        "Imported for manual review; no automatic merge, close, or force push.\\n\\n"
+        f"<!-- finecode-upstream-source:{source_sha} tip:{tip_sha} -->"
+    )
+
+
+def update_metadata(local, upstream, body):
+    title = f"[upstream Pi #{upstream['number']}] {upstream['title']}"
+    changes = {}
+    if local.get("title") != title:
+        changes["title"] = title
+    if local.get("body") != body:
+        changes["body"] = body
+    if changes:
+        api(f"/repos/{TARGET}/pulls/{local['number']}", "PATCH", changes)
 
 
 def import_one(pr):
     number = pr["number"]
     branch = f"upstream/pi-pr-{number}"
-    if existing_pr(branch):
+    local = existing_pr(branch)
+    full = api(f"/repos/{SOURCE}/pulls/{number}")
+    source_sha = full["head"]["sha"]
+    # Do not disturb a locally closed PR.
+    if local and local["state"] != "open":
         return "existing"
-    # GitHub provides an authoritative patch built from the upstream PR diff.
+    git("reset", "--hard", f"origin/{BASE}")
+    git("checkout", "-B", "finecode-upstream-working", f"origin/{BASE}")
+    if local:
+        import re
+        found = re.search(r"finecode-upstream-source:([0-9a-f]{40}) tip:([0-9a-f]{40})", local.get("body") or "")
+        if not found:
+            print(f"REVIEW upstream #{number}: missing sync checkpoint", flush=True)
+            return "review"
+        old_source, expected_tip = found.groups()
+        git("fetch", "origin", branch)
+        actual_tip = git_sha("FETCH_HEAD")
+        if actual_tip != expected_tip:
+            print(f"CONFLICT upstream #{number}: FineCode branch diverged; left untouched", flush=True)
+            return "conflict"
+        if old_source == source_sha:
+            update_metadata(local, full, metadata(full, old_source, actual_tip))
+            return "existing"
+        # Fetch the exact original PR history, then apply only new upstream commits.
+        git("fetch", "--no-tags", "https://github.com/" + SOURCE + ".git",
+            f"refs/pull/{number}/head:refs/remotes/pi-upstream/pr-{number}")
+        if git("merge-base", "--is-ancestor", old_source, source_sha, ok=False).returncode:
+            print(f"CONFLICT upstream #{number}: upstream history rewritten", flush=True)
+            return "conflict"
+        git("checkout", "-B", "finecode-upstream-working", actual_tip)
+        delta = git("diff", "--binary", old_source, source_sha).stdout
+        applied = git("apply", "--3way", "--index", "-", ok=False, input_data=delta)
+        if applied.returncode:
+            print(f"CONFLICT upstream #{number}: incremental patch incompatible", flush=True)
+            return "conflict"
+        changed = git("diff", "--cached", "--quiet", ok=False).returncode != 0
+        if changed:
+            git("-c", "user.name=github-actions[bot]", "-c",
+                "user.email=41898282+github-actions[bot]@users.noreply.github.com",
+                "commit", "-m", f"chore(upstream): update Pi PR #{number}")
+        tip = git_sha()
+        # No forced update; GitHub rejects non-fast-forward pushes.
+        git("push", "origin", f"HEAD:refs/heads/{branch}")
+        update_metadata(local, full, metadata(full, source_sha, tip))
+        print(f"UPDATED upstream #{number}", flush=True)
+        return "updated"
+    git("fetch", "--no-tags", "https://github.com/" + SOURCE + ".git",
+        f"refs/pull/{number}/head:refs/remotes/pi-upstream/pr-{number}")
     patch = api(f"/repos/{SOURCE}/pulls/{number}",
                 accept="application/vnd.github.v3.patch")
-    git("checkout", "-B", branch, f"origin/{BASE}")
     applied = git("apply", "--3way", "--index", "-", ok=False, input_data=patch)
     if applied.returncode:
-        git("reset", "--hard", f"origin/{BASE}")
-        print(f"CONFLICT upstream #{number}: {applied.stderr.decode(errors='replace')[-400:]}", flush=True)
+        print(f"CONFLICT upstream #{number}: initial patch incompatible", flush=True)
         return "conflict"
-    changed = git("diff", "--cached", "--quiet", ok=False).returncode != 0
-    if not changed:
-        print(f"ALREADY PRESENT upstream #{number}", flush=True)
-        return "same"
-    git("-c", "user.name=finecode-upstream-bot", "-c",
+    if git("diff", "--cached", "--quiet", ok=False).returncode == 0:
+        return "existing"
+    git("-c", "user.name=github-actions[bot]", "-c",
         "user.email=41898282+github-actions[bot]@users.noreply.github.com",
         "commit", "-m", f"chore(upstream): stage Pi PR #{number} for review")
+    tip = git_sha()
     git("push", "origin", f"HEAD:refs/heads/{branch}")
-    body = (
-        f"**Upstream:** {pr['html_url']}\n\n"
-        "**Status:** Imported for manual review only.\n\n"
-        "This is a patch transplant onto FineCode's current main, NOT a merge "
-        "with the Pi upstream branch. Review the full diff, licensing, "
-        "compatibility, tests and provenance before any manual merge.\n\n"
-        "No automated merging or automatic closing is authorized."
-    )
     api(f"/repos/{TARGET}/pulls", "POST", {
-        "title": f"[upstream Pi #{number}] {pr['title']}",
-        "head": branch, "base": BASE, "body": body, "draft": bool(pr.get("draft", True))})
-    print(f"CREATED PR upstream #{number} (draft={bool(pr.get('draft', True))})", flush=True)
+        "title": f"[upstream Pi #{number}] {full['title']}",
+        "head": branch, "base": BASE,
+        "body": metadata(full, source_sha, tip),
+        "draft": bool(full.get("draft", False))})
+    print(f"CREATED upstream #{number}", flush=True)
     return "created"
-
 
 def main():
     git("fetch", "origin", BASE)
@@ -101,6 +162,8 @@ def main():
                 result = import_one(pr)
                 if result == "created":
                     created += 1
+                elif result == "updated":
+                    print(f"Synced upstream #{pr['number']}", flush=True)
                 elif result == "conflict":
                     conflicts += 1
             except urllib.error.HTTPError as exc:
