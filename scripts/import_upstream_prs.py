@@ -86,6 +86,8 @@ def main():
         raise RuntimeError("Refusing to import into a dirty checkout")
     created = 0
     failures = 0
+    conflicts = 0
+    blocked = False
     seen = 0
     for page in range(1, 4):
         items = api(f"/repos/{SOURCE}/pulls?state=open&sort=updated&direction=desc&per_page=100&page={page}")
@@ -99,13 +101,26 @@ def main():
                 result = import_one(pr)
                 if result == "created":
                     created += 1
-            except (RuntimeError, urllib.error.HTTPError) as exc:
+                elif result == "conflict":
+                    conflicts += 1
+            except urllib.error.HTTPError as exc:
+                failures += 1
+                detail = exc.read().decode(errors="replace")[:800]
+                print(f"API ERROR upstream #{pr['number']}: HTTP {exc.code}: {detail}", flush=True)
+                git("reset", "--hard", f"origin/{BASE}", ok=False)
+                if exc.code in (403, 429):
+                    blocked = True
+                    break
+            except RuntimeError as exc:
                 failures += 1
                 print(f"FAILED upstream #{pr['number']}: {exc}", flush=True)
                 git("reset", "--hard", f"origin/{BASE}", ok=False)
-        if created >= MAX_NEW:
+        if created >= MAX_NEW or blocked:
             break
-    print(f"Reviewed {seen}; created {created} drafts; failures {failures}", flush=True)
+    print(f"Reviewed {seen}; created {created} drafts; conflicts {conflicts}; failures {failures}; blocked {blocked}", flush=True)
+    if created == 0 and (failures or conflicts or blocked):
+        raise SystemExit("No PR imported: review API permissions and patch compatibility.")
+
 
 
 if __name__ == "__main__":
