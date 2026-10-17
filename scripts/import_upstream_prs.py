@@ -220,7 +220,7 @@ def main():
     local = api(f"/repos/{TARGET}/pulls?state=open&per_page=100")
     import re
     for mirror in local:
-        match = re.match(r"upstream/pi-pr-(\\d+)$", mirror.get("head", {}).get("ref", ""))
+        match = re.match(r"upstream/pi-pr-([0-9]+)$", mirror.get("head", {}).get("ref", ""))
         if match and int(match.group(1)) not in known:
             original = api(f"/repos/{SOURCE}/pulls/{match.group(1)}")
             items.append(original)
@@ -228,7 +228,7 @@ def main():
     # Prioritize already-imported PRs before attempting additional imports.
     existing_numbers = set()
     for mirror in local:
-        match = re.match(r"upstream/pi-pr-(\\d+)$", mirror.get("head", {}).get("ref", ""))
+        match = re.match(r"upstream/pi-pr-([0-9]+)$", mirror.get("head", {}).get("ref", ""))
         if match:
             existing_numbers.add(int(match.group(1)))
     pending_updates = [p for p in items if p["number"] in existing_numbers]
@@ -241,7 +241,7 @@ def main():
         offset = ((int(os.environ.get("GITHUB_RUN_NUMBER", "1")) - 1) * count) % len(values)
         return (values[offset:] + values[:offset])[:count]
 
-    update_count = min(len(pending_updates), max_checked)
+    update_count = min(len(pending_updates), max(1, max_checked // 3))
     selected = choose_rotating(pending_updates, update_count)
     selected += choose_rotating(pending_new, max_checked - update_count)
     for pr in selected:
