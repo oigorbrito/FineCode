@@ -74,6 +74,26 @@ def import_one(pr):
     local = existing_pr(branch)
     full = api(f"/repos/{SOURCE}/pulls/{number}")
     source_sha = full["head"]["sha"]
+    # Resume a branch pushed by a previous run that failed before opening a PR.
+    # Do not rewrite it or claim its upstream SHA is verified.
+    if not local:
+        remote = git("ls-remote", "--heads", "origin", f"refs/heads/{branch}").stdout.decode().strip()
+        if remote:
+            tip = remote.split()[0]
+            if not __import__("re").fullmatch(r"[0-9a-f]{40}", tip):
+                raise RuntimeError("Unexpected remote branch SHA")
+            api(f"/repos/{TARGET}/pulls", "POST", {
+                "title": f"[upstream Pi #{number}] {full['title']}",
+                "head": branch, "base": BASE,
+                "body": (f"**Upstream:** {full['html_url']}\\n\\n"
+                         "**Recovery:** Existing branch imported without rewriting it. "
+                         "Source commit mapping and compatibility are UNVERIFIED. "
+                         "Manual review required before enabling incremental updates.\\n\\n"
+                         f"**Branch checkpoint:** `{tip}`\\n\\n"
+                         "No automatic merge, closure or force push."),
+                "draft": True})
+            print(f"RECOVERED upstream #{number}: existing branch {tip}", flush=True)
+            return "created"
     # Do not disturb a locally closed PR.
     if local and local["state"] != "open":
         return "existing"
