@@ -68,6 +68,43 @@ def update_metadata(local, upstream, body):
         api(f"/repos/{TARGET}/pulls/{local['number']}", "PATCH", changes)
 
 
+def stable_patch_id(diff):
+    if not diff:
+        return None
+    result = git("patch-id", "--stable", input_data=diff)
+    tokens = result.stdout.decode().split()
+    return tokens[0] if tokens else None
+
+
+def verify_recovered_checkpoint(number, branch, local, upstream):
+    """Adopt legacy PRs only when exact normalized patch identity matches.
+
+    Comparing patch-id (not commit SHA) accounts for transplanting the change
+    onto a different FineCode base. Any mismatch remains manual-review only.
+    """
+    git("fetch", "origin", branch)
+    local_tip = git_sha("FETCH_HEAD")
+    legacy = __import__("re").search(r"Branch checkpoint:\s*`([0-9a-f]{40})`", local.get("body") or "")
+    if legacy and legacy.group(1) != local_tip:
+        print(f"REVIEW upstream #{number}: branch changed since recovery", flush=True)
+        return False
+    git("fetch", "--no-tags", "https://github.com/" + SOURCE + ".git",
+        f"refs/pull/{number}/head:refs/remotes/pi-upstream/pr-{number}")
+    upstream_base = upstream["base"]["sha"]
+    git("fetch", "--no-tags", "https://github.com/" + SOURCE + ".git", upstream_base)
+    common = git("merge-base", upstream_base, upstream["head"]["sha"]).stdout.decode().strip()
+    source_diff = git("diff", "--binary", common, upstream["head"]["sha"]).stdout
+    local_parent = git("rev-parse", f"{local_tip}^").stdout.decode().strip()
+    local_diff = git("diff", "--binary", local_parent, local_tip).stdout
+    source_id, local_id = stable_patch_id(source_diff), stable_patch_id(local_diff)
+    if not source_id or source_id != local_id:
+        print(f"REVIEW upstream #{number}: patch identity unverified ({str(source_id)[:12]} vs {str(local_id)[:12]})", flush=True)
+        return False
+    update_metadata(local, upstream, metadata(upstream, upstream["head"]["sha"], local_tip))
+    print(f"VERIFIED upstream #{number}: patch-id {source_id}", flush=True)
+    return True
+
+
 def import_one(pr):
     number = pr["number"]
     branch = f"upstream/pi-pr-{number}"
@@ -103,7 +140,8 @@ def import_one(pr):
         import re
         found = re.search(r"finecode-upstream-source:([0-9a-f]{40}) tip:([0-9a-f]{40})", local.get("body") or "")
         if not found:
-            print(f"REVIEW upstream #{number}: missing sync checkpoint", flush=True)
+            if verify_recovered_checkpoint(number, branch, local, full):
+                return "verified"
             return "review"
         old_source, expected_tip = found.groups()
         git("fetch", "origin", branch)
