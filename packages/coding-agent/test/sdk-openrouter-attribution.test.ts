@@ -139,11 +139,11 @@ describe("createAgentSession provider attribution headers", () => {
 		}
 	}
 
-	it("adds default attribution headers for OpenRouter models", async () => {
+	it("identifies FineCode in OpenRouter attribution without claiming the Pi website", async () => {
 		const headers = await captureHeaders(createModel("openrouter", "https://openrouter.ai/api/v1"));
 
-		expect(headers?.["HTTP-Referer"]).toBe("https://pi.dev");
-		expect(headers?.["X-OpenRouter-Title"]).toBe("pi");
+		expect(headers?.["HTTP-Referer"]).toBeUndefined();
+		expect(headers?.["X-OpenRouter-Title"]).toBe("FineCode");
 		expect(headers?.["X-OpenRouter-Categories"]).toBe("cli-agent");
 	});
 
@@ -157,19 +157,19 @@ describe("createAgentSession provider attribution headers", () => {
 		expect(headers?.["X-OpenRouter-Categories"]).toBeUndefined();
 	});
 
-	it("adds attribution headers for custom providers routed through OpenRouter", async () => {
+	it("identifies FineCode for custom providers routed through OpenRouter", async () => {
 		const headers = await captureHeaders(createModel("custom-openrouter", "https://openrouter.ai/api/v1"));
 
-		expect(headers?.["HTTP-Referer"]).toBe("https://pi.dev");
-		expect(headers?.["X-OpenRouter-Title"]).toBe("pi");
+		expect(headers?.["HTTP-Referer"]).toBeUndefined();
+		expect(headers?.["X-OpenRouter-Title"]).toBe("FineCode");
 		expect(headers?.["X-OpenRouter-Categories"]).toBe("cli-agent");
 	});
 
-	it("preserves legacy OpenRouter base URL substring attribution matching", async () => {
+	it("preserves legacy OpenRouter base URL matching with FineCode attribution", async () => {
 		const headers = await captureHeaders(createModel("custom-openrouter", "not-a-url-openrouter.ai"));
 
-		expect(headers?.["HTTP-Referer"]).toBe("https://pi.dev");
-		expect(headers?.["X-OpenRouter-Title"]).toBe("pi");
+		expect(headers?.["HTTP-Referer"]).toBeUndefined();
+		expect(headers?.["X-OpenRouter-Title"]).toBe("FineCode");
 		expect(headers?.["X-OpenRouter-Categories"]).toBe("cli-agent");
 	});
 
@@ -189,16 +189,16 @@ describe("createAgentSession provider attribution headers", () => {
 		expect(headers?.["X-OpenRouter-Categories"]).toBe("provider-category");
 	});
 
-	it("adds default attribution headers for direct NVIDIA NIM endpoints", async () => {
+	it("identifies FineCode on direct NVIDIA NIM endpoints", async () => {
 		const headers = await captureHeaders(createModel("custom-nim", "https://integrate.api.nvidia.com/v1"));
 
-		expect(headers?.["X-BILLING-INVOKE-ORIGIN"]).toBe("Pi");
+		expect(headers?.["X-BILLING-INVOKE-ORIGIN"]).toBe("FineCode");
 	});
 
-	it("adds default attribution headers for the NVIDIA provider", async () => {
+	it("identifies FineCode for the NVIDIA provider", async () => {
 		const headers = await captureHeaders(createModel("nvidia", "https://example.test/v1"));
 
-		expect(headers?.["X-BILLING-INVOKE-ORIGIN"]).toBe("Pi");
+		expect(headers?.["X-BILLING-INVOKE-ORIGIN"]).toBe("FineCode");
 	});
 
 	it("does not add NVIDIA NIM attribution headers when telemetry is disabled", async () => {
@@ -227,7 +227,8 @@ describe("createAgentSession provider attribution headers", () => {
 			createModel("openrouter", "https://openrouter.ai/api/v1", "nvidia/nemotron-3-super-120b-a12b"),
 		);
 
-		expect(headers?.["HTTP-Referer"]).toBe("https://pi.dev");
+		expect(headers?.["HTTP-Referer"]).toBeUndefined();
+		expect(headers?.["X-OpenRouter-Title"]).toBe("FineCode");
 		expect(headers?.["X-BILLING-INVOKE-ORIGIN"]).toBeUndefined();
 	});
 
@@ -239,13 +240,21 @@ describe("createAgentSession provider attribution headers", () => {
 		expect(headers?.["X-BILLING-INVOKE-ORIGIN"]).toBeUndefined();
 	});
 
+	it("uses the FineCode user agent for Cloudflare provider attribution", async () => {
+		const headers = await captureHeaders(
+			createModel("cloudflare-workers-ai", "https://api.cloudflare.com/client/v4/accounts/test/ai/run/model"),
+		);
+
+		expect(headers?.["User-Agent"]).toBe("finecode-coding-agent");
+	});
+
 	it("adds OpenCode session headers", async () => {
 		const headers = await captureHeaders(createModel("opencode", "https://opencode.ai/zen/v1"), {
 			sessionId: "opencode-session",
 		});
 
 		expect(headers?.["x-opencode-session"]).toBe("opencode-session");
-		expect(headers?.["x-opencode-client"]).toBe("pi");
+		expect(headers?.["x-opencode-client"]).toBe("finecode");
 	});
 
 	it("lets configured OpenCode headers override the defaults", async () => {

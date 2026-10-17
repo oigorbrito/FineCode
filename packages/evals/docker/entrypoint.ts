@@ -28,13 +28,12 @@ function assertWorkspace(): void {
 	assertDirectoryEntries("/repo", ["node_modules", "package.json", "packages", "vitest.base.ts"]);
 	assertDirectoryEntries("/repo/packages", ["evals"]);
 	assertDirectoryEntries("/repo/packages/evals", ["docker", "evals", "package.json", "src", "vitest.evals.config.ts"]);
-	const codingAgentDir = "/repo/node_modules/@earendil-works/pi-coding-agent";
+	const finecodeDir = "/repo/node_modules/finecode";
 	for (const name of ["package.json", "dist/index.js"]) {
-		if (!existsSync(join(codingAgentDir, name))) throw new Error(`Installed coding-agent is missing ${name}.`);
+		if (!existsSync(join(finecodeDir, name))) throw new Error(`Installed FineCode package is missing ${name}.`);
 	}
 	const internalScope = "/repo/node_modules/@earendil-works";
 	for (const packageName of readdirSync(internalScope)) {
-		if (packageName === "pi-coding-agent") continue;
 		const packageDirectory = join(internalScope, packageName);
 		for (const entry of readdirSync(packageDirectory, { withFileTypes: true })) {
 			if (
@@ -47,16 +46,16 @@ function assertWorkspace(): void {
 	}
 	if (variant === "without_docs") {
 		for (const name of ["README.md", "CHANGELOG.md", "docs", "examples"]) {
-			if (existsSync(join(codingAgentDir, name))) throw new Error(`without_docs contains coding-agent ${name}.`);
+			if (existsSync(join(finecodeDir, name))) throw new Error(`without_docs contains FineCode ${name}.`);
 		}
 		return;
 	}
 	if (variant !== "with_docs") throw new Error("Eval image has no valid PI_EVAL_VARIANT.");
 	for (const path of [
-		join(codingAgentDir, "README.md"),
-		join(codingAgentDir, "CHANGELOG.md"),
-		join(codingAgentDir, "docs/models.md"),
-		join(codingAgentDir, "examples/README.md"),
+		join(finecodeDir, "README.md"),
+		join(finecodeDir, "CHANGELOG.md"),
+		join(finecodeDir, "docs/models.md"),
+		join(finecodeDir, "examples/README.md"),
 	]) {
 		if (!existsSync(path) || readFileSync(path).length === 0) throw new Error(`Missing documentation: ${path}`);
 	}
@@ -99,9 +98,9 @@ for (const path of [
 	assertRootOnly(path);
 	assertSandboxCannotRead(path);
 }
-const codingAgentEntry = fileURLToPath(import.meta.resolve("@earendil-works/pi-coding-agent"));
-if (codingAgentEntry !== "/repo/node_modules/@earendil-works/pi-coding-agent/dist/index.js") {
-	throw new Error(`Eval does not resolve pi-coding-agent from dist: ${codingAgentEntry}`);
+const finecodeEntry = fileURLToPath(import.meta.resolve("finecode"));
+if (finecodeEntry !== "/repo/node_modules/finecode/dist/index.js") {
+	throw new Error(`Eval does not resolve FineCode from dist: ${finecodeEntry}`);
 }
 
 const agentDir = "/tmp/pi-eval-host-agent";
@@ -112,7 +111,7 @@ chownTree(agentDir, sandboxUid, sandboxGid);
 chownTree("/artifacts", sandboxUid, sandboxGid);
 process.env.HOME = "/tmp/pi-eval-bootstrap";
 process.env.USERPROFILE = process.env.HOME;
-process.env.PI_CODING_AGENT_DIR = agentDir;
+process.env.FINECODE_CODING_AGENT_DIR = agentDir;
 process.env.PI_EVAL_CONTAINER = "1";
 process.umask(0o022);
 

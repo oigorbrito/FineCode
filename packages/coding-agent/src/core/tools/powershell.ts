@@ -1,3 +1,4 @@
+import { APP_NAME } from "../../config.ts";
 import { getPowerShellConfig } from "../../utils/shell.ts";
 import {
 	type BashOperations,
@@ -43,7 +44,7 @@ const powershellToolConfig: ShellToolConfig = {
 	prompt: "PS>",
 	promptSnippet: powershellToolSystemPromptContribution.snippet,
 	promptGuidelines: powershellToolSystemPromptContribution.guidelines,
-	tempFilePrefix: "pi-powershell",
+	tempFilePrefix: `${APP_NAME}-powershell`,
 };
 
 export function createPowerShellToolDefinition(

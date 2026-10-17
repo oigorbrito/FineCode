@@ -63,6 +63,7 @@ import {
 	getAuthPath,
 	getDebugLogPath,
 	getDocsPath,
+	PACKAGE_NAME,
 	VERSION,
 } from "../../config.ts";
 import { type AgentSession, type AgentSessionEvent, parseSkillBlock } from "../../core/agent-session.ts";
@@ -116,7 +117,7 @@ import {
 import type { FullscreenExitOutput, TuiMode } from "../../core/settings-manager.ts";
 import { BUILTIN_SLASH_COMMANDS } from "../../core/slash-commands.ts";
 import type { SourceInfo } from "../../core/source-info.ts";
-import { isInstallTelemetryEnabled } from "../../core/telemetry.ts";
+import { isInstallTelemetryEnabled, shouldReportPiInstallTelemetry } from "../../core/telemetry.ts";
 import { withBuiltInRenderers } from "../../core/tools/renderers/index.ts";
 import type { TruncationResult } from "../../core/tools/truncate.ts";
 import { hasTrustRequiringProjectResources, ProjectTrustStore } from "../../core/trust-manager.ts";
@@ -144,7 +145,6 @@ import { CustomEditor } from "./components/custom-editor.ts";
 import { CustomEntryComponent } from "./components/custom-entry.ts";
 import { CustomMessageComponent } from "./components/custom-message.ts";
 import { DynamicBorder } from "./components/dynamic-border.ts";
-import { EarendilAnnouncementComponent } from "./components/earendil-announcement.ts";
 import { playArmin3d, playPiLogo3d } from "./components/easter-egg-3d.lazy.ts";
 import { ExtensionEditorComponent } from "./components/extension-editor.ts";
 import { ExtensionInputComponent } from "./components/extension-input.ts";
@@ -368,7 +368,8 @@ type LoginProviderCompletionOption = {
 	subscription?: boolean;
 };
 
-const RADIUS_LOGIN_INTRO = "Radius is a service crafted for Pi by the builders of Pi, Earendil Works";
+const RADIUS_LOGIN_INTRO =
+	"Radius is an upstream service from Earendil Works, originally built for Pi; FineCode uses it as a gateway for model access and bug reports.";
 
 const AUTH_TYPE_ORDER = { oauth: 0, api_key: 1 } satisfies Record<AuthSelectorProvider["authType"], number>;
 
@@ -1010,7 +1011,7 @@ export class InteractiveMode {
 			const showDetails = this.shouldShowStartupDetails();
 			// Built on demand so the header follows theme changes. The logo's first line carries the version,
 			// its second line the first line of key hints. Terminals that cannot render the logo get a
-			// "Pi vX" line instead, with the key hints below it.
+			// "FineCode vX" line instead, with the key hints below it.
 			const showLogo = supportsPiLogo();
 			const withLogo = (hints: string) => {
 				if (!showLogo) return `${piWordmark()} ${theme.fg("dim", `v${this.version}`)}\n${hints}`;
@@ -1060,7 +1061,10 @@ export class InteractiveMode {
 					`Press ${keyText("app.tools.expand")} to show full startup help${showDetails ? " and loaded resources" : ""}.`,
 				);
 			const onboarding = () =>
-				theme.fg("dim", `Pi can explain its own features and look up its docs. Ask it how to use or extend Pi.`);
+				theme.fg(
+					"dim",
+					`FineCode can explain its own features and look up its docs. Ask it how to use or extend FineCode.`,
+				);
 			const header = new BuiltInHeader(
 				() => `${withLogo(compactInstructions())}\n${compactOnboarding()}\n\n${onboarding()}`,
 				() => `${withLogo(expandedInstructions())}\n\n${onboarding()}`,
@@ -1319,7 +1323,7 @@ export class InteractiveMode {
 		}
 
 		if (extendedKeysFormat === "xterm") {
-			return "tmux extended-keys-format is xterm. Pi works best with csi-u. Add `set -g extended-keys-format csi-u` to ~/.tmux.conf and restart tmux.";
+			return "tmux extended-keys-format is xterm. FineCode works best with csi-u. Add `set -g extended-keys-format csi-u` to ~/.tmux.conf and restart tmux.";
 		}
 
 		return undefined;
@@ -1357,7 +1361,7 @@ export class InteractiveMode {
 	}
 
 	private reportInstallTelemetry(version: string): void {
-		if (process.env.PI_OFFLINE) {
+		if (!shouldReportPiInstallTelemetry(PACKAGE_NAME) || process.env.PI_OFFLINE) {
 			return;
 		}
 
@@ -2161,7 +2165,9 @@ export class InteractiveMode {
 	}
 
 	private crashReportInstructions(): string {
-		const resume = this.session.sessionFile ? `run \`${APP_NAME} -r\` to resume the session, then` : "start pi and";
+		const resume = this.session.sessionFile
+			? `run \`${APP_NAME} -r\` to resume the session, then`
+			: `start ${APP_NAME} and`;
 		return `To report this crash: ${resume} run /bug. The crash details are attached automatically.`;
 	}
 
@@ -3174,7 +3180,7 @@ export class InteractiveMode {
 			if (image) {
 				const tmpDir = os.tmpdir();
 				const ext = extensionForImageMimeType(image.mimeType) ?? "png";
-				const fileName = `pi-clipboard-${crypto.randomUUID()}.${ext}`;
+				const fileName = `finecode-clipboard-${crypto.randomUUID()}.${ext}`;
 				const filePath = path.join(tmpDir, fileName);
 				fs.writeFileSync(filePath, Buffer.from(image.bytes));
 
@@ -3326,11 +3332,6 @@ export class InteractiveMode {
 			}
 			if (text === "/arminsayshi") {
 				this.handleArminSaysHi();
-				this.editor.setText("");
-				return;
-			}
-			if (text === "/dementedelves") {
-				this.handleDementedDelves();
 				this.editor.setText("");
 				return;
 			}
@@ -4249,7 +4250,7 @@ export class InteractiveMode {
 				() =>
 					theme.fg(
 						"warning",
-						`This project is not trusted. Project ${CONFIG_DIR_NAME} resources and packages are ignored. Use /trust to save a trust decision, then restart pi.`,
+						`This project is not trusted. Project ${CONFIG_DIR_NAME} resources and packages are ignored. Use /trust to save a trust decision, then restart ${APP_NAME}.`,
 					),
 				1,
 				0,
@@ -4364,7 +4365,7 @@ export class InteractiveMode {
 	 * paste / Kitty / modifyOtherKeys sequences.
 	 */
 	private uncaughtCrash(error: Error): never {
-		// A dead terminal is not a pi crash. Do not try to restore it or record it.
+		// A dead terminal is not a FineCode crash. Do not try to restore it or record it.
 		if (isDeadTerminalError(error)) {
 			this.emergencyTerminalExit();
 		}
@@ -4436,7 +4437,7 @@ export class InteractiveMode {
 
 		// Restore the terminal before the process dies on any uncaught throw.
 		// Without this, an unhandled exception from extension code (or anywhere
-		// in pi) leaves the terminal in raw mode with no cursor.
+		// in FineCode) leaves the terminal in raw mode with no cursor.
 		const uncaughtExceptionHandler = (error: Error) => this.uncaughtCrash(error);
 		process.prependListener("uncaughtException", uncaughtExceptionHandler);
 		this.signalCleanupHandlers.push(() => process.off("uncaughtException", uncaughtExceptionHandler));
@@ -4673,7 +4674,9 @@ export class InteractiveMode {
 			);
 			this.chatContainer.addChild(new Spacer(1));
 		}
-		this.chatContainer.addChild(new ThemedText(changelogLine, 1, 0));
+		if (PACKAGE_NAME !== "finecode") {
+			this.chatContainer.addChild(new ThemedText(changelogLine, 1, 0));
+		}
 		this.chatContainer.addChild(new DynamicBorder((text) => theme.fg("warning", text)));
 		this.ui.requestRender();
 	}
@@ -6346,7 +6349,10 @@ export class InteractiveMode {
 					prompt: (prompt) => this.showAuthPrompt(dialog, prompt, providerId),
 					notify: (event) => this.notifyAuthDialog(dialog, event),
 				},
-				{ getDeviceId: () => this.settingsManager.getOrCreateDeviceId() },
+				{
+					getDeviceId: () => this.settingsManager.getOrCreateDeviceId(),
+					agentName: APP_NAME === "finecode" ? "FineCode" : "Pi",
+				},
 			);
 		} finally {
 			this.programStatus.setBlocked("login", undefined);
@@ -6993,12 +6999,6 @@ export class InteractiveMode {
 		if (playArmin3d(this.renderer)) return;
 		this.chatContainer.addChild(new Spacer(1));
 		this.chatContainer.addChild(new ArminComponent(this.ui));
-		this.ui.requestRender();
-	}
-
-	private handleDementedDelves(): void {
-		this.chatContainer.addChild(new Spacer(1));
-		this.chatContainer.addChild(new EarendilAnnouncementComponent());
 		this.ui.requestRender();
 	}
 

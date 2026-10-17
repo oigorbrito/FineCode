@@ -15,7 +15,9 @@
  */
 
 import { mkdtemp, writeFile } from "node:fs/promises";
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { Text } from "@earendil-works/pi-tui";
+import { execSync } from "child_process";
+import type { ExtensionAPI } from "finecode";
 import {
 	DEFAULT_MAX_BYTES,
 	DEFAULT_MAX_LINES,
@@ -23,9 +25,7 @@ import {
 	type TruncationResult,
 	truncateHead,
 	withFileMutationQueue,
-} from "@earendil-works/pi-coding-agent";
-import { Text } from "@earendil-works/pi-tui";
-import { execSync } from "child_process";
+} from "finecode";
 import { tmpdir } from "os";
 import { join } from "path";
 import { Type } from "typebox";
@@ -109,7 +109,7 @@ export default function (pi: ExtensionAPI) {
 
 			if (truncation.truncated) {
 				// Save full output to a temp file so LLM can access it if needed
-				const tempDir = await mkdtemp(join(tmpdir(), "pi-rg-"));
+				const tempDir = await mkdtemp(join(tmpdir(), "finecode-rg-"));
 				const tempFile = join(tempDir, "output.txt");
 				await withFileMutationQueue(tempFile, async () => {
 					await writeFile(tempFile, output, "utf8");

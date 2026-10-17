@@ -1,5 +1,5 @@
 {
-	"name": "pi-monorepo",
+	"name": "finecode-monorepo",
 	"private": true,
 	"type": "module",
 	"workspaces": [

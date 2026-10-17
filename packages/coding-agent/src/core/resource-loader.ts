@@ -51,6 +51,7 @@ export interface ResourceLoaderReloadOptions {
 }
 
 const HOST_PROVIDED_EXTENSION_PACKAGES = new Set([
+	"finecode",
 	"@earendil-works/pi-agent-core",
 	"@earendil-works/pi-ai",
 	"@earendil-works/pi-coding-agent",
@@ -143,7 +144,7 @@ function omitReplacedExtensions(
 			const registeredName = kind === "command" ? `/${rawName}` : kind === "flag" ? `--${rawName}` : rawName;
 			warnings?.push({
 				path: extension.path,
-				warning: `Extension ${replacement.extension.path} registers ${kind} \`${registeredName}\`, so built-in extension \`${builtinName}\` was not loaded. To use \`${builtinName}\`, run \`pi config\` and make sure it is enabled under Built-in extensions, then disable or remove the existing extension. We recommend only having one or the other loaded at a time.`,
+				warning: `Extension ${replacement.extension.path} registers ${kind} \`${registeredName}\`, so built-in extension \`${builtinName}\` was not loaded. To use \`${builtinName}\`, run \`finecode config\` and make sure it is enabled under Built-in extensions, then disable or remove the existing extension. We recommend only having one or the other loaded at a time.`,
 			});
 		}
 		return false;

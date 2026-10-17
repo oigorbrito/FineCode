@@ -2,7 +2,9 @@ import { readFileSync } from "node:fs";
 import { describe, expect, test } from "vitest";
 
 interface CodingAgentPackageJson {
-	bin: { pi: string };
+	name: string;
+	piConfig: { name: string; configDir: string };
+	bin: { finecode: string; pi: string };
 	main: string;
 	exports: {
 		".": { import: string; types: string };
@@ -15,8 +17,15 @@ const packageJson = JSON.parse(
 ) as CodingAgentPackageJson;
 
 describe("package distribution entrypoints", () => {
+	test("publishes FineCode with the legacy pi executable alias", () => {
+		expect(packageJson.name).toBe("finecode");
+		expect(packageJson.piConfig.name).toBe("finecode");
+		expect(packageJson.piConfig.configDir).toBe(".pi");
+		expect(packageJson.bin.finecode).toBe("dist/bundle/cli.js");
+		expect(packageJson.bin.pi).toBe(packageJson.bin.finecode);
+	});
+
 	test("uses the bundle for executables and modular output for libraries", () => {
-		expect(packageJson.bin.pi).toBe("dist/bundle/cli.js");
 		expect(packageJson.main).toBe("./dist/index.js");
 		expect(packageJson.exports["."].import).toBe("./dist/index.js");
 		expect(packageJson.exports["./rpc-entry"].import).toBe("./dist/bundle/rpc-entry.js");

@@ -19,7 +19,7 @@ import {
 	getAgentDir,
 	SessionManager,
 	SettingsManager,
-} from "@earendil-works/pi-coding-agent";
+} from "finecode";
 
 const cwd = process.cwd();
 

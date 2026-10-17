@@ -1,5 +1,5 @@
 import { homedir } from "node:os";
-import { getDocsPath, getExamplesPath, getReadmePath } from "@earendil-works/pi-coding-agent";
+import { getDocsPath, getExamplesPath, getReadmePath } from "finecode";
 import { describe, expect, it, vi } from "vitest";
 import { buildSystemPrompt } from "../../coding-agent/src/core/system-prompt.ts";
 import {
@@ -46,7 +46,7 @@ describe("isolateProcessEnvironment", () => {
 			const restore = applyIsolatedEnvironment("/tmp/eval-home", "/tmp/eval-agent");
 			try {
 				expect(homedir()).toBe("/tmp/eval-home");
-				expect(process.env.PI_CODING_AGENT_DIR).toBe("/tmp/eval-agent");
+				expect(process.env.FINECODE_CODING_AGENT_DIR).toBe("/tmp/eval-agent");
 				expect(process.env.PI_EVAL_VARIANT).toBeUndefined();
 				expect(process.env.PI_EVAL_ARTIFACT_DIR).toBeUndefined();
 			} finally {

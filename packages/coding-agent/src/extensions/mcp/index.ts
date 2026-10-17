@@ -537,7 +537,7 @@ export function createMcpExtension(options: McpExtensionOptions = {}): Extension
 
 		/**
 		 * Stored tokens of servers waiting for a sign-in, as they were when the sign-in was needed.
-		 * `pi mcp login` in another process (for example run by the agent) changes them.
+		 * `finecode mcp login` in another process (for example run by the agent) changes them.
 		 */
 		const tokensAtSignIn = new Map<McpServerConnection, string>();
 		const storedTokens = (connection: McpServerConnection): string => {
@@ -1173,7 +1173,7 @@ export function createMcpExtension(options: McpExtensionOptions = {}): Extension
 			}
 		};
 
-		// Every prompt lists the servers in the `mcp_servers` section as they are when it starts. Pi
+		// Every prompt lists the servers in the `mcp_servers` section as they are when it starts. The agent
 		// appends the section to the conversation when it changed, for example after a server connected.
 		pi.on("before_agent_start", async (event, ctx) => {
 			await waitForDirectServers(ctx);
@@ -1208,7 +1208,7 @@ export function createMcpExtension(options: McpExtensionOptions = {}): Extension
 			await waitForServers(waiting, ctx.signal);
 		});
 
-		// Pick up sign-ins done outside the session, such as `pi mcp login` run by the agent.
+		// Pick up sign-ins done outside the session, such as `finecode mcp login` run by the agent.
 		pi.on("turn_start", async (_event, ctx) => {
 			if (tokensAtSignIn.size > 0) await reconnectSignedIn(ctx);
 		});

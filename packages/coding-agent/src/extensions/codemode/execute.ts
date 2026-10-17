@@ -340,7 +340,7 @@ function formatError(result: Extract<CodemodeResult, { ok: false }>, calls: read
 /** Write the full text output to a temp file, like bash does for truncated output. */
 async function spillOutput(text: string): Promise<{ path: string } | { error: string }> {
 	try {
-		return { path: await writeOutputFile("pi-codemode", ".txt", text) };
+		return { path: await writeOutputFile("finecode-codemode", ".txt", text) };
 	} catch (error) {
 		return { error: error instanceof Error ? error.message : String(error) };
 	}
@@ -369,7 +369,7 @@ async function saveImages(items: (TextContent | ImageContent)[]): Promise<(TextC
 		// A failed write (disk full, unwritable temp dir) must not discard the result of a script whose
 		// tool calls already ran, so it becomes part of the label.
 		try {
-			const path = await writeOutputFile("pi-codemode", extension, bytes);
+			const path = await writeOutputFile("finecode-codemode", extension, bytes);
 			return `[Image saved to ${path} (${kind})]`;
 		} catch (error) {
 			return `[Image (${kind}) could not be saved: ${error instanceof Error ? error.message : String(error)}]`;

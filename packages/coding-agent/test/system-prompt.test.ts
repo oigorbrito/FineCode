@@ -48,7 +48,9 @@ describe("buildSystemPrompt", () => {
 				skills: [],
 			});
 
-			expect(defaultPrompt.startsWith("You are an expert coding assistant operating inside pi")).toBe(true);
+			expect(defaultPrompt.startsWith("You are an expert coding assistant operating inside FineCode")).toBe(true);
+			expect(defaultPrompt).toContain("FineCode documentation");
+			expect(defaultPrompt).toContain("distinguish its services, projects, and compatibility names from FineCode");
 			expect(customPrompt.startsWith("You are Exact.\n\n<cwd>")).toBe(true);
 		});
 
@@ -108,7 +110,7 @@ describe("buildSystemPrompt", () => {
 			expect(prompt).toContain(expected);
 		});
 
-		test("instructs models to resolve pi docs and examples under absolute base paths", () => {
+		test("instructs models to resolve FineCode docs and examples under absolute base paths", () => {
 			const prompt = buildSystemPrompt({
 				contextFiles: [],
 				skills: [],
@@ -116,9 +118,12 @@ describe("buildSystemPrompt", () => {
 			});
 
 			expect(prompt).toContain(
-				"- When reading pi docs or examples, resolve docs/... under Additional docs and examples/... under Examples, not the current working directory",
+				"- When reading FineCode docs or examples, resolve docs/... under Additional docs and examples/... under Examples, not the current working directory",
 			);
 			expect(prompt).toContain("environment variables (docs/environment-variables.md), MCP servers (docs/mcp.md)");
+			expect(prompt).toContain(
+				"When asked about upstream Pi, distinguish its services, projects, and compatibility names from FineCode.",
+			);
 		});
 	});
 

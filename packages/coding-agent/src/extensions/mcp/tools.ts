@@ -68,7 +68,7 @@ export interface McpToolDetails {
 export type McpOutputSaver = (data: string | Uint8Array, extension: string) => Promise<string>;
 
 export function saveToTempFile(data: string | Uint8Array, extension: string): Promise<string> {
-	return writeOutputFile("pi-mcp", extension, data);
+	return writeOutputFile("finecode-mcp", extension, data);
 }
 
 export interface McpToolCaller {

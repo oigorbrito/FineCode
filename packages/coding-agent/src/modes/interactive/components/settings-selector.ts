@@ -12,6 +12,7 @@ import {
 	Text,
 	type WheelScrollLines,
 } from "@earendil-works/pi-tui";
+import { PACKAGE_NAME } from "../../../config.ts";
 import { formatHttpIdleTimeoutMs, HTTP_IDLE_TIMEOUT_CHOICES } from "../../../core/http-dispatcher.ts";
 import { SETTINGS_DEFAULTS } from "../../../core/settings-defaults.ts";
 import {
@@ -573,8 +574,11 @@ export class SettingsSelectorComponent extends Container {
 			},
 			{
 				id: "install-telemetry",
-				label: "Install telemetry",
-				description: "Send an anonymous version/update ping after changelog-detected updates",
+				label: PACKAGE_NAME === "finecode" ? "Provider attribution" : "Install telemetry",
+				description:
+					PACKAGE_NAME === "finecode"
+						? "Add FineCode attribution headers for selected providers. FineCode does not send install/update reports to upstream Pi."
+						: "Send an anonymous version/update ping after changelog-detected updates.",
 				currentValue: config.enableInstallTelemetry ? "true" : "false",
 				values: ["true", "false"],
 			},
@@ -820,7 +824,7 @@ export class SettingsSelectorComponent extends Container {
 		items.splice(skillCommandsIndex + 1, 0, {
 			id: "show-hardware-cursor",
 			label: "Show hardware cursor",
-			description: "Use the terminal cursor instead of Pi's drawn cursor",
+			description: "Use the terminal cursor instead of the agent's drawn cursor",
 			currentValue: config.showHardwareCursor ? "true" : "false",
 			values: ["true", "false"],
 		});
