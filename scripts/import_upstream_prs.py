@@ -50,9 +50,9 @@ def git_sha(ref="HEAD"):
 def metadata(upstream, source_sha, tip_sha):
     state = "merged" if upstream.get("merged_at") else upstream["state"]
     return (
-        f"**Upstream:** {upstream['html_url']}\\n\\n"
-        f"**Upstream status:** {state}; draft={upstream.get('draft', False)}\\n\\n"
-        "Imported for manual review; no automatic merge, close, or force push.\\n\\n"
+        f"**Upstream:** {upstream['html_url']}\n\n"
+        f"**Upstream status:** {state}; draft={upstream.get('draft', False)}\n\n"
+        "Imported for manual review; no automatic merge, close, or force push.\n\n"
         f"<!-- finecode-upstream-source:{source_sha} tip:{tip_sha} -->"
     )
 
