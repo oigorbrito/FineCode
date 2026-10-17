@@ -20,6 +20,7 @@ LABELS = {
     "finecode-candidate": ("Manually selected for FineCode", "7057ff"),
 }
 AUTO_LABELS = {"upstream", "bug", "enhancement"}
+MAX_ISSUE_WRITES = 10
 
 
 
@@ -118,15 +119,12 @@ def main():
         records.append((f"release:{tag}", f"[Pi release] {release['name'] or tag}",
                         release["html_url"], "published", release.get("published_at")))
 
-    # Classify existing mirrors without recreating or closing them.
-    for key in existing:
-        if key.startswith("issue:") and key not in source_issues:
-            try:
-                source_issues[key] = api(f"/repos/{SOURCE}/issues/{key.split(':', 1)[1]}")
-            except urllib.error.HTTPError as exc:
-                print(f"Skipped {key}: HTTP {exc.code}")
+    writes = 0
 
     for key, title, url, status, updated in records:
+        if writes >= MAX_ISSUE_WRITES:
+            print("Write budget reached; records deferred")
+            break
         body = (
             f"FineCode-Upstream-Key: {key}\n\n"
             f"**Origem:** {SOURCE}\n\n"
@@ -141,18 +139,26 @@ def main():
             if old.get("title") != title or (old.get("body") or "") != body:
                 api(f"/repos/{TARGET}/issues/{old['number']}", "PATCH",
                     {"title": title, "body": body})
+                writes += 1
                 print("Updated", key)
         else:
             created = api(f"/repos/{TARGET}/issues", "POST",
                           {"title": title, "body": body})
             existing[key] = created
+            writes += 1
             print("Created", key)
 
     for key, source in source_issues.items():
+        if writes >= MAX_ISSUE_WRITES:
+            break
         old = existing.get(key)
         if old:
-            set_labels(old["number"], classify(source, old if "labels" in old else None), old)
-
+            desired = classify(source, old if "labels" in old else None)
+            current = {label["name"] for label in old.get("labels", [])}
+            if current != set(desired):
+                set_labels(old["number"], desired, old)
+                writes += 1
+    print(f"Issue writes: {writes}/{MAX_ISSUE_WRITES}")
 
 
 if __name__ == "__main__":
