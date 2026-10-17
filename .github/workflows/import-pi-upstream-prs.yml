@@ -2,7 +2,7 @@ name: Sync Pi upstream PRs (manual merge only)
 
 on:
   schedule:
-    - cron: "31 */6 * * *"
+    - cron: "31 * * * *"
   workflow_dispatch:
 
 permissions:
@@ -28,5 +28,6 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_REPOSITORY: ${{ github.repository }}
-          MAX_NEW_UPSTREAM_PRS: "3"
+          MAX_NEW_UPSTREAM_PRS: "8"
+          MAX_UPSTREAM_PR_CHECKS: "24"
         run: python3 scripts/import_upstream_prs.py
