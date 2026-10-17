@@ -45,8 +45,6 @@ PR_LABELS = {
     "upstream-conflict": ("Upstream change needs manual adaptation", "e11d48"),
     "finecode-candidate": ("Manually selected for FineCode", "7057ff"),
 }
-MANAGED_CLASS_LABELS = {"bug", "enhancement"}
-
 
 def ensure_pr_labels():
     known = set()
@@ -65,7 +63,7 @@ def sync_pr_labels(number, upstream, local=None, conflict=False):
     """Preserve local review decisions and unrelated labels."""
     current = {x["name"] for x in (local or {}).get("labels", [])}
     original = {x["name"].lower() for x in upstream.get("labels", [])}
-    desired = (current - MANAGED_CLASS_LABELS) | {"upstream"}
+    desired = current | {"upstream"}
     if "bug" in original or "type: bug" in original:
         desired.add("bug")
     elif ("enhancement" in original or "feature" in original
