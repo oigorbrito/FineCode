@@ -1,0 +1,30 @@
+name: Import Pi upstream PRs (drafts only)
+
+on:
+  schedule:
+    - cron: "31 */6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: finecode-upstream-pr-import
+  cancel-in-progress: false
+
+jobs:
+  import-review-drafts:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout FineCode
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: true
+          fetch-depth: 0
+      - name: Stage at most three upstream PRs as drafts (never merge)
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          MAX_NEW_UPSTREAM_PRS: "3"
+        run: python3 scripts/import_upstream_prs.py
