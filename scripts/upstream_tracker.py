@@ -74,7 +74,7 @@ def classify(source, old=None):
         labels.add("bug")
     if "enhancement" in source_labels or "feature" in source_labels:
         labels.add("enhancement")
-    if old is None:
+    if old is None or not current:
         labels.add("needs-review")
     return sorted(labels)
 
