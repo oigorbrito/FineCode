@@ -150,35 +150,53 @@ def main():
     conflicts = 0
     blocked = False
     seen = 0
+    # Gather open upstream PRs and all still-open FineCode mirrors, including
+    # counterparts already closed or merged upstream.
+    items = []
     for page in range(1, 4):
-        items = api(f"/repos/{SOURCE}/pulls?state=open&sort=updated&direction=desc&per_page=100&page={page}")
-        if not items:
+        group = api(f"/repos/{SOURCE}/pulls?state=open&sort=updated&direction=desc&per_page=100&page={page}")
+        if not group:
             break
-        for pr in items:
-            if created >= MAX_NEW:
+        items.extend(group)
+    known = {p["number"] for p in items}
+    local = api(f"/repos/{TARGET}/pulls?state=open&per_page=100")
+    import re
+    for mirror in local:
+        match = re.match(r"upstream/pi-pr-(\\d+)$", mirror.get("head", {}).get("ref", ""))
+        if match and int(match.group(1)) not in known:
+            original = api(f"/repos/{SOURCE}/pulls/{match.group(1)}")
+            items.append(original)
+            known.add(original["number"])
+    # Rotate the worklist so older PRs are not starved by the newest ones.
+    max_checked = max(1, int(os.environ.get("MAX_UPSTREAM_PR_CHECKS", "10")))
+    if items:
+        offset = ((int(os.environ.get("GITHUB_RUN_NUMBER", "1")) - 1) * max_checked) % len(items)
+        selected = (items[offset:] + items[:offset])[:max_checked]
+    else:
+        selected = []
+    for pr in selected:
+        seen += 1
+        try:
+            result = import_one(pr)
+            if result == "created":
+                created += 1
+            elif result == "updated":
+                print(f"Synced upstream #{pr['number']}", flush=True)
+            elif result == "conflict":
+                conflicts += 1
+        except urllib.error.HTTPError as exc:
+            failures += 1
+            detail = exc.read().decode(errors="replace")[:800]
+            print(f"API ERROR upstream #{pr['number']}: HTTP {exc.code}: {detail}", flush=True)
+            git("reset", "--hard", f"origin/{BASE}", ok=False)
+            if exc.code in (403, 429):
+                blocked = True
                 break
-            seen += 1
-            try:
-                result = import_one(pr)
-                if result == "created":
-                    created += 1
-                elif result == "updated":
-                    print(f"Synced upstream #{pr['number']}", flush=True)
-                elif result == "conflict":
-                    conflicts += 1
-            except urllib.error.HTTPError as exc:
-                failures += 1
-                detail = exc.read().decode(errors="replace")[:800]
-                print(f"API ERROR upstream #{pr['number']}: HTTP {exc.code}: {detail}", flush=True)
-                git("reset", "--hard", f"origin/{BASE}", ok=False)
-                if exc.code in (403, 429):
-                    blocked = True
-                    break
-            except RuntimeError as exc:
-                failures += 1
-                print(f"FAILED upstream #{pr['number']}: {exc}", flush=True)
-                git("reset", "--hard", f"origin/{BASE}", ok=False)
-        if created >= MAX_NEW or blocked:
+        except RuntimeError as exc:
+            failures += 1
+            print(f"FAILED upstream #{pr['number']}: {exc}", flush=True)
+            git("reset", "--hard", f"origin/{BASE}", ok=False)
+        if created >= MAX_NEW:
             break
     print(f"Reviewed {seen}; created {created} PRs; conflicts {conflicts}; failures {failures}; blocked {blocked}", flush=True)
     if created == 0 and (failures or conflicts or blocked):
