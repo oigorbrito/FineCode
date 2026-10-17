@@ -23,7 +23,7 @@ jobs:
           persist-credentials: true
           fetch-depth: 0
       - name: Validate importer syntax
-        run: python3 -m py_compile scripts/import_upstream_prs.py
+        run: python3 -c "import ast, pathlib; ast.parse(pathlib.Path('scripts/import_upstream_prs.py').read_text())"
       - name: Import and incrementally update Pi PRs (never merge)
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
