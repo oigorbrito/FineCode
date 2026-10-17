@@ -37,6 +37,57 @@ def git(*args, ok=True, input_data=None):
     return result
 
 
+PR_LABELS = {
+    "upstream": ("Imported from the upstream Pi project", "2563eb"),
+    "bug": ("Bug fix", "d73a4a"),
+    "enhancement": ("Feature or enhancement", "a2eeef"),
+    "needs-review": ("Pending manual FineCode review", "fbca04"),
+    "upstream-conflict": ("Upstream change needs manual adaptation", "e11d48"),
+    "finecode-candidate": ("Manually selected for FineCode", "7057ff"),
+}
+MANAGED_CLASS_LABELS = {"bug", "enhancement"}
+
+
+def ensure_pr_labels():
+    known = set()
+    for page in range(1, 4):
+        entries = api(f"/repos/{TARGET}/labels?per_page=100&page={page}")
+        known.update(item["name"] for item in entries)
+        if len(entries) < 100:
+            break
+    for name, (description, color) in PR_LABELS.items():
+        if name not in known:
+            api(f"/repos/{TARGET}/labels", "POST",
+                {"name": name, "description": description, "color": color})
+
+
+def sync_pr_labels(number, upstream, local=None, conflict=False):
+    """Preserve local review decisions and unrelated labels."""
+    current = {x["name"] for x in (local or {}).get("labels", [])}
+    original = {x["name"].lower() for x in upstream.get("labels", [])}
+    desired = (current - MANAGED_CLASS_LABELS) | {"upstream"}
+    if "bug" in original or "type: bug" in original:
+        desired.add("bug")
+    elif ("enhancement" in original or "feature" in original
+          or "type: feature" in original):
+        desired.add("enhancement")
+    else:
+        # Use explicit conventional-commit prefixes only as fallback.
+        subject = upstream.get("title", "").lower().strip()
+        if subject.startswith(("fix:", "fix(", "bugfix:", "bug:")):
+            desired.add("bug")
+        elif subject.startswith(("feat:", "feat(", "feature:")):
+            desired.add("enhancement")
+    if local is None or not current:
+        desired.add("needs-review")
+    if conflict:
+        desired.add("upstream-conflict")
+    # A cleared conflict is not automatically considered resolved.
+    if desired != current:
+        api(f"/repos/{TARGET}/issues/{number}/labels", "PUT",
+            {"labels": sorted(desired)})
+
+
 def existing_pr(branch):
     q = f"/repos/{TARGET}/pulls?state=all&head={TARGET.split('/')[0]}:{branch}&per_page=20"
     entries = api(q)
@@ -111,6 +162,8 @@ def import_one(pr):
     local = existing_pr(branch)
     full = api(f"/repos/{SOURCE}/pulls/{number}")
     source_sha = full["head"]["sha"]
+    if local:
+        sync_pr_labels(local["number"], full, local)
     # Resume a branch pushed by a previous run that failed before opening a PR.
     # Do not rewrite it or claim its upstream SHA is verified.
     if not local:
@@ -119,7 +172,7 @@ def import_one(pr):
             tip = remote.split()[0]
             if not __import__("re").fullmatch(r"[0-9a-f]{40}", tip):
                 raise RuntimeError("Unexpected remote branch SHA")
-            api(f"/repos/{TARGET}/pulls", "POST", {
+            created_pr = api(f"/repos/{TARGET}/pulls", "POST", {
                 "title": f"[upstream Pi #{number}] {full['title']}",
                 "head": branch, "base": BASE,
                 "body": (f"**Upstream:** {full['html_url']}\\n\\n"
@@ -129,6 +182,7 @@ def import_one(pr):
                          f"**Branch checkpoint:** `{tip}`\\n\\n"
                          "No automatic merge, closure or force push."),
                 "draft": True})
+            sync_pr_labels(created_pr["number"], full)
             print(f"RECOVERED upstream #{number}: existing branch {tip}", flush=True)
             return "created"
     # Do not disturb a locally closed PR.
@@ -190,11 +244,12 @@ def import_one(pr):
         "commit", "-m", f"chore(upstream): stage Pi PR #{number} for review")
     tip = git_sha()
     git("push", "origin", f"HEAD:refs/heads/{branch}")
-    api(f"/repos/{TARGET}/pulls", "POST", {
+    created_pr = api(f"/repos/{TARGET}/pulls", "POST", {
         "title": f"[upstream Pi #{number}] {full['title']}",
         "head": branch, "base": BASE,
         "body": metadata(full, source_sha, tip),
         "draft": bool(full.get("draft", False))})
+    sync_pr_labels(created_pr["number"], full)
     print(f"CREATED upstream #{number}", flush=True)
     return "created"
 
@@ -203,6 +258,7 @@ def main():
     # Do not import from a dirty checkout.
     if git("status", "--porcelain").stdout.strip():
         raise RuntimeError("Refusing to import into a dirty checkout")
+    ensure_pr_labels()
     created = 0
     failures = 0
     conflicts = 0
