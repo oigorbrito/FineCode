@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Import open upstream Pi pull-request patches as DRAFT FineCode PRs.
+"""Import open upstream Pi pull-request patches as FineCode PRs.
 
 No merging, no code execution from patches, no force pushes.
 Conflicting patches are skipped and reported in the workflow log.
@@ -66,7 +66,7 @@ def import_one(pr):
     git("push", "origin", f"HEAD:refs/heads/{branch}")
     body = (
         f"**Upstream:** {pr['html_url']}\n\n"
-        "**Status:** Imported as a draft for manual review only.\n\n"
+        "**Status:** Imported for manual review only.\n\n"
         "This is a patch transplant onto FineCode's current main, NOT a merge "
         "with the Pi upstream branch. Review the full diff, licensing, "
         "compatibility, tests and provenance before any manual merge.\n\n"
@@ -74,8 +74,8 @@ def import_one(pr):
     )
     api(f"/repos/{TARGET}/pulls", "POST", {
         "title": f"[upstream Pi #{number}] {pr['title']}",
-        "head": branch, "base": BASE, "body": body, "draft": True})
-    print(f"CREATED DRAFT upstream #{number}", flush=True)
+        "head": branch, "base": BASE, "body": body, "draft": bool(pr.get("draft", True))})
+    print(f"CREATED PR upstream #{number} (draft={bool(pr.get('draft', True))})", flush=True)
     return "created"
 
 
@@ -117,7 +117,7 @@ def main():
                 git("reset", "--hard", f"origin/{BASE}", ok=False)
         if created >= MAX_NEW or blocked:
             break
-    print(f"Reviewed {seen}; created {created} drafts; conflicts {conflicts}; failures {failures}; blocked {blocked}", flush=True)
+    print(f"Reviewed {seen}; created {created} PRs; conflicts {conflicts}; failures {failures}; blocked {blocked}", flush=True)
     if created == 0 and (failures or conflicts or blocked):
         raise SystemExit("No PR imported: review API permissions and patch compatibility.")
 
