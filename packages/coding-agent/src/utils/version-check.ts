@@ -5,6 +5,8 @@ import { getPiUserAgent } from "./pi-user-agent.ts";
 
 const LATEST_VERSION_URL = "https://pi.dev/api/latest-version";
 const FINECODE_LATEST_VERSION_URL = "https://registry.npmjs.org/finecode/latest";
+/** Published in the package manifest to distinguish the runtime from same-name bootstrap packages. */
+export const FINECODE_RUNTIME_RELEASE_MARKER = "finecode-runtime-v1";
 const DEFAULT_VERSION_CHECK_TIMEOUT_MS = 10000;
 
 export interface LatestPiRelease {
@@ -107,8 +109,21 @@ export async function getLatestPackageRelease(
 		{ maxRetries: options.retry ? 2 : 0, timeoutMs: options.timeoutMs ?? DEFAULT_VERSION_CHECK_TIMEOUT_MS },
 	);
 	if (!response.ok) return undefined;
-	const data = (await response.json()) as { version?: unknown };
-	return typeof data.version === "string" && data.version.trim() ? { version: data.version.trim() } : undefined;
+	const data = (await response.json()) as {
+		name?: unknown;
+		version?: unknown;
+		finecodeRuntimeRelease?: unknown;
+	} | null;
+	if (
+		!data ||
+		data.name !== "finecode" ||
+		data.finecodeRuntimeRelease !== FINECODE_RUNTIME_RELEASE_MARKER ||
+		typeof data.version !== "string" ||
+		!valid(data.version.trim())
+	) {
+		return undefined;
+	}
+	return { version: data.version.trim() };
 }
 
 export async function getLatestPiVersion(

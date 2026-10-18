@@ -22,6 +22,7 @@ import { main } from "../src/main.ts";
 import { ConfigSelectorComponent } from "../src/modes/interactive/components/config-selector.ts";
 import { initTheme } from "../src/modes/interactive/theme/theme.ts";
 import { handlePackageCommand } from "../src/package-manager-cli.ts";
+import { FINECODE_RUNTIME_RELEASE_MARKER } from "../src/utils/version-check.ts";
 import { allowNetwork } from "./test-network-env.ts";
 
 describe("package commands", () => {
@@ -628,7 +629,9 @@ if (process.platform !== "win32") fs.chmodSync(piPath, 0o755);
 	it("allows explicit self-update checks when automatic version checks are disabled", async () => {
 		const previousSkipVersionCheck = process.env.PI_SKIP_VERSION_CHECK;
 		process.env.PI_SKIP_VERSION_CHECK = "1";
-		const fetchMock = vi.fn(async () => Response.json({ version: VERSION }));
+		const fetchMock = vi.fn(async () =>
+			Response.json({ name: "finecode", version: VERSION, finecodeRuntimeRelease: FINECODE_RUNTIME_RELEASE_MARKER }),
+		);
 		vi.stubGlobal("fetch", fetchMock);
 		const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
 		const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
@@ -658,7 +661,13 @@ if (process.platform !== "win32") fs.chmodSync(piPath, 0o755);
 			.fn()
 			.mockRejectedValueOnce(new Error("fetch failed"))
 			.mockRejectedValueOnce(new Error("fetch failed"))
-			.mockResolvedValueOnce(Response.json({ version: VERSION }));
+			.mockResolvedValueOnce(
+				Response.json({
+					name: "finecode",
+					version: VERSION,
+					finecodeRuntimeRelease: FINECODE_RUNTIME_RELEASE_MARKER,
+				}),
+			);
 		vi.stubGlobal("fetch", fetchMock);
 		const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
 		const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
@@ -686,7 +695,11 @@ if (process.platform !== "win32") fs.chmodSync(piPath, 0o755);
 		const fetchMock = vi.fn(async (input: string | URL | Request) => {
 			const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
 			if (url === "https://registry.npmjs.org/finecode/latest") {
-				return Response.json({ version: targetVersion });
+				return Response.json({
+					name: "finecode",
+					version: targetVersion,
+					finecodeRuntimeRelease: FINECODE_RUNTIME_RELEASE_MARKER,
+				});
 			}
 			throw new Error(`Unexpected fetch: ${url}`);
 		});
@@ -706,6 +719,53 @@ if (process.platform !== "win32") fs.chmodSync(piPath, 0o755);
 			`Updated finecode from ${VERSION} to ${targetVersion}`,
 		);
 		expect(errorSpy).not.toHaveBeenCalled();
+	});
+
+	it.each([
+		["finecode update", ["update"]],
+		["finecode update --force", ["update", "--force"]],
+	] as const)("rejects the unmarked FineCode bootstrap from %s", async (_label, args) => {
+		const { npmRecordPath } = prepareManagedInstall(VERSION);
+		const installedManifestPath = join(process.env.PI_PACKAGE_DIR!, "package.json");
+		writeFileSync(
+			installedManifestPath,
+			JSON.stringify({
+				name: "finecode",
+				version: VERSION,
+				finecodeRuntimeRelease: FINECODE_RUNTIME_RELEASE_MARKER,
+			}),
+		);
+		const fetchMock = vi.fn(async () => Response.json({ name: "finecode", version: VERSION }));
+		vi.stubGlobal("fetch", fetchMock);
+		const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+		await expect(runPackageCommandDirectly([...args])).resolves.toBeUndefined();
+
+		expect(process.exitCode).toBe(1);
+		expect(fetchMock).toHaveBeenCalledOnce();
+		expect(existsSync(npmRecordPath)).toBe(false);
+		expect(JSON.parse(readFileSync(installedManifestPath, "utf8"))).toMatchObject({ version: VERSION });
+		expect(errorSpy.mock.calls.map(([message]) => String(message)).join("\n")).toContain(
+			"the npm registry did not return a recognized FineCode runtime release",
+		);
+	});
+
+	it("fails closed when FineCode release metadata is unavailable", async () => {
+		const { npmRecordPath } = prepareManagedInstall(VERSION);
+		const installedManifestPath = join(process.env.PI_PACKAGE_DIR!, "package.json");
+		writeFileSync(installedManifestPath, JSON.stringify({ name: "finecode", version: VERSION }));
+		const fetchMock = vi.fn(async () => new Response(null, { status: 404 }));
+		vi.stubGlobal("fetch", fetchMock);
+		const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+		await expect(runPackageCommandDirectly(["update"])).resolves.toBeUndefined();
+
+		expect(process.exitCode).toBe(1);
+		expect(existsSync(npmRecordPath)).toBe(false);
+		expect(JSON.parse(readFileSync(installedManifestPath, "utf8"))).toMatchObject({ version: VERSION });
+		expect(errorSpy.mock.calls.map(([message]) => String(message)).join("\n")).toContain(
+			"the npm registry did not return a recognized FineCode runtime release",
+		);
 	});
 
 	itForPiInstall("updates installer-managed Pi through a staged immutable release", async () => {
@@ -850,7 +910,9 @@ else fs.writeFileSync(${JSON.stringify(recordPath)},JSON.stringify(args));
 			value: join(selfPackageDir, "dist", "cli.js"),
 			configurable: true,
 		});
-		const fetchMock = vi.fn(async () => Response.json({ version: VERSION }));
+		const fetchMock = vi.fn(async () =>
+			Response.json({ name: "finecode", version: VERSION, finecodeRuntimeRelease: FINECODE_RUNTIME_RELEASE_MARKER }),
+		);
 		vi.stubGlobal("fetch", fetchMock);
 
 		const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
@@ -898,7 +960,13 @@ else fs.writeFileSync(${JSON.stringify(recordPath)},JSON.stringify(args));
 			configurable: true,
 		});
 		const targetVersion = getNewerPatchVersion();
-		const fetchMock = vi.fn(async () => Response.json({ version: targetVersion }));
+		const fetchMock = vi.fn(async () =>
+			Response.json({
+				name: "finecode",
+				version: targetVersion,
+				finecodeRuntimeRelease: FINECODE_RUNTIME_RELEASE_MARKER,
+			}),
+		);
 		vi.stubGlobal("fetch", fetchMock);
 
 		const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
@@ -1001,7 +1069,13 @@ else {
 		});
 		vi.stubGlobal(
 			"fetch",
-			vi.fn(async () => Response.json({ version: getNewerPatchVersion() })),
+			vi.fn(async () =>
+				Response.json({
+					name: "finecode",
+					version: getNewerPatchVersion(),
+					finecodeRuntimeRelease: FINECODE_RUNTIME_RELEASE_MARKER,
+				}),
+			),
 		);
 
 		const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});

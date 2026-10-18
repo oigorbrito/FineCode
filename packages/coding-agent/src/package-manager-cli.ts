@@ -695,6 +695,11 @@ async function getSelfUpdatePlan(force: boolean): Promise<SelfUpdatePlan> {
 		});
 	}
 	if (!latestRelease) {
+		if (PACKAGE_NAME === "finecode") {
+			throw new Error(
+				`Could not determine latest ${APP_NAME} version: the npm registry did not return a recognized FineCode runtime release.`,
+			);
+		}
 		throw new Error(`Could not determine latest ${APP_NAME} version.`);
 	}
 
