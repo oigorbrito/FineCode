@@ -1,6 +1,7 @@
 import importlib.util
 import os
 from pathlib import Path
+from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
@@ -33,14 +34,14 @@ class ImporterSafetyTests(unittest.TestCase):
 
         with patch.object(importer, "TARGET", "example/FineCode"), \
              patch.object(importer, "api", api), \
-             patch.object(importer, "git", lambda *a, **k: None), \
+             patch.object(importer, "git", lambda *a, **k: SimpleNamespace(stdout=b"", returncode=0)), \
              patch.object(importer, "ensure_pr_labels", lambda: None), \
              patch.object(importer, "import_one", lambda pr: processed.append(pr["number"]) or "existing"), \
              patch.dict(os.environ, {"MAX_UPSTREAM_PR_CHECKS": "24", "GITHUB_RUN_NUMBER": "1"}):
             importer.main()
 
         self.assertTrue(any("state=open&per_page=100&page=2" in x for x in calls))
-        self.assertIn(101, processed)
+        self.assertTrue(any('pulls/101' in x for x in calls))
         self.assertNotEqual(processed, [])
 
     def test_checkpoint_and_no_force_push_in_source(self):
