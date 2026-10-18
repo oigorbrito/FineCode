@@ -49,6 +49,8 @@ class MirrorReconciliationTest(unittest.TestCase):
                 number = int(path.rsplit("/", 1)[-1])
                 entry = next(v for v in stored.values() if v["number"] == number)
                 entry.update(payload)
+                if "labels" in payload:
+                    entry["labels"] = [{"name": name} for name in payload["labels"]]
                 writes.append(("updated", number))
                 return entry
             raise AssertionError(f"Unexpected API call: {method} {path}")
