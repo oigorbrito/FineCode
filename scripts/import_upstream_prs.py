@@ -154,6 +154,81 @@ def verify_recovered_checkpoint(number, branch, local, upstream):
     return True
 
 
+
+def review_only_body(upstream, tip):
+    """A draft review PR is not an imported code patch."""
+    sha = upstream["head"]["sha"]
+    return (
+        f"**REVIEW ONLY — CODE NOT APPLIED**\\n\\n"
+        f"Upstream proposal: {upstream['html_url']}\\n\\n"
+        "The Pi patch conflicts with FineCode. This draft only contains a "
+        "non-executable review manifest, not the upstream implementation. "
+        "Do not merge until a human has adapted the code and validated tests.\\n\\n"
+        f"<!-- finecode-upstream-review-only:{sha} tip:{tip} -->"
+    )
+
+
+def review_manifest(upstream):
+    return (
+        "# Upstream proposal awaiting adaptation\\n\\n"
+        f"- Source: {upstream['html_url']}\\n"
+        f"- Source SHA: \`{upstream['head']['sha']}\`\\n"
+        f"- Title: {upstream['title']}\\n\\n"
+        "No upstream code has been applied. Manually port and test the changes "
+        "before marking this draft ready for review.\\n"
+    )
+
+
+def stage_conflict_review(upstream, branch):
+    """Create a distinct draft PR with review metadata, never a code import."""
+    number = upstream["number"]
+    git("reset", "--hard", f"origin/{BASE}")
+    git("checkout", "-B", "finecode-upstream-working", f"origin/{BASE}")
+    import pathlib
+    dest = pathlib.Path("upstream-review") / f"pi-pr-{number}.md"
+    dest.parent.mkdir(exist_ok=True)
+    dest.write_text(review_manifest(upstream), encoding="utf-8")
+    git("add", "--", str(dest))
+    git("-c", "user.name=github-actions[bot]", "-c",
+        "user.email=41898282+github-actions[bot]@users.noreply.github.com",
+        "commit", "-m", f"docs(upstream): record incompatible Pi PR #{number}")
+    tip = git_sha()
+    git("push", "origin", f"HEAD:refs/heads/{branch}")
+    created = api(f"/repos/{TARGET}/pulls", "POST", {
+        "title": f"[review-only Pi #{number}] {upstream['title']}",
+        "head": branch, "base": BASE,
+        "body": review_only_body(upstream, tip), "draft": True})
+    sync_pr_labels(created["number"], upstream, conflict=True)
+    print(f"REVIEW_ONLY_CREATED upstream #{number}", flush=True)
+    return "created"
+
+
+def refresh_conflict_review(local, upstream, branch, saved_sha, expected_tip):
+    """Fast-forward manifest update only when our branch has not diverged."""
+    number = upstream["number"]
+    git("fetch", "origin", branch)
+    actual_tip = git_sha("FETCH_HEAD")
+    if actual_tip != expected_tip:
+        print(f"CONFLICT upstream #{number}: review branch diverged; left untouched", flush=True)
+        return "conflict"
+    if saved_sha == upstream["head"]["sha"]:
+        return "existing"
+    git("checkout", "-B", "finecode-upstream-working", actual_tip)
+    import pathlib
+    dest = pathlib.Path("upstream-review") / f"pi-pr-{number}.md"
+    dest.write_text(review_manifest(upstream), encoding="utf-8")
+    git("add", "--", str(dest))
+    git("-c", "user.name=github-actions[bot]", "-c",
+        "user.email=41898282+github-actions[bot]@users.noreply.github.com",
+        "commit", "-m", f"docs(upstream): refresh Pi PR #{number} review")
+    tip = git_sha()
+    git("push", "origin", f"HEAD:refs/heads/{branch}")
+    api(f"/repos/{TARGET}/pulls/{local['number']}", "PATCH", {
+        "title": f"[review-only Pi #{number}] {upstream['title']}",
+        "body": review_only_body(upstream, tip)})
+    print(f"REVIEW_ONLY_UPDATED upstream #{number}", flush=True)
+    return "updated"
+
 def import_one(pr):
     number = pr["number"]
     branch = f"upstream/pi-pr-{number}"
@@ -190,6 +265,9 @@ def import_one(pr):
     git("checkout", "-B", "finecode-upstream-working", f"origin/{BASE}")
     if local:
         import re
+        review = re.search(r"finecode-upstream-review-only:([0-9a-f]{40}) tip:([0-9a-f]{40})", local.get("body") or "")
+        if review:
+            return refresh_conflict_review(local, full, branch, *review.groups())
         found = re.search(r"finecode-upstream-source:([0-9a-f]{40}) tip:([0-9a-f]{40})", local.get("body") or "")
         if not found:
             if verify_recovered_checkpoint(number, branch, local, full):
@@ -234,7 +312,7 @@ def import_one(pr):
     applied = git("apply", "--3way", "--index", "-", ok=False, input_data=patch)
     if applied.returncode:
         print(f"CONFLICT upstream #{number}: initial patch incompatible", flush=True)
-        return "conflict"
+        return stage_conflict_review(full, branch)
     if git("diff", "--cached", "--quiet", ok=False).returncode == 0:
         return "existing"
     git("-c", "user.name=github-actions[bot]", "-c",
