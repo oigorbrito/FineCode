@@ -70,6 +70,66 @@ class MirrorReconciliationTest(unittest.TestCase):
             self.assertEqual(len(writes), count_after_labels)
             self.assertIn("Não há merge", stored["pr:22"]["body"])
 
+    def test_local_mirror_inventory_paginates_past_first_thousand(self):
+        calls = []
+
+        def fake_api(path, method="GET", payload=None):
+            calls.append(path)
+            page = int(path.rsplit("page=", 1)[-1])
+            if page <= 10:
+                return [{"number": (page - 1) * 100 + idx} for idx in range(100)]
+            if page == 11:
+                return [{"number": 1001}]
+            return []
+
+        with patch.object(tracker, "api", fake_api):
+            entries = list(tracker.pages("/repos/example/FineCode/issues?state=all", limit=None))
+        self.assertEqual(len(entries), 1001)
+        self.assertEqual(len(calls), 11)
+        self.assertEqual(entries[-1]["number"], 1001)
+
+    def test_write_budget_limits_backfill_per_run(self):
+        stored = {}
+        created = []
+        source_issues = [
+            {"number": n, "title": f"Issue {n}", "state": "open",
+             "html_url": f"https://github.com/earendil-works/pi/issues/{n}",
+             "updated_at": "2024-01-01T00:00:00Z", "labels": []}
+            for n in range(1, 16)
+        ]
+        source_prs = [
+            {"number": n, "title": f"PR {n}", "state": "open",
+             "html_url": f"https://github.com/earendil-works/pi/pull/{n}",
+             "updated_at": "2024-01-01T00:00:00Z"}
+            for n in range(1, 16)
+        ]
+
+        def fake_pages(path, limit=3):
+            if "/example/FineCode/issues?" in path:
+                return iter(stored.values())
+            if "/earendil-works/pi/issues?" in path:
+                return iter(source_issues)
+            if "/earendil-works/pi/pulls?" in path:
+                return iter(source_prs)
+            return iter([])
+
+        def fake_api(path, method="GET", payload=None):
+            if method == "POST" and path == "/repos/example/FineCode/issues":
+                key = payload["body"].splitlines()[0].split(": ", 1)[1]
+                item = {**payload, "number": 100 + len(stored), "labels": []}
+                stored[key] = item
+                created.append(key)
+                return item
+            raise AssertionError(f"Unexpected API call: {method} {path}")
+
+        with patch.object(tracker, "TARGET", "example/FineCode"), \
+             patch.object(tracker, "pages", fake_pages), \
+             patch.object(tracker, "api", fake_api), \
+             patch.object(tracker, "ensure_labels", lambda: None):
+            tracker.main()
+        self.assertEqual(sum(k.startswith("issue:") for k in created), 10)
+        self.assertEqual(sum(k.startswith("pr:") for k in created), 10)
+
 
 if __name__ == "__main__":
     unittest.main()
