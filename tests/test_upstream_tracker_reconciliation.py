@@ -55,7 +55,8 @@ class MirrorReconciliationTest(unittest.TestCase):
                 return entry
             raise AssertionError(f"Unexpected API call: {method} {path}")
 
-        with patch.object(tracker, "pages", fake_pages), \
+        with patch.object(tracker, "TARGET", "example/FineCode"), \
+             patch.object(tracker, "pages", fake_pages), \
              patch.object(tracker, "api", fake_api), \
              patch.object(tracker, "ensure_labels", lambda: None):
             tracker.main()
