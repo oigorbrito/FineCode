@@ -270,7 +270,7 @@ Acrescente `--local` ou `-l` a `install`, `remove`, `uninstall` ou `config` para
 
 ### Atualize o FineCode ou os pacotes
 
-Executar `finecode update` sem destino atualiza o próprio FineCode.
+Executar `finecode update` sem destino atualiza o próprio FineCode pela instalação npm. O FineCode verifica `https://registry.npmjs.org/finecode/latest` e aceita apenas metadados com versão válida e marcador de runtime FineCode; se os metadados estiverem ausentes ou não forem reconhecidos, o comando falha antes de executar o npm, inclusive com `--force`. O instalador gerenciado do Pi não é usado.
 
 | Tarefa | Comando |
 |---|---|

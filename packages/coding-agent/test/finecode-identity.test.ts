@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Api, Model } from "@earendil-works/pi-ai";
@@ -10,10 +11,12 @@ import {
 	getAgentDir,
 	getSessionDirEnvOverride,
 	PACKAGE_NAME,
+	VERSION,
 } from "../src/config.ts";
 import { mergeProviderAttributionHeaders } from "../src/core/provider-attribution.ts";
 import type { SettingsManager } from "../src/core/settings-manager.ts";
 import { shouldReportPiInstallTelemetry } from "../src/core/telemetry.ts";
+import { FINECODE_RUNTIME_RELEASE_MARKER } from "../src/utils/version-check.ts";
 
 afterEach(() => {
 	vi.unstubAllEnvs();
@@ -26,6 +29,24 @@ describe("FineCode identity compatibility", () => {
 		expect(APP_TITLE).toBe("FineCode");
 		expect(CONFIG_DIR_NAME).toBe(".pi");
 		expect(ENV_AGENT_DIR).toBe("FINECODE_CODING_AGENT_DIR");
+	});
+
+	test("identifies the FineCode runtime release while retaining Pi component versions", () => {
+		const manifest = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")) as {
+			version: string;
+			finecodeRuntimeRelease?: string;
+			dependencies: Record<string, string>;
+		};
+		expect(VERSION).toBe("0.0.3");
+		expect(manifest.version).toBe(VERSION);
+		expect(manifest.finecodeRuntimeRelease).toBe(FINECODE_RUNTIME_RELEASE_MARKER);
+		expect(manifest.dependencies).toMatchObject({
+			"@earendil-works/pi-agent-core": "1.3.0",
+			"@earendil-works/pi-ai": "1.3.0",
+			"@earendil-works/pi-codemode": "1.3.0",
+			"@earendil-works/pi-mcp": "1.3.0",
+			"@earendil-works/pi-tui": "1.3.0",
+		});
 	});
 
 	test("does not send FineCode install telemetry to the upstream Pi service", () => {
