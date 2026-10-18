@@ -19,6 +19,8 @@ jobs:
     steps:
       - name: Checkout FineCode
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Test upstream metadata reconciliation
+        run: python3 -m unittest discover -s tests -p "test_upstream_tracker_reconciliation.py" -v
       - name: Mirror Pi issues, PR status and releases without merging
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
