@@ -274,7 +274,7 @@ function createRootLockEntry(installerPackageJson) {
 	return sortedPackageEntry(entry);
 }
 
-function validateGeneratedFiles(installerPackageJson, installLock, internalNames) {
+function validateGeneratedFiles(installerPackageJson, installLock, internalWorkspaces) {
 	const errors = [];
 	const rootEntry = installLock.packages[""];
 	const includedPackageNames = new Set();
@@ -309,12 +309,11 @@ function validateGeneratedFiles(installerPackageJson, installLock, internalNames
 		if (entry.dev || entry.devOptional || entry.extraneous) {
 			errors.push(`${lockPath || "root"} contains dev/extraneous metadata`);
 		}
-		if (
-			packageName !== undefined &&
-			(packageName.startsWith(internalPackagePrefix) || internalPackageNames.has(packageName)) &&
-			entry.version !== installerPackageJson.version
-		) {
-			errors.push(`${lockPath} internal package version ${entry.version} does not match ${installerPackageJson.version}`);
+		const internalWorkspace = packageName ? internalWorkspaces.get(packageName) : undefined;
+		if (internalWorkspace && entry.version !== internalWorkspace.packageJson.version) {
+			errors.push(
+				`${lockPath} internal package version ${entry.version} does not match ${internalWorkspace.packageJson.version}`,
+			);
 		}
 		if (entry.hasInstallScript) {
 			if (!packageName || !entry.version) {
@@ -338,7 +337,7 @@ function validateGeneratedFiles(installerPackageJson, installLock, internalNames
 		}
 	}
 
-	for (const name of internalNames) {
+	for (const name of internalWorkspaces.keys()) {
 		if (!includedPackageNames.has(name)) {
 			errors.push(`internal dependency ${name} is missing`);
 		}
@@ -415,7 +414,10 @@ function generateInstallLock() {
 		packages: sortedObject(installLockPackages),
 	};
 
-	validateGeneratedFiles(installerPackageJson, installLock, internalNames);
+	const includedInternalWorkspaces = new Map(
+		[...internalNames].map((name) => [name, internalWorkspaces.get(name)]).filter((entry) => entry[1]),
+	);
+	validateGeneratedFiles(installerPackageJson, installLock, includedInternalWorkspaces);
 	return { installerPackageJson, installLock };
 }
 
