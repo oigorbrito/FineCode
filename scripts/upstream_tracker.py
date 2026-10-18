@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Mirror Pi upstream tracker metadata to FineCode issues; never sync code."""
+import itertools
 import json
 import os
 import urllib.error
@@ -44,7 +45,8 @@ def api(path, method="GET", payload=None):
 
 
 def pages(path, limit=3):
-    for page in range(1, limit + 1):
+    iterator = itertools.count(1) if limit is None else range(1, limit + 1)
+    for page in iterator:
         sep = "&" if "?" in path else "?"
         items = api(f"{path}{sep}per_page=100&page={page}")
         if not items:
@@ -90,7 +92,7 @@ def set_labels(number, desired, old):
 def main():
     # Existing mirrored issues are keyed by an immutable upstream identifier.
     existing = {}
-    for issue in pages(f"/repos/{TARGET}/issues?state=all", limit=10):
+    for issue in pages(f"/repos/{TARGET}/issues?state=all", limit=None):
         if "pull_request" in issue:
             continue
         body = issue.get("body") or ""
