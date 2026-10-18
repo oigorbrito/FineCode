@@ -1,6 +1,7 @@
 // Local copy of the repository's issues (the corpus), synced incrementally with the gh CLI, plus keyword search.
 import { spawn } from "node:child_process";
 import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { isDeepStrictEqual } from "node:util";
 
 export const REPO = "earendil-works/pi";
 const MAX_BODY = 16_000;
@@ -267,8 +268,9 @@ export class Corpus {
 			}
 			const { isPullRequest: _isPullRequest, ...issue } = record;
 			issue.body = truncateBody(issue.body);
+			const unchanged = isDeepStrictEqual(this.data.issues[issue.number], issue);
 			this.data.issues[issue.number] = issue;
-			count++;
+			if (!unchanged) count++;
 		}
 
 		const openPullRequests = parseJsonLines<PullRequestSnapshot>(

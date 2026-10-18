@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { Corpus, type PullRequestCommit } from "./github.ts";
+import { Corpus, type Issue, type PullRequestCommit } from "./github.ts";
 
 function makeIssue(number: number, isPullRequest = false) {
 	return {
@@ -145,6 +145,44 @@ test("initial sync paginates issues and open PRs, deduplicates PR endpoints, and
 	assert.ok(since);
 	const ageDays = (Date.now() - Date.parse(since)) / 86_400_000;
 	assert.ok(ageDays >= 119 && ageDays <= 121, `expected 120-day history, got ${ageDays.toFixed(1)} days`);
+});
+
+test("incremental sync counts only added or changed issues", async (t) => {
+	const { directory, path } = createCorpusFile();
+	t.after(() => rmSync(directory, { recursive: true, force: true }));
+	const { isPullRequest: _isPullRequest, ...existingIssue } = makeIssue(7);
+	const initialCursor = new Date(Date.now() - 7 * 86_400_000).toISOString();
+	const nested = { flags: ["a", "b"], owner: "team" };
+	writeFileSync(path, JSON.stringify({ syncedAt: initialCursor, issues: { 7: { ...existingIssue, metadata: nested } } }));
+	let record = { ...makeIssue(7), metadata: { owner: "team", flags: ["a", "b"] } };
+	const api = async (args: string[]) => {
+		const resource = endpoint(args);
+		if (resource === "repos/earendil-works/pi/issues") return JSON.stringify(record);
+		if (resource === "repos/earendil-works/pi/pulls") return "";
+		throw new Error(`unexpected endpoint ${resource}`);
+	};
+	const corpus = new Corpus(path, 120, api);
+
+	assert.equal(await corpus.sync(), 0, "replayed equivalent issues should not be counted as changes");
+	const firstSaved = JSON.parse(readFileSync(path, "utf8")) as { syncedAt: string; issues: Record<string, Issue> };
+	assert.ok(Date.parse(firstSaved.syncedAt) > Date.parse(initialCursor), "successful sync should persist its cursor");
+	assert.deepEqual(firstSaved.issues["7"], { ...existingIssue, metadata: nested });
+
+	record = { ...record, title: "Updated issue" };
+	assert.equal(await corpus.sync(), 1, "changed titles should still be counted");
+	record = { ...record, body: "Updated issue body" };
+	assert.equal(await corpus.sync(), 1, "changed content should still be counted");
+	record = { ...record, labels: ["enhancement", "bug"] };
+	assert.equal(await corpus.sync(), 1, "array order changes should remain observable");
+	record = { ...makeIssue(8), metadata: { owner: "team", flags: ["a", "b"] } };
+	assert.equal(await corpus.sync(), 1, "new issues should be counted");
+
+	const restarted = new Corpus(path, 120, async () => {
+		throw new Error("restart inspection must not call GitHub");
+	});
+	assert.equal(restarted.get(7)?.body, "Updated issue body");
+	assert.equal(restarted.get(8)?.title, "Issue 8");
+	assert.deepEqual(JSON.parse(readFileSync(path, "utf8")).issues["7"].labels, ["enhancement", "bug"]);
 });
 
 test("incremental sync records merge, state, commit, decision, and restart history without duplicates", async (t) => {
