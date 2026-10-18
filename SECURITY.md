@@ -4,6 +4,8 @@
 
 This file preserves the security policy for upstream Pi. It does not define FineCode's reporting process; FineCode-specific security guidance has not yet been published. Do not send FineCode reports to upstream Pi's Earendil or `pi.dev` channels.
 
+The reporting contacts and scope below apply only to upstream Pi; they are not FineCode reporting channels.
+
 This document should guide you in understanding the security concept behind Pi and its boundaries.
 
 In general, Pi is a coding agent that runs locally within the security boundary of the user running it. It is the user's responsibility to monitor its operations or contain it within a container, virtual machine, or other sandbox solution.

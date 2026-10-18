@@ -1,0 +1,33 @@
+name: Sync Pi upstream PRs (manual merge only)
+
+on:
+  schedule:
+    - cron: "31 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: finecode-upstream-pr-import
+  cancel-in-progress: false
+
+jobs:
+  sync-review-prs:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout FineCode
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: true
+          fetch-depth: 0
+      - name: Validate importer syntax
+        run: python3 -c "import ast, pathlib; ast.parse(pathlib.Path('scripts/import_upstream_prs.py').read_text())"
+      - name: Import and incrementally update Pi PRs (never merge)
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          MAX_NEW_UPSTREAM_PRS: "8"
+          MAX_UPSTREAM_PR_CHECKS: "24"
+        run: python3 scripts/import_upstream_prs.py
