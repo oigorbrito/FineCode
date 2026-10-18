@@ -52,6 +52,78 @@ class ImporterSafetyTests(unittest.TestCase):
         self.assertNotIn('"--force"', code)
         self.assertNotIn('"--force-with-lease"', code)
 
+    def test_linear_upstream_commit_updates_existing_mirror_without_force(self):
+        old_source, new_source, tip = "a" * 40, "b" * 40, "c" * 40
+        branch = "upstream/pi-pr-42"
+        local = {"number": 280, "state": "open",
+                 "body": f"<!-- finecode-upstream-source:{old_source} tip:{tip} -->",
+                 "labels": []}
+        upstream = {"number": 42}
+        calls = []
+        metadata_updates = []
+        sha_checks = iter([tip, "d" * 40])
+
+        def fake_api(path, method="GET", data=None, accept="application/vnd.github+json"):
+            if path.endswith("/pulls/42"):
+                return {"number": 42, "head": {"sha": new_source},
+                        "title": "Changed PR", "state": "open"}
+            raise AssertionError(path)
+
+        def fake_git(*args, **kwargs):
+            calls.append(args)
+            if args[:2] == ("merge-base", "--is-ancestor"):
+                return SimpleNamespace(returncode=0, stdout=b"")
+            if args[0] == "diff":
+                return SimpleNamespace(returncode=0, stdout=b"patch")
+            if args[:3] == ("apply", "--3way", "--index"):
+                return SimpleNamespace(returncode=0, stdout=b"")
+            if args[:3] == ("diff", "--cached", "--quiet"):
+                return SimpleNamespace(returncode=1, stdout=b"")
+            return SimpleNamespace(returncode=0, stdout=b"")
+
+        with patch.object(importer, "TARGET", "example/FineCode"), \
+             patch.object(importer, "existing_pr", return_value=local), \
+             patch.object(importer, "api", fake_api), \
+             patch.object(importer, "git", fake_git), \
+             patch.object(importer, "git_sha", side_effect=lambda ref="HEAD": next(sha_checks)), \
+             patch.object(importer, "sync_pr_labels"), \
+             patch.object(importer, "update_metadata", side_effect=lambda *a: metadata_updates.append(a)):
+            result = importer.import_one(upstream)
+
+        self.assertEqual(result, "updated")
+        self.assertTrue(any(c[:2] == ("merge-base", "--is-ancestor") for c in calls))
+        self.assertTrue(any(c[0] == "push" and "--force" not in c for c in calls))
+        self.assertEqual(len(metadata_updates), 1)
+
+    def test_rewritten_upstream_history_preserves_mirror_branch(self):
+        old_source, new_source, tip = "a" * 40, "b" * 40, "c" * 40
+        local = {"number": 280, "state": "open",
+                 "body": f"<!-- finecode-upstream-source:{old_source} tip:{tip} -->",
+                 "labels": []}
+        calls = []
+
+        def fake_api(path, method="GET", data=None, accept="application/vnd.github+json"):
+            return {"number": 42, "head": {"sha": new_source},
+                    "title": "Rebased", "state": "open"}
+
+        def fake_git(*args, **kwargs):
+            calls.append(args)
+            if args[:2] == ("merge-base", "--is-ancestor"):
+                return SimpleNamespace(returncode=1, stdout=b"")
+            return SimpleNamespace(returncode=0, stdout=b"")
+
+        with patch.object(importer, "TARGET", "example/FineCode"), \
+             patch.object(importer, "existing_pr", return_value=local), \
+             patch.object(importer, "api", fake_api), \
+             patch.object(importer, "git", fake_git), \
+             patch.object(importer, "git_sha", return_value=tip), \
+             patch.object(importer, "sync_pr_labels"), \
+             patch.object(importer, "update_metadata") as update:
+            result = importer.import_one({"number": 42})
+        self.assertEqual(result, "conflict")
+        self.assertFalse(any(c[0] == "push" for c in calls))
+        update.assert_not_called()
+
 
 if __name__ == "__main__":
     unittest.main()
