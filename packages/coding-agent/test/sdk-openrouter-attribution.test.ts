@@ -97,7 +97,11 @@ describe("createAgentSession provider attribution headers", () => {
 		}
 
 		const authStorage = AuthStorage.inMemory({
-			[model.provider]: { type: "api_key", key: "test-api-key" },
+			[model.provider]: {
+				type: "api_key",
+				key: "test-api-key",
+				...(model.provider === "cloudflare-workers-ai" ? { env: { CLOUDFLARE_ACCOUNT_ID: "test-account" } } : {}),
+			},
 		});
 		const modelRegistry = await createInMemoryModelRegistry(authStorage);
 		let capturedOptions: SimpleStreamOptions | undefined;

@@ -45,7 +45,7 @@ describe("package commands", () => {
 	function prepareManagedInstall(
 		targetVersion: string,
 		npmExitCode = 0,
-	): { managedRoot: string; npmRecordPath: string } {
+	): { managedRoot: string; npmRecordPath: string; fakeNpmPath: string } {
 		const managedRoot = join(agentDir, "install");
 		const activeRelease = join(managedRoot, "releases", VERSION);
 		const selfPackageDir = join(activeRelease, "node_modules", ...PACKAGE_NAME.split("/"));
@@ -66,6 +66,10 @@ describe("package commands", () => {
 			`const fs = require("node:fs");
 const path = require("node:path");
 const args = process.argv.slice(2);
+if (args.includes("root")) {
+	console.log(path.dirname(process.env.PI_PACKAGE_DIR));
+	process.exit(0);
+}
 fs.writeFileSync(${JSON.stringify(npmRecordPath)}, JSON.stringify(args));
 if (${npmExitCode} !== 0) process.exit(${npmExitCode});
 const binDir = path.join(process.cwd(), "node_modules", ".bin");
@@ -93,7 +97,7 @@ if (process.platform !== "win32") fs.chmodSync(piPath, 0o755);
 		vi.stubEnv("PI_MANAGED_INSTALL_ROOT", managedRoot);
 		process.env.PI_PACKAGE_DIR = selfPackageDir;
 		process.env.PATH = `${binDir}${delimiter}${originalPath ?? ""}`;
-		return { managedRoot, npmRecordPath };
+		return { managedRoot, npmRecordPath, fakeNpmPath };
 	}
 
 	function mockManagedUpdate(targetVersion: string): void {
@@ -673,7 +677,12 @@ if (process.platform !== "win32") fs.chmodSync(piPath, 0o755);
 
 	it.skipIf(PACKAGE_NAME !== "finecode")("keeps FineCode on npm under a Pi managed-install environment", async () => {
 		const targetVersion = getNewerPatchVersion();
-		const { managedRoot, npmRecordPath } = prepareManagedInstall(targetVersion);
+		const { managedRoot, npmRecordPath, fakeNpmPath } = prepareManagedInstall(targetVersion);
+		writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ npmCommand: [originalExecPath, fakeNpmPath] }));
+		Object.defineProperty(process, "execPath", {
+			value: join(managedRoot, "releases", VERSION, "node_modules", ...PACKAGE_NAME.split("/"), "dist", "cli.js"),
+			configurable: true,
+		});
 		const fetchMock = vi.fn(async (input: string | URL | Request) => {
 			const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
 			if (url === "https://registry.npmjs.org/finecode/latest") {
@@ -912,7 +921,7 @@ else fs.writeFileSync(${JSON.stringify(recordPath)},JSON.stringify(args));
 		}
 	});
 
-	it("installs the active package name from the update check during self-update", async () => {
+	itForPiInstall("installs the active package name from the update check during self-update", async () => {
 		const globalPrefix = join(tempDir, "global-prefix");
 		const selfPackageDir = join(globalPrefix, "lib", "node_modules", "@mariozechner", "pi-coding-agent");
 		const fakeNpmPath = join(tempDir, "fake-npm.cjs");
@@ -1007,7 +1016,7 @@ else {
 		}
 	});
 
-	it("fails self-update when renamed npm package installation fails", async () => {
+	itForPiInstall("fails self-update when renamed npm package installation fails", async () => {
 		const globalPrefix = join(tempDir, "global-prefix");
 		const selfPackageDir = join(globalPrefix, "lib", "node_modules", "@mariozechner", "pi-coding-agent");
 		const fakeNpmPath = join(tempDir, "fake-npm-fail.cjs");
