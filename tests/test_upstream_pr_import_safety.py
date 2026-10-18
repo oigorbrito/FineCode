@@ -66,7 +66,7 @@ class ImporterSafetyTests(unittest.TestCase):
         def fake_api(path, method="GET", data=None, accept="application/vnd.github+json"):
             if path.endswith("/pulls/42"):
                 return {"number": 42, "head": {"sha": new_source},
-                        "title": "Changed PR", "state": "open"}
+                        "title": "Changed PR", "state": "open", "html_url": "https://github.com/earendil-works/pi/pull/42", "draft": False}
             raise AssertionError(path)
 
         def fake_git(*args, **kwargs):
