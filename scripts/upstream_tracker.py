@@ -21,6 +21,7 @@ LABELS = {
 }
 AUTO_LABELS = {"upstream", "bug", "enhancement"}
 MAX_ISSUE_WRITES = 10
+MAX_PR_WRITES = 10
 
 
 
@@ -100,9 +101,7 @@ def main():
     ensure_labels()
     records = []
     source_issues = {}
-    for issue in pages(f"/repos/{SOURCE}/issues?state=all&sort=updated&direction=desc"):
-        if not recent(issue.get("updated_at")):
-            break
+    for issue in pages(f"/repos/{SOURCE}/issues?state=open&sort=updated&direction=desc", limit=30):
         if "pull_request" in issue:
             continue
         number = issue["number"]
@@ -159,6 +158,41 @@ def main():
                 set_labels(old["number"], desired, old)
                 writes += 1
     print(f"Issue writes: {writes}/{MAX_ISSUE_WRITES}")
+
+    # Track open upstream PRs even when their code patch cannot apply to FineCode.
+    # Metadata issues are deliberately not substitute code PRs.
+    pr_writes = 0
+    pr_seen = 0
+    for pr in pages(f"/repos/{SOURCE}/pulls?state=open&sort=updated&direction=desc", limit=30):
+        pr_seen += 1
+        key = f"pr:{pr['number']}"
+        title = f"[Pi PR #{pr['number']}] {pr['title']}"
+        body = (
+            f"FineCode-Upstream-Key: {key}\\n\\n"
+            f"**Origem:** {SOURCE}\\n\\n"
+            f"**Link original:** {pr['html_url']}\\n\\n"
+            f"**Estado no upstream:** {pr['state']}\\n\\n"
+            f"**Atualizado/publicado:** {pr.get('updated_at')}\\n\\n"
+            "Registro de rastreabilidade de PR upstream. A importação do patch "
+            "é independente; incompatibilidade não autoriza aplicar código "
+            "à força. Não há merge ou fechamento automático."
+        )
+        old = existing.get(key)
+        if old and old.get("title") == title and (old.get("body") or "") == body:
+            continue
+        if pr_writes >= MAX_PR_WRITES:
+            continue
+        if old:
+            api(f"/repos/{TARGET}/issues/{old['number']}", "PATCH",
+                {"title": title, "body": body})
+            print("Updated", key)
+        else:
+            created = api(f"/repos/{TARGET}/issues", "POST",
+                          {"title": title, "body": body, "labels": ["upstream", "needs-review"]})
+            existing[key] = created
+            print("Created", key)
+        pr_writes += 1
+    print(f"PR tracking: seen {pr_seen}; writes {pr_writes}/{MAX_PR_WRITES}")
 
 
 if __name__ == "__main__":
