@@ -73,12 +73,12 @@ class ImporterSafetyTests(unittest.TestCase):
             calls.append(args)
             if args[:2] == ("merge-base", "--is-ancestor"):
                 return SimpleNamespace(returncode=0, stdout=b"")
+            if args[:3] == ("diff", "--cached", "--quiet"):
+                return SimpleNamespace(returncode=1, stdout=b"")
             if args[0] == "diff":
                 return SimpleNamespace(returncode=0, stdout=b"patch")
             if args[:3] == ("apply", "--3way", "--index"):
                 return SimpleNamespace(returncode=0, stdout=b"")
-            if args[:3] == ("diff", "--cached", "--quiet"):
-                return SimpleNamespace(returncode=1, stdout=b"")
             return SimpleNamespace(returncode=0, stdout=b"")
 
         with patch.object(importer, "TARGET", "example/FineCode"), \
