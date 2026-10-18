@@ -265,7 +265,7 @@
     },
     "enableInstallTelemetry": {
       "type": "boolean",
-      "description": "Send an anonymous version and update ping after changelog-detected updates.",
+      "description": "Enable anonymous install/update reporting where supported and selected provider attribution headers.",
       "default": true
     },
     "enableAnalytics": {
@@ -637,7 +637,7 @@
     },
     "httpProxy": {
       "type": "string",
-      "description": "Proxy URL applied as HTTP_PROXY and HTTPS_PROXY for Pi-managed HTTP clients."
+      "description": "Proxy URL applied as HTTP_PROXY and HTTPS_PROXY for agent-managed HTTP clients."
     },
     "httpIdleTimeoutMs": {
       "anyOf": [

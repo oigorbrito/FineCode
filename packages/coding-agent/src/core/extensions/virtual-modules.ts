@@ -12,6 +12,7 @@ import * as bundledPiCodingAgent from "../../index.ts";
 
 /** Modules available to extensions in source and compiled binary runtimes. */
 export const VIRTUAL_MODULES: Record<string, unknown> = {
+	finecode: bundledPiCodingAgent,
 	typebox: bundledTypebox,
 	"typebox/compile": bundledTypeboxCompile,
 	"typebox/value": bundledTypeboxValue,

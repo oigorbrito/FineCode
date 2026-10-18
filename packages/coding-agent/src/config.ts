@@ -342,6 +342,9 @@ export function getSelfUpdateUnavailableInstruction(
 	const method = detectInstallMethod();
 	const target = normalizeSelfUpdatePackageTarget(updatePackageTarget);
 	if (method === "bun-binary") {
+		if (PACKAGE_NAME === "finecode") {
+			return `Update this ${APP_NAME} binary using the distribution channel from which it was installed.`;
+		}
 		return `Download from: https://github.com/earendil-works/pi/releases/latest`;
 	}
 	const command = getSelfUpdateCommandForMethod(method, packageName, target, npmCommand);
@@ -460,26 +463,6 @@ export function getChangelogPath(): string {
 	return resolve(join(getPackageDir(), "CHANGELOG.md"));
 }
 
-/**
- * Get path to built-in interactive assets directory.
- * - For Bun binary: assets/ next to executable
- * - For Node.js (dist/): dist/modes/interactive/assets/
- * - For source (src/): src/modes/interactive/assets/
- */
-export function getInteractiveAssetsDir(): string {
-	if (isBunBinary) {
-		return join(getPackageDir(), "assets");
-	}
-	const packageDir = getPackageDir();
-	const srcOrDist = existsSync(join(packageDir, "src")) ? "src" : "dist";
-	return join(packageDir, srcOrDist, "modes", "interactive", "assets");
-}
-
-/** Get path to a bundled interactive asset */
-export function getBundledInteractiveAssetPath(name: string): string {
-	return join(getInteractiveAssetsDir(), name);
-}
-
 let quickJSWasmPath: string | undefined;
 
 /** Called by the Bun entry with the path of the QuickJS wasm file embedded in the compiled executable. */
@@ -529,7 +512,7 @@ export function getCodemodeWorkerSpecifier(): string | URL | undefined {
 export type InstallChange = { kind: "updated"; version: string } | { kind: "removed" };
 
 /**
- * Detect that the package this process runs from changed on disk, for example after `pi update`
+ * Detect that the package this process runs from changed on disk, for example after `finecode update`
  * in another terminal. Code loaded on demand can then be missing or from another version.
  *
  * Checks the package.json read at startup. Resolving it again would walk up past a deleted install
@@ -575,15 +558,21 @@ try {
 }
 
 const piConfigName: string | undefined = pkg.piConfig?.name;
-export const PACKAGE_NAME: string = pkg.name || "@earendil-works/pi-coding-agent";
-export const APP_NAME: string = piConfigName || "pi";
-export const APP_TITLE: string = piConfigName ? APP_NAME : "π";
+export const PACKAGE_NAME: string = pkg.name || "finecode";
+export const APP_NAME: string = piConfigName || (PACKAGE_NAME === "finecode" ? "finecode" : "pi");
+export const APP_TITLE: string = APP_NAME === "finecode" ? "FineCode" : APP_NAME === "pi" ? "π" : APP_NAME;
 export const CONFIG_DIR_NAME: string = pkg.piConfig?.configDir || ".pi";
 export const VERSION: string = pkg.version || "0.0.0";
 
 // e.g., PI_CODING_AGENT_DIR or TAU_CODING_AGENT_DIR
 export const ENV_AGENT_DIR = `${APP_NAME.toUpperCase()}_CODING_AGENT_DIR`;
 export const ENV_SESSION_DIR = `${APP_NAME.toUpperCase()}_CODING_AGENT_SESSION_DIR`;
+const LEGACY_ENV_AGENT_DIR = "PI_CODING_AGENT_DIR";
+const LEGACY_ENV_SESSION_DIR = "PI_CODING_AGENT_SESSION_DIR";
+
+export function getSessionDirEnvOverride(): string | undefined {
+	return process.env[ENV_SESSION_DIR] || process.env[LEGACY_ENV_SESSION_DIR];
+}
 
 export function expandTildePath(path: string): string {
 	return normalizePath(path);
@@ -602,8 +591,12 @@ export function getShareViewerUrl(gistId: string): string {
 // =============================================================================
 
 /** Get the agent config directory (e.g., ~/.pi/agent/) */
+export function hasAgentDirEnvOverride(): boolean {
+	return Boolean(process.env[ENV_AGENT_DIR] || process.env[LEGACY_ENV_AGENT_DIR]);
+}
+
 export function getAgentDir(): string {
-	const envDir = process.env[ENV_AGENT_DIR];
+	const envDir = process.env[ENV_AGENT_DIR] || process.env[LEGACY_ENV_AGENT_DIR];
 	if (envDir) {
 		return expandTildePath(envDir);
 	}

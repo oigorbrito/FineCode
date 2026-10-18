@@ -1,6 +1,6 @@
 import { execSync } from "node:child_process";
 import { homedir } from "node:os";
-import { isAbsolute } from "node:path";
+import { isAbsolute, relative, sep } from "node:path";
 import { pathToFileURL } from "node:url";
 import type { TerminalColorMode } from "./colors.ts";
 
@@ -737,7 +737,8 @@ export function hyperlink(text: string, url: string): string {
 function shortenImagePath(filename: string): string {
 	const home = homedir();
 	if (home && (filename === home || filename.startsWith(`${home}/`) || filename.startsWith(`${home}\\`))) {
-		return `~${filename.slice(home.length)}`;
+		const homeRelativePath = relative(home, filename);
+		return homeRelativePath ? `~/${homeRelativePath.split(sep).join("/")}` : "~";
 	}
 	return filename;
 }

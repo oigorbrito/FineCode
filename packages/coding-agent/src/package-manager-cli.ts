@@ -37,7 +37,7 @@ import { hasTrustRequiringProjectResources, ProjectTrustStore } from "./core/tru
 import { spawnProcess, spawnProcessSync, waitForChildProcess } from "./utils/child-process.ts";
 import { canonicalizePath, getCwdRelativePath } from "./utils/paths.ts";
 import { getPiUserAgent } from "./utils/pi-user-agent.ts";
-import { formatVersionCheckError, getLatestPiRelease, isNewerPackageVersion } from "./utils/version-check.ts";
+import { formatVersionCheckError, getLatestPackageRelease, isNewerPackageVersion } from "./utils/version-check.ts";
 import {
 	cleanupWindowsSelfUpdateQuarantine,
 	quarantineWindowsNativeDependencies,
@@ -52,6 +52,9 @@ const MANAGED_INSTALL_MARKER = "managed-install.json";
 const MANAGED_RELEASE_VERSION_RE = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/;
 
 function getActiveManagedInstallRoot(): string | undefined {
+	// FineCode uses its npm release channel, not the upstream Pi managed installer.
+	if (PACKAGE_NAME === "finecode") return undefined;
+
 	const configuredRoot = process.env.PI_MANAGED_INSTALL_ROOT?.trim();
 	if (!configuredRoot) return undefined;
 
@@ -285,13 +288,14 @@ function reportSettingsErrors(settingsManager: SettingsManager, context: string)
 }
 
 function getPackageCommandUsage(command: PackageCommand): string {
+	const updateTargets = PACKAGE_NAME === "finecode" ? "[source|self]" : "[source|self|pi]";
 	switch (command) {
 		case "install":
 			return `${APP_NAME} install <source> [-l] [--approve|--no-approve]`;
 		case "remove":
 			return `${APP_NAME} remove <source> [-l] [--approve|--no-approve]`;
 		case "update":
-			return `${APP_NAME} update [source|self|pi] [--self|--extensions|--models|--all] [--extension <source>] [--approve|--no-approve] [--force]`;
+			return `${APP_NAME} update ${updateTargets} [--self|--extensions|--models|--all] [--extension <source>] [--approve|--no-approve] [--force]`;
 		case "list":
 			return `${APP_NAME} list [--approve|--no-approve]`;
 	}
@@ -359,25 +363,25 @@ Examples:
 			console.log(`${chalk.bold("Usage:")}
   ${getPackageCommandUsage("update")}
 
-Update pi, installed packages, or model catalogs.
+Update ${APP_NAME}, installed packages, or model catalogs.
 
 Options:
-  --self                  Update pi only (default when no target is given)
+  --self                  Update ${APP_NAME} only (default when no target is given)
   --extensions            Update installed packages only
   --models                Refresh model catalogs only
-  --all                   Update pi and installed packages
+  --all                   Update ${APP_NAME} and installed packages
   --extension <source>    Update one package only
   -a, --approve           Trust project-local files for this command
   -na, --no-approve       Ignore project-local files for this command
-  --force                 Reinstall pi even if the current version is latest
+  --force                 Reinstall ${APP_NAME} even if the current version is latest
 
 Short forms:
-  ${APP_NAME} update                Update pi only
-  ${APP_NAME} update --all          Update pi and all extensions
+  ${APP_NAME} update                Update ${APP_NAME} only
+  ${APP_NAME} update --self         Explicitly update ${APP_NAME} only
+  ${APP_NAME} update --all          Update ${APP_NAME} and all extensions
   ${APP_NAME} update --models       Refresh model catalogs only
   ${APP_NAME} update <source>       Update one package
-  ${APP_NAME} update pi             Update pi only (self works as alias to pi)
-`);
+${PACKAGE_NAME === "finecode" ? `  Legacy alias: ${APP_NAME} update pi (same as --self)\n` : `  ${APP_NAME} update pi             Update ${APP_NAME} only\n`}`);
 			return;
 
 		case "list":
@@ -682,9 +686,9 @@ interface SelfUpdatePlan {
 }
 
 async function getSelfUpdatePlan(force: boolean): Promise<SelfUpdatePlan> {
-	let latestRelease: Awaited<ReturnType<typeof getLatestPiRelease>>;
+	let latestRelease: Awaited<ReturnType<typeof getLatestPackageRelease>>;
 	try {
-		latestRelease = await getLatestPiRelease(VERSION, { retry: true });
+		latestRelease = await getLatestPackageRelease(VERSION, { retry: true });
 	} catch (error: unknown) {
 		throw new Error(`Could not determine latest ${APP_NAME} version: ${formatVersionCheckError(error)}`, {
 			cause: error,
@@ -1115,9 +1119,9 @@ export async function handlePackageCommand(
 						return true;
 					}
 					console.log(chalk.green(`Updated ${APP_NAME} from ${VERSION} to ${selfUpdatePlan.version}`));
-					// The pi.dev installer migrates global npm installs to a managed install
-					// that pins all dependencies. It does not migrate pnpm, yarn, or bun installs.
-					if (installMethod === "npm") {
+					// The pi.dev installer migrates Pi npm installs to a managed install.
+					// FineCode releases use the npm registry and do not use that installer.
+					if (installMethod === "npm" && PACKAGE_NAME !== "finecode") {
 						const installerCommand =
 							process.platform === "win32"
 								? 'powershell -c "irm https://pi.dev/install.ps1 | iex"'

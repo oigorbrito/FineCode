@@ -1,8 +1,10 @@
+[**English**](slash-commands.md) | [Português (Brasil)](pt-BR/slash-commands.md)
+
 # Slash commands
 
-Type `/` in Pi's terminal editor to search the commands available in the current session. This page lists the built-in commands in the current Pi release.
+Type `/` in FineCode's terminal editor to search the commands available in the current session. This page lists the built-in commands in the current FineCode release.
 
-Extensions, prompt templates, and skills can add commands. The command menu in Pi is therefore the exact reference for the resources loaded in your session.
+Extensions, prompt templates, and skills can add commands. The command menu in FineCode is therefore the exact reference for the resources loaded in your session.
 
 ## Models and settings
 
@@ -37,7 +39,7 @@ Extensions, prompt templates, and skills can add commands. The command menu in P
 | `/copy` | Copy the last assistant message |
 | `/export [path]` | Export the session as HTML or JSONL |
 | `/share` | Upload the session and return a viewer link |
-| `/bug [description]` | Prepare a private bug report for the Pi developers |
+| `/bug [description]` | Prepare a private report for the upstream Pi developers through Radius |
 
 Review a session before exporting or sharing it. Sessions can contain prompts, tool arguments, command output, file contents, and credentials exposed during the conversation.
 
@@ -45,11 +47,11 @@ Review a session before exporting or sharing it. Sessions can contain prompts, t
 
 | Command | Description |
 |---|---|
-| `/trust` | Save a project trust decision for future Pi processes |
+| `/trust` | Save a project trust decision for future FineCode processes |
 | `/reload` | Reload keybindings, extensions, skills, templates, themes, and context files |
 | `/hotkeys` | Show active keyboard shortcuts |
 | `/changelog` | Show changelog entries |
-| `/quit` | Quit Pi |
+| `/quit` | Quit FineCode |
 
 ## Commands added by resources
 

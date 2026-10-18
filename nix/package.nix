@@ -17,7 +17,7 @@
 let
   nodejs = nodejs_22;
   packageJson = lib.importJSON (source + "/packages/coding-agent/package.json");
-  # Lockfile root used by the pi.dev installer. It pins the coding agent's
+  # Lockfile root used by the FineCode package. It pins the coding agent's
   # runtime dependency tree and is kept in sync with package-lock.json by
   # `npm run check`.
   installLock = source + "/packages/coding-agent/install-lock";
@@ -30,7 +30,7 @@ let
   };
 
   workspacePackages = stdenv.mkDerivation {
-    pname = "pi-workspace-packages";
+    pname = "finecode-workspace-packages";
     inherit (packageJson) version;
     src = source;
 
@@ -82,7 +82,7 @@ let
       "node_modules/@earendil-works/pi-agent-core" = workspacePackages + "/agent.tgz";
       "node_modules/@earendil-works/pi-ai" = workspacePackages + "/ai.tgz";
       "node_modules/@earendil-works/pi-codemode" = workspacePackages + "/codemode.tgz";
-      "node_modules/@earendil-works/pi-coding-agent" = workspacePackages + "/coding-agent.tgz";
+      "node_modules/finecode" = workspacePackages + "/coding-agent.tgz";
       "node_modules/@earendil-works/pi-mcp" = workspacePackages + "/mcp.tgz";
       "node_modules/@earendil-works/pi-telemetry" = workspacePackages + "/telemetry.tgz";
       "node_modules/@earendil-works/pi-tui" = workspacePackages + "/tui.tgz";
@@ -90,7 +90,7 @@ let
   };
 in
 stdenv.mkDerivation {
-  pname = "pi";
+  pname = "finecode";
   inherit (packageJson) version;
   src = installLock;
   inherit npmDeps;
@@ -115,15 +115,15 @@ stdenv.mkDerivation {
   installPhase = ''
     runHook preInstall
 
-    mkdir -p "$out/lib/pi" "$out/bin"
-    cp -R . "$out/lib/pi"
+    mkdir -p "$out/lib/finecode" "$out/bin"
+    cp -R . "$out/lib/finecode"
 
-    # The wrapper runs Pi with an absolute Node path. Node is only on PATH so Pi can
+    # The wrapper runs FineCode with an absolute Node path. Node is only on PATH so FineCode can
     # find npm for package installs; append it so that shells started by the
     # bash tool keep the user's node/npm (e.g. from mise or nvm). fd, ripgrep,
-    # and the clipboard tools are Pi's own dependencies and take precedence.
-    makeWrapper ${nodejs}/bin/node "$out/bin/pi" \
-      --add-flags "$out/lib/pi/node_modules/@earendil-works/pi-coding-agent/dist/bundle/cli.js" \
+    # and the clipboard tools are FineCode's own dependencies and take precedence.
+    makeWrapper ${nodejs}/bin/node "$out/bin/finecode" \
+      --add-flags "$out/lib/finecode/node_modules/finecode/dist/bundle/cli.js" \
       --suffix PATH : ${lib.makeBinPath [ nodejs ]} \
       --prefix PATH : ${
         lib.makeBinPath (
@@ -138,26 +138,29 @@ stdenv.mkDerivation {
         )
       }
 
+    ln -s finecode "$out/bin/pi"
+
     runHook postInstall
   '';
 
   doInstallCheck = true;
   installCheckPhase = ''
     runHook preInstallCheck
+    test "$("$out/bin/finecode" --version)" = "${packageJson.version}"
     test "$("$out/bin/pi" --version)" = "${packageJson.version}"
     # Load host-platform TUI helpers directly so missing native dependencies
     # fail the build rather than silently disabling clipboard support.
     ${nodejs}/bin/node -e \
       "const fs = require('node:fs');
        const path = require('node:path');
-       const dir = '$out/lib/pi/node_modules/@earendil-works/pi-tui/native/' + process.platform + '/prebuilds/' + process.platform + '-' + process.arch;
+       const dir = '$out/lib/finecode/node_modules/@earendil-works/pi-tui/native/' + process.platform + '/prebuilds/' + process.platform + '-' + process.arch;
        if (fs.existsSync(dir)) {
          for (const file of fs.readdirSync(dir)) {
            if (file.endsWith('.node')) require(path.join(dir, file));
          }
        }"
     ${nodejs}/bin/node -e \
-      "require('$out/lib/pi/node_modules/@silvia-odwyer/photon-node')"
+      "require('$out/lib/finecode/node_modules/@silvia-odwyer/photon-node')"
     runHook postInstallCheck
   '';
 
@@ -165,7 +168,7 @@ stdenv.mkDerivation {
     description = packageJson.description;
     homepage = "https://pi.dev";
     license = lib.licenses.mit;
-    mainProgram = "pi";
+    mainProgram = "finecode";
     platforms = [
       "aarch64-darwin"
       "aarch64-linux"

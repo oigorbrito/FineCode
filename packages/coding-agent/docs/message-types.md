@@ -1,10 +1,12 @@
+[**English**](message-types.md) | [Português (Brasil)](pt-BR/message-types.md)
+
 # Message Types
 
-Pi uses `AgentMessage` values in SDK state, lifecycle events, RPC responses, and persisted session message entries. This page defines those shared messages and their content blocks.
+FineCode uses `AgentMessage` values in SDK state, lifecycle events, RPC responses, and persisted session message entries. This page defines those shared messages and their content blocks.
 
 Message timestamps are Unix timestamps in milliseconds. They are different from the ISO 8601 timestamps on [session entries](session-format.md#entry-base).
 
-Source definitions:
+Upstream Pi source references (the code may differ from this FineCode checkout):
 
 - [`packages/ai/src/types.ts`](https://github.com/earendil-works/pi/blob/main/packages/ai/src/types.ts) defines provider-facing messages and content blocks.
 - [`packages/agent/src/types.ts`](https://github.com/earendil-works/pi/blob/main/packages/agent/src/types.ts) defines the extensible `AgentMessage` union.
@@ -142,7 +144,7 @@ interface AssistantMessage {
 
 `responseModel` records a concrete provider response model when it differs from the requested model. `responseId`, `providerThinkingLevel`, `thinkingLevel`, `diagnostics`, and `rawStopReason` preserve provider or runtime details.
 
-`"pending"` is used for a partial assistant message while it streams. The completed message in `message_end` has a terminal stop reason, and Pi does not persist `"pending"` assistant messages in session JSONL.
+`"pending"` is used for a partial assistant message while it streams. The completed message in `message_end` has a terminal stop reason, and FineCode does not persist `"pending"` assistant messages in session JSONL.
 
 A `"deferred"` response has a `DeferredHandle` with the provider data needed to retrieve it:
 
@@ -215,7 +217,7 @@ interface BashExecutionMessage {
 }
 ```
 
-Unless `excludeFromContext` is true, Pi converts this message to user-role text before the next model request.
+Unless `excludeFromContext` is true, FineCode converts this message to user-role text before the next model request.
 
 ### CustomMessage
 
@@ -232,7 +234,7 @@ interface CustomMessage<T = unknown> {
 }
 ```
 
-Pi converts its content to a user message for model requests. `display` controls terminal rendering; `details` is not sent to the model.
+FineCode converts its content to a user message for model requests. `display` controls terminal rendering; `details` is not sent to the model.
 
 ### BranchSummaryMessage
 
@@ -245,7 +247,7 @@ interface BranchSummaryMessage {
 }
 ```
 
-Pi creates this context message from a persisted `branch_summary` entry.
+FineCode creates this context message from a persisted `branch_summary` entry.
 
 ### CompactionSummaryMessage
 
@@ -258,7 +260,7 @@ interface CompactionSummaryMessage {
 }
 ```
 
-Pi creates this context message from a persisted `compaction` entry.
+FineCode creates this context message from a persisted `compaction` entry.
 
 ## AgentMessage union
 

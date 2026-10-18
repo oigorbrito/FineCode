@@ -17,11 +17,11 @@
  * is used automatically (syntax highlighting, line numbers, truncation warnings).
  *
  * Usage:
- *   pi -e ./tool-override.ts
+ *   finecode -e ./tool-override.ts
  */
 
 import type { TextContent } from "@earendil-works/pi-ai";
-import { type ExtensionAPI, getAgentDir, withFileMutationQueue } from "@earendil-works/pi-coding-agent";
+import { type ExtensionAPI, getAgentDir, withFileMutationQueue } from "finecode";
 import { constants, readFileSync } from "fs";
 import { access, appendFile, readFile } from "fs/promises";
 import { join, resolve } from "path";

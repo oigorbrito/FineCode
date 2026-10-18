@@ -3,6 +3,7 @@ import {
 	checkForNewPiVersion,
 	comparePackageVersions,
 	formatVersionCheckError,
+	getLatestPackageRelease,
 	getLatestPiRelease,
 	getLatestPiVersion,
 	isNewerPackageVersion,
@@ -40,6 +41,17 @@ describe("version checks", () => {
 
 		await expect(checkForNewPiVersion("1.2.3")).resolves.toBeUndefined();
 		await expect(checkForNewPiVersion("1.2.2")).resolves.toEqual({ version: "1.2.3" });
+	});
+
+	it("checks the FineCode npm package registry for its latest release", async () => {
+		const fetchMock = vi.fn(async () => Response.json({ version: "1.2.4" }));
+		vi.stubGlobal("fetch", fetchMock);
+
+		await expect(getLatestPackageRelease("1.2.3")).resolves.toEqual({ version: "1.2.4" });
+		expect(fetchMock).toHaveBeenCalledWith(
+			"https://registry.npmjs.org/finecode/latest",
+			expect.objectContaining({ headers: expect.objectContaining({ accept: "application/json" }) }),
+		);
 	});
 
 	it("uses the pi.dev version check api with a pi user agent", async () => {

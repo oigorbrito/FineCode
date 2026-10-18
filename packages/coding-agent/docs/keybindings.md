@@ -1,12 +1,15 @@
+[**English**](keybindings.md) | [Português (Brasil)](pt-BR/keybindings.md)
+
 # Keybindings Reference
 
-Pi exposes named actions, such as `app.session.new`, that can be assigned keybindings. You can change default assignments or bind unassigned actions in Pi's [user configuration](configuration.md#agent-directory).
+FineCode exposes named actions, such as `app.session.new`, that can be assigned keybindings. You can change default assignments or bind unassigned actions in FineCode's [user configuration](configuration.md#agent-directory).
 
 Run `/hotkeys` to see the active shortcuts for the main editor and application.
 
+<a id="assign-keybindings"></a>
 ## Assign keybindings
 
-Create `<agent-dir>/keybindings.json`. The agent directory defaults to `~/.pi/agent` and is described in [Agent directory](configuration.md#agent-directory).
+Create `<agent-dir>/keybindings.json`. The agent directory defaults to `~/.pi/agent` and is described in [Agent directory](configuration.md#agent-directory). FineCode includes its [keybindings schema](../schemas/keybindings.schema.json). The `$id` URL is hosted by upstream Pi and retained for compatibility; FineCode does not host schema endpoints.
 
 Map each action identifier to one key or a list of keys:
 
@@ -96,6 +99,7 @@ The dedicated history actions browse prompt history regardless of cursor positio
 | `tui.select.confirm` | `enter` | Confirm selection |
 | `tui.select.cancel` | `escape`, `ctrl+c` | Cancel selection |
 
+<a id="tui-fullscreen-viewport"></a>
 #### Fullscreen
 
 In fullscreen mode, these actions control the transcript and take precedence over editor actions using the same key.
@@ -128,8 +132,9 @@ In fullscreen mode, these actions control the transcript and take precedence ove
 | `app.editor.external` | `ctrl+g` | Open in external editor (`externalEditor`, `$VISUAL`, `$EDITOR`, Notepad on Windows, or `nano` elsewhere) |
 | `app.clipboard.pasteImage` | `ctrl+v` (`alt+v` on Windows and WSL) | Paste files on macOS, images, or text from clipboard |
 
-On native Windows, `app.suspend` has no default because Windows terminals do not support Unix job control. If you assign it manually, Pi shows a status message instead of suspending. WSL uses the normal `ctrl+z` and `fg` behavior.
+On native Windows, `app.suspend` has no default because Windows terminals do not support Unix job control. If you assign it manually, FineCode shows a status message instead of suspending. WSL uses the normal `ctrl+z` and `fg` behavior.
 
+<a id="sessions"></a>
 ### Sessions
 
 | Keybinding id | Default | Description |
@@ -145,6 +150,7 @@ On native Windows, `app.suspend` has no default because Windows terminals do not
 | `app.session.delete` | `ctrl+d` | Delete session |
 | `app.session.deleteNoninvasive` | `ctrl+backspace` | Delete session when query is empty |
 
+<a id="models-and-thinking"></a>
 ### Models and Thinking
 
 | Keybinding id | Default | Description |
@@ -157,6 +163,7 @@ On native Windows, `app.suspend` has no default because Windows terminals do not
 | `app.thinking.save` | `ctrl+s` | Save current thinking level to settings |
 | `app.thinking.toggle` | `ctrl+t` | Collapse or expand thinking blocks |
 
+<a id="display-and-message-queue"></a>
 ### Display and Message Queue
 
 | Keybinding id | Default | Description |

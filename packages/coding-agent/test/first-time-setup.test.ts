@@ -33,8 +33,8 @@ describe("shouldRunFirstTimeSetup", () => {
 		}
 	});
 
-	it("returns true when experimental, default agent dir, and no settings.json", () => {
-		expect(shouldRunFirstTimeSetup(settingsPath)).toBe(true);
+	it("does not show the Pi-specific first-time setup in the FineCode distribution", () => {
+		expect(shouldRunFirstTimeSetup(settingsPath)).toBe(false);
 	});
 
 	it("returns false when experimental features are disabled", () => {

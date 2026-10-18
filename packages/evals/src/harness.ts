@@ -17,7 +17,7 @@ import {
 	ModelRuntime,
 	readStoredCredential,
 	SessionManager,
-} from "@earendil-works/pi-coding-agent";
+} from "finecode";
 import {
 	attachHarnessRunToError,
 	createHarness,
@@ -80,7 +80,7 @@ export function resolveModelSelection(
 }
 
 export function applyIsolatedEnvironment(home: string, agentDir: string): () => void {
-	const overrides = { HOME: home, USERPROFILE: home, PI_CODING_AGENT_DIR: agentDir };
+	const overrides = { HOME: home, USERPROFILE: home, FINECODE_CODING_AGENT_DIR: agentDir };
 	const previous = new Map<string, string | undefined>();
 	for (const name of Object.keys(process.env)) {
 		if (!name.startsWith("PI_EVAL_")) continue;
@@ -262,7 +262,9 @@ export function verifySystemPrompt(
 	if (!systemPrompt.includes("\n<rules>\n")) {
 		throw new Error(`Pi system prompt lost its rules in the ${options.name} eval variant.`);
 	}
-	const hasDocumentation = systemPrompt.includes("\n<docs>\nPi documentation (read only");
+	const hasDocumentation =
+		systemPrompt.includes("\n<docs>\nPi documentation (read only") ||
+		systemPrompt.includes("\n<docs>\nFineCode documentation (read only");
 	if (hasDocumentation !== options.expectedPiDocumentation) {
 		throw new Error(`Pi system prompt does not match the ${options.name} eval variant.`);
 	}
@@ -464,7 +466,7 @@ async function runPiCodingAgent<TOutput extends JsonValue>(
 		}
 		throw failure;
 	}
-	if (!result) throw new Error("Pi eval completed without a result.");
+	if (!result) throw new Error("FineCode eval completed without a result.");
 	return { ...result, timings: { totalMs: performance.now() - startedAt } };
 }
 
@@ -476,7 +478,7 @@ export function createPiCodingAgentHarness<TOutput extends JsonValue>(
 	options: PiCodingAgentHarnessOptions | PiCodingAgentHarnessWithOutput<TOutput> = {},
 ): Harness<PiCodingAgentInput, string | TOutput> {
 	return createHarness<PiCodingAgentInput, string | TOutput>({
-		name: options.name ?? "pi-coding-agent",
+		name: options.name ?? "finecode-coding-agent",
 		run: ({ input, signal, setArtifact }) => runPiCodingAgent(input, signal, setArtifact, options),
 	});
 }

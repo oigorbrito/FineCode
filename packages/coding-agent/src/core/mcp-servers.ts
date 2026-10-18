@@ -108,13 +108,13 @@ export interface McpOAuthConfig {
 	scope?: string;
 	/**
 	 * `client_name` sent with dynamic client registration, for servers that only accept known clients.
-	 * Default: `pi`.
+	 * Default: the current application name.
 	 */
 	clientName?: string;
 	/**
-	 * How pi identifies itself without `clientId`. `dcr` (default): dynamic client registration. `cimd`:
-	 * pi's Client ID Metadata Document on pi.dev, for authorization servers that allow pi by that URL. The
-	 * server must support it for public clients, and the callback must use the default path `/callback`.
+	 * How the client identifies itself without `clientId`. `dcr` (default): dynamic client registration. `cimd`:
+	 * the upstream Pi Client ID Metadata Document on pi.dev, for authorization servers that allow that client
+	 * by URL. The server must support it for public clients, and the callback must use the default path `/callback`.
 	 */
 	clientRegistration?: "dcr" | "cimd";
 	/**
@@ -127,7 +127,7 @@ export interface McpOAuthConfig {
 
 const LOOPBACK_HOSTS = ["localhost", "127.0.0.1", "[::1]"];
 
-/** Whether a redirect URI can be served by pi's loopback callback server. */
+/** Whether a redirect URI can be served by the agent's loopback callback server. */
 export function isLoopbackRedirectUri(value: string): boolean {
 	if (!URL.canParse(value)) return false;
 	const url = new URL(value);
@@ -141,7 +141,7 @@ export interface McpHttpServerConfig extends McpServerConfigBase {
 	headers?: Record<string, string>;
 	oauth?: McpOAuthConfig;
 	/**
-	 * Send the token of a pi provider (`/login <provider>`) instead of using OAuth. Not allowed in project
+	 * Send the token of a configured model provider (`/login <provider>`) instead of using OAuth. Not allowed in project
 	 * `mcp.json` files, and requires https except on loopback hosts, since it sends the credential to `url`.
 	 */
 	auth?: { provider: string };

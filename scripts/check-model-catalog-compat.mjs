@@ -88,9 +88,23 @@ function main() {
 	const releaseDir = join(temporaryDir, "release");
 	try {
 		console.log(`Checking the model catalog against pi ${release}...`);
-		// The release's source code.
+		// The release source belongs to the repository declared by pi-ai, which
+		// may differ from the repository running this workflow (for example, FineCode).
+		const packageManifest = JSON.parse(readFileSync(join(root, "packages/ai/package.json"), "utf8"));
+		const repository =
+			typeof packageManifest.repository === "string"
+				? packageManifest.repository
+				: packageManifest.repository?.url;
+		const repositoryUrl = repository?.replace(/^git\+/, "");
+		if (!repositoryUrl) throw new Error("pi-ai package.json does not declare a source repository");
+		const parsedRepositoryUrl = new URL(repositoryUrl);
+		if (parsedRepositoryUrl.protocol !== "https:" || parsedRepositoryUrl.username || parsedRepositoryUrl.password) {
+			throw new Error("pi-ai source repository must use credential-free HTTPS");
+		}
+
 		const archive = join(temporaryDir, "release.tar");
-		run("git", ["archive", "--prefix=release/", "--output", archive, `v${release}`], root);
+		run("git", ["fetch", "--no-tags", "--depth=1", repositoryUrl, `refs/tags/v${release}`], root);
+		run("git", ["archive", "--prefix=release/", "--output", archive, "FETCH_HEAD"], root);
 		run("tar", ["xf", archive, "-C", temporaryDir], root);
 
 		// The built-in models users have: the data shipped in the published package.

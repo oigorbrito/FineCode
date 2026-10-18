@@ -1,4 +1,5 @@
 import type { Api, Model, ProviderHeaders } from "@earendil-works/pi-ai";
+import { PACKAGE_NAME } from "../config.ts";
 import type { SettingsManager } from "./settings-manager.ts";
 import { isInstallTelemetryEnabled } from "./telemetry.ts";
 
@@ -7,6 +8,7 @@ const NVIDIA_NIM_HOST = "integrate.api.nvidia.com";
 const CLOUDFLARE_API_HOST = "api.cloudflare.com";
 const CLOUDFLARE_AI_GATEWAY_HOST = "gateway.ai.cloudflare.com";
 const OPENCODE_HOST = "opencode.ai";
+const IS_FINECODE = PACKAGE_NAME === "finecode";
 
 function matchesHost(baseUrl: string, expectedHost: string): boolean {
 	try {
@@ -42,22 +44,24 @@ function getDefaultAttributionHeaders(
 	}
 
 	if (isOpenRouterModel(model)) {
-		return {
-			"HTTP-Referer": "https://pi.dev",
-			"X-OpenRouter-Title": "pi",
-			"X-OpenRouter-Categories": "cli-agent",
-		};
+		return IS_FINECODE
+			? { "X-OpenRouter-Title": "FineCode", "X-OpenRouter-Categories": "cli-agent" }
+			: {
+					"HTTP-Referer": "https://pi.dev",
+					"X-OpenRouter-Title": "pi",
+					"X-OpenRouter-Categories": "cli-agent",
+				};
 	}
 
 	if (isNvidiaNimModel(model)) {
 		return {
-			"X-BILLING-INVOKE-ORIGIN": "Pi",
+			"X-BILLING-INVOKE-ORIGIN": IS_FINECODE ? "FineCode" : "Pi",
 		};
 	}
 
 	if (isCloudflareModel(model)) {
 		return {
-			"User-Agent": "pi-coding-agent",
+			"User-Agent": IS_FINECODE ? "finecode-coding-agent" : "pi-coding-agent",
 		};
 	}
 
@@ -73,7 +77,7 @@ function getSessionHeaders(model: Model<Api>, sessionId: string | undefined): Re
 	) {
 		return undefined;
 	}
-	return { "x-opencode-session": sessionId, "x-opencode-client": "pi" };
+	return { "x-opencode-session": sessionId, "x-opencode-client": IS_FINECODE ? "finecode" : "pi" };
 }
 
 export function mergeProviderAttributionHeaders(

@@ -41,8 +41,9 @@ describe("pi mcp", () => {
 		expect(exitCode).toBe(1);
 		expect(output).toContain("fixture: connected, 1 tool (codemode, global)\n");
 		expect(output).toContain("  tools: echo");
+		expect(output).toContain("broken: failed (codemode, global)\n  pi-test-missing-mcp-server");
 		expect(output).toContain(
-			"broken: failed (codemode, global)\n  pi-test-missing-mcp-server\n  spawn pi-test-missing-mcp-server ENOENT",
+			process.platform === "win32" ? "MCP connection closed" : "spawn pi-test-missing-mcp-server ENOENT",
 		);
 		expect(output).toContain("parked: disabled (codemode, global)");
 		expect(output).toContain("config error: ");
@@ -142,7 +143,7 @@ describe("pi mcp", () => {
 			undefined,
 			agentDir,
 		);
-		expect(oauth.output).toContain("If it requires sign-in: pi mcp login sentry");
+		expect(oauth.output).toContain("If it requires sign-in: finecode mcp login sentry");
 		expect(readConfig(join(agentDir, "mcp.json")).mcpServers).toMatchObject({
 			sentry: { url: "https://mcp.sentry.dev/mcp", oauth: { clientId: "pi", clientName: "Claude Code" } },
 		});

@@ -73,7 +73,7 @@ If rebase conflicts occur:
 
 ## Issues and PRs
 
-See `CONTRIBUTING.md` for the contributor gate (auto-close workflows, `lgtm`/`lgtmi`, quality bar).
+See `CONTRIBUTING.md` for FineCode's current contribution guidance. FineCode is maintained solo; contributor-approval gates no longer auto-close issues or PRs, which remain for manual maintainer decisions.
 
 When reviewing PRs:
 

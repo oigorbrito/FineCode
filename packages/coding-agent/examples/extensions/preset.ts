@@ -30,7 +30,7 @@
  * ```
  *
  * Usage:
- * - `pi --preset plan` - start with plan preset
+ * - `finecode --preset plan` - start with plan preset
  * - `/preset` - show selector to switch presets mid-session
  * - `/preset implement` - switch to implement preset directly
  * - `Ctrl+Shift+U` - cycle through presets
@@ -41,9 +41,9 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Api, Model } from "@earendil-works/pi-ai";
-import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { CONFIG_DIR_NAME, DynamicBorder, getAgentDir } from "@earendil-works/pi-coding-agent";
 import { Container, Key, type SelectItem, SelectList, Text } from "@earendil-works/pi-tui";
+import type { ExtensionAPI, ExtensionContext } from "finecode";
+import { CONFIG_DIR_NAME, DynamicBorder, getAgentDir } from "finecode";
 
 // Preset configuration
 interface Preset {

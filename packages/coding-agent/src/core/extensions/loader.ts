@@ -99,6 +99,7 @@ function getAliases(): Record<string, string> {
 	);
 
 	_aliases = {
+		finecode: piCodingAgentEntry,
 		"@earendil-works/pi-coding-agent": piCodingAgentEntry,
 		"@earendil-works/pi-agent-core": piAgentCoreEntry,
 		"@earendil-works/pi-tui": piTuiEntry,

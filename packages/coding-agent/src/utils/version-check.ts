@@ -1,8 +1,10 @@
 import { compare, valid } from "semver";
+import { PACKAGE_NAME } from "../config.ts";
 import { fetchWithRetry } from "./management-http.ts";
 import { getPiUserAgent } from "./pi-user-agent.ts";
 
 const LATEST_VERSION_URL = "https://pi.dev/api/latest-version";
+const FINECODE_LATEST_VERSION_URL = "https://registry.npmjs.org/finecode/latest";
 const DEFAULT_VERSION_CHECK_TIMEOUT_MS = 10000;
 
 export interface LatestPiRelease {
@@ -87,6 +89,28 @@ export async function getLatestPiRelease(
 	};
 }
 
+export async function getLatestPackageRelease(
+	currentVersion: string,
+	options: { timeoutMs?: number; retry?: boolean } = {},
+): Promise<LatestPiRelease | undefined> {
+	if (PACKAGE_NAME !== "finecode") return getLatestPiRelease(currentVersion, options);
+	if (process.env.PI_OFFLINE) return undefined;
+
+	const response = await fetchWithRetry(
+		FINECODE_LATEST_VERSION_URL,
+		{
+			headers: {
+				"User-Agent": `finecode/${currentVersion} (${process.platform}; ${process.versions.bun ? `bun/${process.versions.bun}` : `node/${process.version}`}; ${process.arch})`,
+				accept: "application/json",
+			},
+		},
+		{ maxRetries: options.retry ? 2 : 0, timeoutMs: options.timeoutMs ?? DEFAULT_VERSION_CHECK_TIMEOUT_MS },
+	);
+	if (!response.ok) return undefined;
+	const data = (await response.json()) as { version?: unknown };
+	return typeof data.version === "string" && data.version.trim() ? { version: data.version.trim() } : undefined;
+}
+
 export async function getLatestPiVersion(
 	currentVersion: string,
 	options: { timeoutMs?: number; retry?: boolean } = {},
@@ -98,7 +122,7 @@ export async function checkForNewPiVersion(currentVersion: string): Promise<Late
 	if (process.env.PI_SKIP_VERSION_CHECK) return undefined;
 
 	try {
-		const latestRelease = await getLatestPiRelease(currentVersion);
+		const latestRelease = await getLatestPackageRelease(currentVersion);
 		if (latestRelease && isNewerPackageVersion(latestRelease.version, currentVersion)) {
 			return latestRelease;
 		}
