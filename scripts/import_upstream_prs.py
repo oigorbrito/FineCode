@@ -208,7 +208,7 @@ def import_one(pr):
         git("fetch", "--no-tags", "https://github.com/" + SOURCE + ".git",
             f"refs/pull/{number}/head:refs/remotes/pi-upstream/pr-{number}")
         if git("merge-base", "--is-ancestor", old_source, source_sha, ok=False).returncode:
-            print(f"CONFLICT upstream #{number}: upstream history rewritten", flush=True)
+            print(f"REBASE_REVIEW upstream #{number}: upstream history rewritten; preserved FineCode branch; manual adaptation required", flush=True)
             return "conflict"
         git("checkout", "-B", "finecode-upstream-working", actual_tip)
         delta = git("diff", "--binary", old_source, source_sha).stdout
@@ -271,7 +271,12 @@ def main():
             break
         items.extend(group)
     known = {p["number"] for p in items}
-    local = api(f"/repos/{TARGET}/pulls?state=open&per_page=100")
+    local = []
+    for page in range(1, 101):
+        batch = api(f"/repos/{TARGET}/pulls?state=open&per_page=100&page={page}")
+        local.extend(batch)
+        if len(batch) < 100:
+            break
     import re
     for mirror in local:
         match = re.match(r"upstream/pi-pr-([0-9]+)$", mirror.get("head", {}).get("ref", ""))
@@ -322,7 +327,7 @@ def main():
             git("reset", "--hard", f"origin/{BASE}", ok=False)
         if created >= MAX_NEW:
             break
-    print(f"Reviewed {seen}; created {created} PRs; conflicts {conflicts}; failures {failures}; blocked {blocked}", flush=True)
+    print(f"Reviewed {seen}; created {created} PRs; conflicts {conflicts}; failures {failures}; blocked {blocked}; updates are logged as UPDATED upstream; conflicts require manual review", flush=True)
     if failures or blocked:
         raise SystemExit("Upstream synchronization encountered operational failures; review logs.")
 
