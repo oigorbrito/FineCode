@@ -11,6 +11,16 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  upstream-pr-import-safety:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Test upstream PR import safety offline
+        run: python3 -m unittest discover -s tests -p 'test_upstream_pr_import_safety.py' -v
+
   upstream-mirror-reconciliation:
     runs-on: ubuntu-latest
     permissions:
