@@ -61,7 +61,8 @@ class MirrorReconciliationTest(unittest.TestCase):
              patch.object(tracker, "ensure_labels", lambda: None):
             tracker.main()
             self.assertEqual(set(stored), {"issue:11", "pr:22"})
-            self.assertEqual(len(writes), 2)
+            self.assertEqual(sum(kind == "created" for kind, _ in writes), 2)
+            self.assertEqual(len(writes), 3)  # One label reconciliation after issue creation
             tracker.main()
             self.assertEqual(sum(kind == "created" for kind, _ in writes), 2)
             count_after_labels = len(writes)
