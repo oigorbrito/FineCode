@@ -172,7 +172,7 @@ def review_manifest(upstream):
     return (
         "# Upstream proposal awaiting adaptation\\n\\n"
         f"- Source: {upstream['html_url']}\\n"
-        f"- Source SHA: \`{upstream['head']['sha']}\`\\n"
+        f"- Source SHA: `{upstream['head']['sha']}`\\n"
         f"- Title: {upstream['title']}\\n\\n"
         "No upstream code has been applied. Manually port and test the changes "
         "before marking this draft ready for review.\\n"
