@@ -374,6 +374,20 @@ def write_manifest(manifest):
     path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
+def selection_event(pr, mirror, selection_group, inventory_position):
+    checkpoint = checkpoint_from_body((mirror or {}).get("body"))
+    return {
+        "upstream_pr": pr["number"],
+        "finecode_pr": (mirror or {}).get("number"),
+        "selection_group": selection_group,
+        "inventory_position": inventory_position,
+        "upstream_head_before": checkpoint["source_sha"] if checkpoint else None,
+        "upstream_head_selected": (pr.get("head") or {}).get("sha"),
+        "finecode_head_before": ((mirror or {}).get("head") or {}).get("sha"),
+        "checkpoint_before": checkpoint,
+    }
+
+
 def capture_after(event, number):
     try:
         source_after = api(f"/repos/{SOURCE}/pulls/{number}")
@@ -473,17 +487,12 @@ def main():
     for pr in selected:
         seen += 1
         mirror_before = local_by_upstream.get(pr["number"])
-        before_checkpoint = checkpoint_from_body((mirror_before or {}).get("body"))
-        event = {
-            "upstream_pr": pr["number"],
-            "finecode_pr": (mirror_before or {}).get("number"),
-            "selection_group": "updates" if pr["number"] in update_positions else "new",
-            "inventory_position": (update_positions if pr["number"] in update_positions else new_positions).get(pr["number"]),
-            "upstream_head_before": before_checkpoint["source_sha"] if before_checkpoint else None,
-            "upstream_head_selected": (pr.get("head") or {}).get("sha"),
-            "finecode_head_before": ((mirror_before or {}).get("head") or {}).get("sha"),
-            "checkpoint_before": before_checkpoint,
-        }
+        event = selection_event(
+            pr,
+            mirror_before,
+            "updates" if pr["number"] in update_positions else "new",
+            (update_positions if pr["number"] in update_positions else new_positions).get(pr["number"]),
+        )
         try:
             LAST_IMPORT_DECISION.clear()
             result = import_one(pr)
@@ -555,14 +564,18 @@ def main():
         if pr["number"] in processed:
             continue
         reason = "not attempted because API access was rate-limited or forbidden" if blocked else "not attempted because the creation limit was reached"
-        manifest["selected"].append({
-            "upstream_pr": pr["number"],
-            "selection_group": "updates" if pr["number"] in update_positions else "new",
-            "inventory_position": (update_positions if pr["number"] in update_positions else new_positions).get(pr["number"]),
+        event = selection_event(
+            pr,
+            local_by_upstream.get(pr["number"]),
+            "updates" if pr["number"] in update_positions else "new",
+            (update_positions if pr["number"] in update_positions else new_positions).get(pr["number"]),
+        )
+        event.update({
             "result": "blocked" if blocked else "skipped_limit",
             "classification": "BLOCKED" if blocked else "SKIPPED_LIMIT",
             "reason": reason,
         })
+        manifest["selected"].append(event)
     manifest["not_processed_after_limit"] = []
     manifest["summary"] = {"reviewed": seen, "created": created, "review_only_created": review_only_created,
                            "review_only_updated": review_only_updated, "code_updated": code_updated,

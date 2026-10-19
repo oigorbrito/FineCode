@@ -41,6 +41,23 @@ class ImporterSafetyTests(unittest.TestCase):
             self.assertFalse(raw.endswith(b"\\n"))
             self.assertEqual(json.loads(raw), {"selected": []})
 
+    def test_unattempted_selection_record_keeps_source_and_destination_ids(self):
+        source, tip = "a" * 40, "b" * 40
+        pr = {"number": 42, "head": {"sha": source}}
+        mirror = {
+            "number": 142,
+            "head": {"sha": tip},
+            "body": f"<!-- finecode-upstream-source:{source} tip:{tip} -->",
+        }
+
+        event = importer.selection_event(pr, mirror, "updates", 3)
+
+        self.assertEqual(event["upstream_pr"], 42)
+        self.assertEqual(event["finecode_pr"], 142)
+        self.assertEqual(event["upstream_head_selected"], source)
+        self.assertEqual(event["finecode_head_before"], tip)
+        self.assertEqual(event["checkpoint_before"], {"source_sha": source, "finecode_tip": tip})
+
     def test_import_scan_paginates_existing_mirrors(self):
         upstream = {"number": 99, "head": {"ref": "feature"}}
         mirrored = [{"number": n, "head": {"ref": f"upstream/pi-pr-{n}"}} for n in range(1, 102)]
