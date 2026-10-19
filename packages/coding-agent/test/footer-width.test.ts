@@ -1,5 +1,5 @@
 import { visibleWidth } from "@earendil-works/pi-tui";
-import { beforeAll, describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it, vi } from "vitest";
 import type { AgentSession } from "../src/core/agent-session.ts";
 import type { ReadonlyFooterDataProvider } from "../src/core/footer-data-provider.ts";
 import { FooterComponent, formatCwdForFooter } from "../src/modes/interactive/components/footer.ts";
@@ -218,6 +218,52 @@ describe("FooterComponent width handling", () => {
 
 		session.sessionManager.getEntries().push({ type: "message", message: { role: "assistant", usage } } as never);
 		expect(stripAnsi(footer.render(120)[1])).toContain("$1.000");
+	});
+
+	// PR #339: moving visual composition must not bypass upstream statistics caching.
+	it("reuses statistics and invalidates them for every upstream cache key", () => {
+		const session = createSession({ sessionName: "" });
+		const entries = vi.spyOn(session.sessionManager, "getEntries");
+		const context = vi.spyOn(session, "getContextUsage");
+		const sessionId = vi.spyOn(session.sessionManager, "getSessionId");
+		const leaf = vi.spyOn(session.sessionManager, "getLeafId");
+		const count = vi.spyOn(session.sessionManager, "getEntryCount");
+		const footer = new FooterComponent(session, createFooterData(1));
+		footer.render(120);
+		footer.render(80);
+		expect(entries).toHaveBeenCalledTimes(1);
+		expect(context).toHaveBeenCalledTimes(1);
+
+		sessionId.mockReturnValue("different-session");
+		footer.render(120);
+		leaf.mockReturnValue("different-leaf");
+		footer.render(120);
+		count.mockReturnValue(1);
+		footer.render(120);
+		Object.defineProperty(session, "model", { value: { ...session.state.model! }, configurable: true });
+		footer.render(120);
+		expect(entries).toHaveBeenCalledTimes(5);
+		expect(context).toHaveBeenCalledTimes(5);
+
+		footer.setSession(createSession({ sessionName: "replacement" }));
+		expect(stripAnsi(footer.render(120)[0])).toContain("replacement");
+	});
+
+	// PR #339: preferences and extension status formatting stay in the native footer.
+	it("preserves auto-compaction preference and sorted single-line extension statuses", () => {
+		const data = createFooterData(1);
+		vi.spyOn(data, "getExtensionStatuses").mockReturnValue(
+			new Map([
+				["z", "last\nstatus"],
+				["a", "first\tstatus"],
+			]),
+		);
+		const footer = new FooterComponent(createSession({ sessionName: "" }), data);
+		footer.setAutoCompactEnabled(false);
+		expect(stripAnsi(footer.render(120)[1])).not.toContain("(auto)");
+		expect(stripAnsi(footer.render(120)[2])).toBe("first status last status");
+		footer.setAutoCompactEnabled(true);
+		expect(stripAnsi(footer.render(120)[1])).toContain("(auto)");
 	});
 
 	it("shows the latest cache hit rate when cache usage is present", () => {
