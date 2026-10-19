@@ -48,6 +48,7 @@ type RenderSessionContextThis = {
 	session: { retryAttempt: number; modelRegistry: { find(provider: string, modelId: string): undefined } };
 	toolOutputExpanded: boolean;
 	isInitialized: boolean;
+	updateWorkingToolStatus(): void;
 	updateEditorBorderColor(): void;
 	getRegisteredToolDefinition(toolName: string): undefined;
 	maybeShowAssistantDiagnostics(message: AssistantMessage): void;
@@ -80,6 +81,7 @@ function createFakeInteractiveModeThis(): RenderSessionContextThis {
 		session: { retryAttempt: 0, modelRegistry: { find: () => undefined } },
 		toolOutputExpanded: false,
 		isInitialized: true,
+		updateWorkingToolStatus: vi.fn(),
 		updateEditorBorderColor: vi.fn(),
 		getRegisteredToolDefinition: (_toolName: string) => undefined,
 		maybeShowAssistantDiagnostics: vi.fn(),
