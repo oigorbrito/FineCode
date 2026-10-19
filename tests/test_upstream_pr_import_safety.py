@@ -63,7 +63,7 @@ class ImporterSafetyTests(unittest.TestCase):
              patch.object(importer, "git", return_value=SimpleNamespace(stdout=b"", returncode=0)), \
              patch.object(importer, "ensure_pr_labels"), \
              patch.object(importer, "import_one", side_effect=lambda p: results[p["number"]]), \
-             patch.dict(os.environ, {"MAX_UPSTREAM_PR_CHECKS": "24", "GITHUB_RUN_NUMBER": "1"}), \
+             patch.dict(os.environ, {"MAX_UPSTREAM_PR_CHECKS": "6", "GITHUB_RUN_NUMBER": "1"}), \
              redirect_stdout(output):
             importer.main()
         self.assertIn("code updated 1", output.getvalue())
