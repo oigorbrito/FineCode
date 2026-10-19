@@ -2405,12 +2405,16 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 			{ key: "minimax", provider: "minimax", baseUrl: "https://api.minimax.io/anthropic" },
 			{ key: "minimax-cn", provider: "minimax-cn", baseUrl: "https://api.minimaxi.com/anthropic" },
 		] as const;
+		// MiniMax asked to hide older models from its direct providers (#2596).
+		const minimaxHiddenIds = new Set(["MiniMax-M2", "MiniMax-M2.1", "MiniMax-M2.5", "MiniMax-M2.5-highspeed"]);
 
 		for (const { key, provider, baseUrl } of minimaxVariants) {
 			if (data[key]?.models) {
 				for (const [modelId, model] of Object.entries(data[key].models)) {
 					const m = model as ModelsDevModel;
-					if (m.tool_call !== true) continue;
+					if (m.tool_call !== true || minimaxHiddenIds.has(modelId)) continue;
+					// MiniMax models with effort levels use adaptive thinking and reject thinking.type="disabled".
+					const thinkingLevelMap = getEffortThinkingLevelMap(m.reasoning_options ?? []);
 
 					models.push({
 						id: modelId,
@@ -2420,12 +2424,12 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 						// MiniMax's Anthropic-compatible API - SDK appends /v1/messages
 						baseUrl,
 						reasoning: m.reasoning === true,
+						...(thinkingLevelMap ? { thinkingLevelMap, compat: { forceAdaptiveThinking: true } } : {}),
 						input: m.modalities?.input?.includes("image") ? ["text", "image"] : ["text"],
 						cost: getModelsDevCost(m.cost),
 						contextWindow: m.limit?.context || 4096,
 						maxTokens: m.limit?.output || 4096,
 					});
-					recordModelsDevReasoningOptions(provider, modelId, m);
 				}
 			}
 		}
@@ -3134,18 +3138,6 @@ async function generateModels() {
 						}
 					: deepseekCompat),
 			};
-		}
-	}
-
-	const minimaxDirectSupportedIds = new Set(["MiniMax-M2.7", "MiniMax-M2.7-highspeed", "MiniMax-M3"]);
-
-	for (let i = allModels.length - 1; i >= 0; i--) {
-		const candidate = allModels[i];
-		if (
-			(candidate.provider === "minimax" || candidate.provider === "minimax-cn") &&
-			!minimaxDirectSupportedIds.has(candidate.id)
-		) {
-			allModels.splice(i, 1);
 		}
 	}
 
