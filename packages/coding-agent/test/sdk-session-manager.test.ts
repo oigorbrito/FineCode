@@ -121,7 +121,7 @@ describe("createAgentSession session manager defaults", () => {
 
 		const [shellSessionId, shellSessionFile, shellProvider, shellModel, shellReasoningLevel] = output.trim().split("\n");
 		expect(shellSessionId).toBe(session.sessionId);
-		expect(shellSessionFile?.replaceAll("\\\\", "/")).toBe(session.sessionFile?.replaceAll("\\\\", "/"));
+		expect(shellSessionFile?.replaceAll("\\", "/")).toBe(session.sessionFile?.replaceAll("\\", "/"));
 		expect([shellProvider, shellModel, shellReasoningLevel]).toEqual([
 			model!.provider,
 			model!.id,
