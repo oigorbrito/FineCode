@@ -200,7 +200,7 @@ def stage_conflict_review(upstream, branch):
         "body": review_only_body(upstream, tip), "draft": True})
     sync_pr_labels(created["number"], upstream, conflict=True)
     print(f"REVIEW_ONLY_CREATED upstream #{number}", flush=True)
-    return "created"
+    return "review_only_created"
 
 
 def refresh_conflict_review(local, upstream, branch, saved_sha, expected_tip):
@@ -227,7 +227,7 @@ def refresh_conflict_review(local, upstream, branch, saved_sha, expected_tip):
         "title": f"[review-only Pi #{number}] {upstream['title']}",
         "body": review_only_body(upstream, tip)})
     print(f"REVIEW_ONLY_UPDATED upstream #{number}", flush=True)
-    return "updated"
+    return "review_only_updated"
 
 def import_one(pr):
     number = pr["number"]
@@ -336,6 +336,8 @@ def main():
         raise RuntimeError("Refusing to import into a dirty checkout")
     ensure_pr_labels()
     created = 0
+    review_only_created = 0
+    review_only_updated = 0
     failures = 0
     conflicts = 0
     blocked = False
@@ -387,6 +389,10 @@ def main():
             result = import_one(pr)
             if result == "created":
                 created += 1
+            elif result == "review_only_created":
+                review_only_created += 1
+            elif result == "review_only_updated":
+                review_only_updated += 1
             elif result == "updated":
                 print(f"Synced upstream #{pr['number']}", flush=True)
             elif result == "conflict":
@@ -403,9 +409,9 @@ def main():
             failures += 1
             print(f"FAILED upstream #{pr['number']}: {exc}", flush=True)
             git("reset", "--hard", f"origin/{BASE}", ok=False)
-        if created >= MAX_NEW:
+        if created + review_only_created >= MAX_NEW:
             break
-    print(f"Reviewed {seen}; created {created} PRs; conflicts {conflicts}; failures {failures}; blocked {blocked}; updates are logged as UPDATED upstream; conflicts require manual review", flush=True)
+    print(f"Reviewed {seen}; created {created} code PRs; review-only created {review_only_created}; review-only updated {review_only_updated}; conflicts {conflicts}; failures {failures}; blocked {blocked}", flush=True)
     if failures or blocked:
         raise SystemExit("Upstream synchronization encountered operational failures; review logs.")
 
