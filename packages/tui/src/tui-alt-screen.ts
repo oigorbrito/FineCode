@@ -677,27 +677,30 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 		this.mousePressMoved = false;
 	}
 
+	private cancelSelectionPress(): void {
+		const hadActiveSelection = this.selectionPressActive;
+		const hadNonEmptyActiveSelection = hadActiveSelection && this.getSelectionBounds() !== undefined;
+		this.selectionPressActive = false;
+		this.stopSelectionAutoScroll();
+		this.pressedUrl = undefined;
+		this.selectionDragged = false;
+		this.lastClick = undefined;
+		if (!hadActiveSelection) return;
+		this.selectionAnchor = undefined;
+		this.selectionFocus = undefined;
+		this.selectionGranularity = "character";
+		this.selectionInitialRange = undefined;
+		if (hadNonEmptyActiveSelection) this.requestRender();
+	}
+
 	private handleViewportInput(data: string): { consume?: boolean } | undefined {
 		if (data === FOCUS_OUT) {
-			const hadActiveSelection = this.selectionPressActive;
-			const hadNonEmptyActiveSelection = hadActiveSelection && this.getSelectionBounds() !== undefined;
-			this.selectionPressActive = false;
-			this.stopSelectionAutoScroll();
+			this.cancelSelectionPress();
 			this.stopScrollbarHover();
 			if (this.activeSearch?.component.setHoveredNavigationDirection(undefined)) this.requestRender();
 			this.stopScrollbarDrag();
-			this.pressedUrl = undefined;
-			this.selectionDragged = false;
 			this.clearComponentMouseGesture();
 			this.lastComponentClick = undefined;
-			if (hadActiveSelection) {
-				this.selectionAnchor = undefined;
-				this.selectionFocus = undefined;
-				this.selectionGranularity = "character";
-				this.selectionInitialRange = undefined;
-				if (hadNonEmptyActiveSelection) this.requestRender();
-			}
-			this.lastClick = undefined;
 			return { consume: true };
 		}
 		if (data === FOCUS_IN) return { consume: true };
@@ -727,6 +730,10 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 
 		const keybindings = getKeybindings();
 		const isRelease = isKeyRelease(data);
+		if (this.selectionPressActive && keybindings.matches(data, "tui.altScreen.selectionCancel")) {
+			if (!isRelease) this.cancelSelectionPress();
+			return { consume: true };
+		}
 		if (keybindings.matches(data, "tui.altScreen.search")) {
 			if (!isRelease) this.toggleSearch();
 			return { consume: true };

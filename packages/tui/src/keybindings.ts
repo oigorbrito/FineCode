@@ -50,6 +50,7 @@ export interface Keybindings {
 	"tui.altScreen.lineDown": true;
 	"tui.altScreen.previousPrompt": true;
 	"tui.altScreen.nextPrompt": true;
+	"tui.altScreen.selectionCancel": true;
 	"tui.altScreen.search": true;
 	"tui.altScreen.searchNext": true;
 	"tui.altScreen.searchPrevious": true;
@@ -189,7 +190,11 @@ export const TUI_KEYBINDINGS = {
 		defaultKeys: ["ctrl+shift+down", "ctrl+down"],
 		description: "Jump to next semantic prompt",
 	},
-	"tui.altScreen.search": {
+
+	"tui.altScreen.selectionCancel": {
+		defaultKeys: "escape",
+		description: "Cancel an active mouse selection",
+	},	"tui.altScreen.search": {
 		defaultKeys: "ctrl+shift+f",
 		description: "Search the primary scroll view",
 	},
