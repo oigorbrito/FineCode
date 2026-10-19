@@ -78,5 +78,29 @@ class ReviewDraftTests(unittest.TestCase):
         self.assertFalse(any(cmd[0] == "push" for cmd in git_calls))
         api.assert_not_called()
 
+    def test_import_one_routes_incompatible_initial_patch_to_review_draft(self):
+        calls = []
+        def fake_git(*args, **kwargs):
+            calls.append(args)
+            if args[:3] == ("apply", "--3way", "--index"):
+                return SimpleNamespace(returncode=1, stdout=b"")
+            return SimpleNamespace(returncode=0, stdout=b"")
+        def fake_api(path, method="GET", data=None, accept=None):
+            if path.endswith("/pulls/42") and method == "GET":
+                return UPSTREAM
+            if method == "GET" and accept == "application/vnd.github.v3.patch":
+                return b"diff --git a/a b/a"
+            raise AssertionError((path, method, accept))
+        with patch.object(importer, "existing_pr", return_value=None), \
+             patch.object(importer, "api", side_effect=fake_api), \
+             patch.object(importer, "git", side_effect=fake_git), \
+             patch.object(importer, "stage_conflict_review", return_value="created") as stage:
+            result = importer.import_one({"number": 42})
+        self.assertEqual(result, "created")
+        stage.assert_called_once_with(UPSTREAM, "upstream/pi-pr-42")
+        self.assertTrue(any(cmd[:3] == ("apply", "--3way", "--index") for cmd in calls))
+        self.assertFalse(any(cmd[0] == "push" for cmd in calls))
+
+
 if __name__ == "__main__":
     unittest.main()
