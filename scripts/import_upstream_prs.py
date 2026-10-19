@@ -346,6 +346,8 @@ def main():
     created = 0
     review_only_created = 0
     review_only_updated = 0
+    code_updated = 0
+    rebase_equivalent = 0
     failures = 0
     conflicts = 0
     blocked = False
@@ -402,7 +404,10 @@ def main():
             elif result == "review_only_updated":
                 review_only_updated += 1
             elif result == "updated":
+                code_updated += 1
                 print(f"Synced upstream #{pr['number']}", flush=True)
+            elif result == "rebase_equivalent":
+                rebase_equivalent += 1
             elif result == "conflict":
                 conflicts += 1
         except urllib.error.HTTPError as exc:
@@ -419,7 +424,7 @@ def main():
             git("reset", "--hard", f"origin/{BASE}", ok=False)
         if created + review_only_created >= MAX_NEW:
             break
-    print(f"Reviewed {seen}; created {created} code PRs; review-only created {review_only_created}; review-only updated {review_only_updated}; conflicts {conflicts}; failures {failures}; blocked {blocked}", flush=True)
+    print(f"Reviewed {seen}; created {created} code PRs; review-only created {review_only_created}; review-only updated {review_only_updated}; code updated {code_updated}; rebase equivalent {rebase_equivalent}; conflicts {conflicts}; failures {failures}; blocked {blocked}", flush=True)
     if failures or blocked:
         raise SystemExit("Upstream synchronization encountered operational failures; review logs.")
 
