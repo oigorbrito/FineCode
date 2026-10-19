@@ -1,0 +1,127 @@
+import { ipcMain } from 'electron'
+import { IPC_CHANNELS } from '../../shared/ipc-contracts'
+import { readAttachment } from '../attachment-reader'
+import { isAuthorizedAttachmentPath } from '../path-authorization'
+import { assertTrustedSender, isString } from './validation'
+import type { IpcContext } from './context'
+import { t } from '../../shared/i18n'
+
+export function registerFileHandlers(ctx: IpcContext): void {
+  const { workspaceManager, approvedAttachmentPaths } = ctx
+
+  // ─── File Operations ────────────────────────────────────────────────────
+
+  ipcMain.handle(IPC_CHANNELS.FILE_TREE, async (_event, maxDepth?: unknown) => {
+    const fs = workspaceManager.getActiveFileService()
+    if (!fs) throw new Error(t('errors.workspace.noneActive'))
+    return fs.getFileTree(typeof maxDepth === 'number' ? maxDepth : 4)
+  })
+
+  ipcMain.handle(IPC_CHANNELS.FILE_SEARCH, async (_event, query: unknown) => {
+    if (!isString(query)) throw new Error('query must be a string')
+    const fs = workspaceManager.getActiveFileService()
+    if (!fs) throw new Error(t('errors.workspace.noneActive'))
+    return fs.searchFiles(query)
+  })
+
+  ipcMain.handle(IPC_CHANNELS.FILE_SEARCH_CONTENT, async (_event, query: unknown) => {
+    if (!isString(query)) throw new Error('query must be a string')
+    const fs = workspaceManager.getActiveFileService()
+    if (!fs) throw new Error(t('errors.workspace.noneActive'))
+    return fs.searchContent(query)
+  })
+
+  ipcMain.handle(IPC_CHANNELS.FILE_READ, async (_event, filePath: unknown) => {
+    if (!isString(filePath)) throw new Error('filePath must be a string')
+    const fs = workspaceManager.getActiveFileService()
+    if (!fs) throw new Error(t('errors.workspace.noneActive'))
+    return fs.readFileContent(filePath)
+  })
+
+  // Reads a user-selected attachment by absolute path (chosen via the native
+  // open dialog, so it may live outside the workspace).
+  ipcMain.handle(IPC_CHANNELS.FILE_READ_ATTACHMENT, async (_event, filePath: unknown) => {
+    if (!isString(filePath)) throw new Error('filePath must be a string')
+    // The file panel shows the focused repository of a linked task, so its files attach too.
+    const workspaceRoot = workspaceManager.getActivePanelRoot()
+    if (!isAuthorizedAttachmentPath(filePath, { workspaceRoot, approvedPaths: approvedAttachmentPaths })) {
+      throw new Error(t('errors.attachments.pathNotPermitted'))
+    }
+    return readAttachment(filePath)
+  })
+
+  ipcMain.handle(IPC_CHANNELS.FILE_WRITE, async (event, filePath: unknown, content: unknown) => {
+    assertTrustedSender(event)
+    if (!isString(filePath)) throw new Error('filePath must be a string')
+    if (!isString(content)) throw new Error('content must be a string')
+    const fs = workspaceManager.getActiveFileService()
+    if (!fs) throw new Error(t('errors.workspace.noneActive'))
+    await fs.writeFileContent(filePath, content)
+    return { ok: true }
+  })
+
+  ipcMain.handle(IPC_CHANNELS.FILE_DIFF, async (_event, filePath?: unknown) => {
+    const fs = workspaceManager.getActiveFileService()
+    if (!fs) throw new Error(t('errors.workspace.noneActive'))
+    return fs.getFileDiff(isString(filePath) ? filePath : undefined)
+  })
+
+  ipcMain.handle(IPC_CHANNELS.FILE_STAGED_DIFF, async (_event, filePath?: unknown) => {
+    const fs = workspaceManager.getActiveFileService()
+    if (!fs) throw new Error(t('errors.workspace.noneActive'))
+    return fs.getStagedDiff(isString(filePath) ? filePath : undefined)
+  })
+
+  ipcMain.handle(IPC_CHANNELS.FILE_DISCARD_DIFF, async (event, workspaceId: unknown, patches: unknown) => {
+    assertTrustedSender(event)
+    if (!isString(workspaceId) || !Array.isArray(patches) || !patches.length || !patches.every(isString)) {
+      throw new Error('workspaceId and non-empty string patches are required')
+    }
+    const fs = workspaceManager.getFileService(workspaceId)
+    if (!fs) throw new Error(t('errors.workspace.noneActive'))
+    const active = workspaceManager.getSessionRuntimes(workspaceId)
+      .some((runtime) => runtime.activity === 'working' || runtime.activity === 'needs-approval')
+    if (active) throw new Error(t('diff.discard.agentWorking'))
+    await fs.discardFileDiff(patches)
+  })
+
+  // Disk watching is demand-driven: the renderer declares whether a live
+  // files panel consumes change events, and the watcher attaches to the
+  // active workspace only while demanded. Without demand (cold start, Home)
+  // no chokidar watcher exists; the tree still loads on open and the safety
+  // poll + focus refresh cover the unwatched state.
+  ipcMain.handle(IPC_CHANNELS.FILE_WATCH_DEMAND, async (_event, demanded: unknown) => {
+    if (typeof demanded !== 'boolean') throw new Error('demanded must be a boolean')
+    workspaceManager.setFileWatchDemand(demanded)
+    return { watching: workspaceManager.getWatchedWorkspaceId() !== null }
+  })
+
+  ipcMain.handle(IPC_CHANNELS.GIT_STATUS, async () => {
+    const fs = workspaceManager.getActiveFileService()
+    // No active workspace (e.g. the home screen before any workspace is opened)
+    // is an expected state, not an error — report no changes rather than throwing
+    // (which Electron would log as an unhandled handler error every poll).
+    if (!fs) return {}
+    const statusMap = await fs.getGitStatus()
+    // Convert Map to plain object for IPC
+    const result: Record<string, unknown> = {}
+    for (const [key, value] of statusMap) {
+      result[key] = value
+    }
+    return result
+  })
+
+  ipcMain.handle(IPC_CHANNELS.GIT_BRANCH, async () => {
+    const fs = workspaceManager.getActiveFileService()
+    // No active workspace: report "no branch" rather than throwing (matches the
+    // Promise<string | null> contract; keeps the no-workspace state error-free).
+    if (!fs) return null
+    return fs.getGitBranch()
+  })
+
+  ipcMain.handle(IPC_CHANNELS.GIT_PREFIX, async () => {
+    const fs = workspaceManager.getActiveFileService()
+    if (!fs) throw new Error(t('errors.workspace.noneActive'))
+    return fs.getGitPrefix()
+  })
+}

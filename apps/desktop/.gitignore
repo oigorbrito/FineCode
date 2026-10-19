@@ -1,0 +1,56 @@
+# Dependencies
+node_modules/
+.pnp
+.pnp.js
+.npm/
+jspm_packages/
+
+# Build outputs
+out/
+release/
+dist/
+build/
+.cache/
+
+# IDE / editors
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.history/
+
+# OS
+.DS_Store
+Thumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# Environment
+.env
+.env.*
+!.env.example
+
+# Signing & secrets
+*.pem
+*.key
+*.p12
+*.pfx
+*.mobileprovision
+*.provisionprofile
+*.p8
+*.cer
+*.crt
+*.keystore
+*.jks
+secrets/
+.npmrc.local
+electron-builder.env
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*

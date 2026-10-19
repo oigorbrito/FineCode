@@ -1,0 +1,638 @@
+import { app, BrowserWindow, dialog, globalShortcut, ipcMain, Menu, nativeImage, protocol, session, shell } from 'electron'
+import { existsSync, mkdirSync } from 'fs'
+import { basename, dirname, join, resolve as resolvePath } from 'path'
+import { isTrustedRendererUrl, RENDERER_INDEX_PATH } from './renderer-origin'
+import { workspaceTrustStore } from './workspace-trust'
+import { PREVIEW_PARTITIONS } from '../shared/preview-partitions'
+import { isBlockedPreviewRequest, previewGuestPreferences } from './preview-guest'
+import { WorkspaceManager } from './workspace-manager'
+import type { WorkspaceTerminals } from './workspace-terminals'
+import { registerIpcHandlers, loadAppSettings, saveAppSettings } from './ipc-handlers'
+import { setPiExecutableOverride, cleanupPiChildTempDir } from './pi-rpc-manager'
+import { applyLanguageSetting } from './i18n'
+import { i18n, t } from '../shared/i18n'
+import { fetchAllCatalogPackages } from './package-catalog'
+import { activityStatsStore } from './activity-stats'
+import { configureGuiDataDir, getCanonicalUserDataDir, getExternalGuiDataDir, migrateLegacyGuiData } from './app-data-paths'
+import { setupTray, setTrayEnabled, isTrayEnabled, isTrayAvailable, destroyTray, notifyFirstHide } from './tray-manager'
+import { shouldHideToTray } from './tray-decision'
+import { createEditorGuard } from './editor-guard'
+import { appLog } from './app-log'
+import { IPC_CHANNELS } from '../shared/ipc-contracts'
+import { VOICE_PROTOCOL_SCHEME, handleVoiceProtocolRequest } from './voice-protocol'
+import { getVoiceModelsDir } from './voice-model-store'
+import { applyVoiceGpuSwitches, readVoiceDeviceSync } from './voice-gpu-switches'
+import { getSettingsPath } from './ipc/settings'
+import { disableCwdExecutableSearch } from './windows-exe-search'
+
+// First, before anything spawns: Windows must never run a program from the
+// working directory (usually the workspace) when it is started by bare name.
+disableCwdExecutableSearch(process.env, process.platform)
+
+// Env var honored on startup: if set, the named directory becomes the active
+// workspace (created on first run, switched to on subsequent runs). The CLI
+// launcher in bin/pi-desktop.js sets this from `pi-desktop <path>`.
+const WORKSPACE_ENV_VAR = 'PI_DESKTOP_WORKSPACE'
+
+// Electron's development executable otherwise registers as Electron on Windows,
+// which makes the taskbar and notification identity use Electron branding.
+app.setName('Pi Desktop')
+if (process.platform === 'win32') app.setAppUserModelId('dev.pi.desktop-gui')
+
+// Suppress EPIPE errors from closed subprocess pipes
+process.on('uncaughtException', (err) => {
+  if (err.message?.includes('EPIPE') || (err as NodeJS.ErrnoException).code === 'EPIPE') {
+    // Ignore EPIPE - happens when Pi process exits
+    return
+  }
+  console.error('Uncaught exception:', err)
+  appLog.error('app', 'Uncaught exception', err)
+})
+
+// ─── Constants ───────────────────────────────────────────────────────────────
+
+const WINDOW_WIDTH = 1400
+const WINDOW_HEIGHT = 900
+const MIN_WINDOW_WIDTH = 800
+const MIN_WINDOW_HEIGHT = 600
+const DEV_SERVER_URL = process.env.ELECTRON_RENDERER_URL
+const PRELOAD_PATH = join(__dirname, '../preload/index.js')
+
+// In dev: resources/ sits at the project root (app.getAppPath()).
+// In packaged: extraResources config copies resources/ into process.resourcesPath/resources/.
+// Computed lazily: `app` is undefined at module-eval time under electron-vite preview,
+// so reading `app.isPackaged` at top level crashes before whenReady().
+let cachedAppIconPath: string | null = null
+function getAppIconPath(): string {
+  if (cachedAppIconPath !== null) return cachedAppIconPath
+  const base = app.isPackaged
+    ? join(process.resourcesPath, 'resources')
+    : join(app.getAppPath(), 'resources')
+  cachedAppIconPath = join(base, 'icons', 'icon.png')
+  return cachedAppIconPath
+}
+
+// ─── Workspace Manager (singleton) ───────────────────────────────────────────
+
+let workspaceManager: WorkspaceManager | null = null
+let workspaceTerminals: WorkspaceTerminals | null = null
+
+// The single main window, tracked so the tray, single-instance relaunch, and
+// macOS dock-activate can all bring it back. `isQuitting` distinguishes a real
+// quit (menu/tray Quit, Cmd-Ctrl+Q) from a window close that should hide to tray.
+let mainWindow: BrowserWindow | null = null
+let isQuitting = false
+let shutdownPending: Promise<void> | null = null
+let shutdownComplete = false
+
+// Guards the renderer's unsaved editor buffer against teardown. The renderer
+// mirrors its dirty flag here (ui:editor-dirty-set); quit, non-tray window
+// close, and the reload menu items all pause on the same discard dialog.
+const editorGuard = createEditorGuard()
+
+/** Native confirm matching the in-app discard dialog's wording. */
+async function confirmEditorDiscard(window: BrowserWindow | null): Promise<boolean> {
+  // Tray Quit can arrive while the window is hidden; surface it so the
+  // dialog (and the edits it is asking about) are actually visible.
+  if (window && !window.isDestroyed() && !window.isVisible()) window.show()
+  const options = {
+    type: 'warning' as const,
+    title: t('editorGuard.title'),
+    message: editorGuard.promptMessage(),
+    buttons: [t('editorGuard.discardButton'), t('editorGuard.keepEditing')],
+    defaultId: 1,
+    cancelId: 1,
+  }
+  const { response } = window
+    ? await dialog.showMessageBox(window, options)
+    : await dialog.showMessageBox(options)
+  return response === 0
+}
+
+/** Menu Reload / Force Reload: ask a dirty editor first, then reload. */
+async function reloadMainWindowWithGuard(ignoreCache: boolean): Promise<void> {
+  const window = mainWindow
+  if (!window) return
+  if (editorGuard.needsPrompt() && !(await confirmEditorDiscard(window))) return
+  // did-start-loading resets the guard once the reload actually begins.
+  if (ignoreCache) window.webContents.reloadIgnoringCache()
+  else window.webContents.reload()
+}
+
+// Single-instance lock: with "minimize to tray" the window can be hidden while
+// the app keeps running, so a relaunch (taskbar, launcher, `pi-desktop <path>`)
+// must focus the existing instance instead of spawning a second one. The second
+// process exits immediately; the first receives 'second-instance'.
+if (!app.requestSingleInstanceLock()) {
+  app.quit()
+} else {
+  app.on('second-instance', () => {
+    showMainWindow()
+  })
+}
+
+// PI_DESKTOP_USER_DATA_DIR set by the launching process overrides the
+// canonical appData-derived directory: that exact directory holds all GUI
+// data and legacy migration is skipped, keeping it fully isolated.
+const externalUserDataDir = getExternalGuiDataDir()
+const userDataDir = externalUserDataDir ?? getCanonicalUserDataDir(app.getPath('appData'))
+mkdirSync(userDataDir, { recursive: true })
+app.setPath('userData', userDataDir)
+configureGuiDataDir(userDataDir)
+
+// Voice dictation on the GPU needs WebGPU, which Chromium keeps off on Linux
+// unless it starts with extra switches. Set them now, before the app is ready.
+applyVoiceGpuSwitches(app.commandLine, process.platform, readVoiceDeviceSync(getSettingsPath()))
+
+// ─── Window Creation ─────────────────────────────────────────────────────────
+
+/**
+ * The main window must never navigate to arbitrary content: its privileged
+ * preload (terminal + full IPC) attaches to whatever loads. In production only
+ * the exact packaged renderer file is allowed; in development only the dev
+ * server's own origin (parsed, not a fragile string prefix).
+ */
+function isAllowedMainWindowNavigation(targetUrl: string): boolean {
+  return isTrustedRendererUrl(targetUrl, {
+    devServerUrl: DEV_SERVER_URL,
+    rendererIndexPath: RENDERER_INDEX_PATH,
+  })
+}
+
+/** Whether the active workspace has been trusted by the user (see workspace-trust.ts). */
+function isActiveWorkspaceTrusted(): boolean {
+  // The preview shows files of the panel's folder: in a linked task, the focused repository.
+  const path = workspaceManager?.getActivePanelRoot()
+  return path ? workspaceTrustStore.isTrusted(path) : false
+}
+
+/**
+ * For an untrusted workspace, confine both file-preview partitions (HTML and
+ * PDF) to local files: cancel every other request, so malicious workspace files
+ * cannot beacon out or pull remote resources. The PDF partition also refuses
+ * every file that is not a PDF and lets through only the built-in viewer's own
+ * files (see isBlockedPreviewRequest). Combined with scripts-disabled for
+ * untrusted HTML previews (see will-attach-webview), this closes the
+ * exfiltration path. A trusted workspace's own pages may load resources
+ * normally (interactive preview).
+ */
+function hardenPreviewSession(): void {
+  for (const partition of PREVIEW_PARTITIONS) {
+    session.fromPartition(partition).webRequest.onBeforeRequest((details, callback) => {
+      callback({
+        cancel: isBlockedPreviewRequest({ partition, url: details.url, workspaceTrusted: isActiveWorkspaceTrusted() }),
+      })
+    })
+  }
+}
+
+function createMainWindow(): BrowserWindow {
+  const appIcon = nativeImage.createFromPath(getAppIconPath())
+  const window = new BrowserWindow({
+    width: WINDOW_WIDTH,
+    height: WINDOW_HEIGHT,
+    minWidth: MIN_WINDOW_WIDTH,
+    minHeight: MIN_WINDOW_HEIGHT,
+    title: 'Pi Desktop',
+    backgroundColor: '#0a0a0a',
+    icon: appIcon,
+    show: false,
+    webPreferences: {
+      preload: PRELOAD_PATH,
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+      webSecurity: true,
+      allowRunningInsecureContent: false,
+      experimentalFeatures: false,
+      // Enables the <webview> tag used by the HTML file preview to run its own
+      // JavaScript in an isolated guest process (no Node, separate origin),
+      // without loosening the app's own CSP.
+      webviewTag: true,
+    },
+  })
+
+  // Hide the top menu bar (File/Edit/View/Window). The application menu stays
+  // set so its accelerators (Ctrl+O, copy/paste, etc.) keep working;
+  // only the visible bar is hidden. autoHideMenuBar is left off so Alt won't
+  // reveal it.
+  window.setMenuBarVisibility(false)
+
+  // Graceful show (avoid white flash)
+  window.once('ready-to-show', () => {
+    window.show()
+    window.focus()
+  })
+
+  // Minimize-to-tray: when enabled (Windows/Linux), a window close hides the
+  // window and keeps the app running instead of quitting. A real quit sets
+  // `isQuitting` first (see before-quit), so this only intercepts user closes.
+  window.on('close', (event) => {
+    if (shouldHideToTray({ isQuitting, enabled: isTrayEnabled(), platform: process.platform, trayAvailable: isTrayAvailable() })) {
+      event.preventDefault()
+      window.hide()
+      notifyFirstHide()
+      return
+    }
+    // A real close destroys the renderer and its unsaved editor buffer;
+    // pause for the same discard decision every in-app path gets. (Hiding to
+    // tray above loses nothing, so it never asks.)
+    if (editorGuard.needsPrompt()) {
+      event.preventDefault()
+      void confirmEditorDiscard(window).then((discard) => {
+        if (discard) {
+          editorGuard.confirmDiscard()
+          window.close()
+        }
+      })
+    }
+  })
+
+  // A reloaded (or crashed-and-recovered) renderer starts with a clean
+  // editor; a stale dirty flag here would make quit nag forever.
+  window.webContents.on('did-start-loading', () => editorGuard.reset())
+  window.webContents.on('render-process-gone', () => editorGuard.reset())
+
+  window.on('closed', () => {
+    if (mainWindow === window) mainWindow = null
+  })
+
+  // Open external links in default browser
+  window.webContents.setWindowOpenHandler(({ url }) => {
+    if (url.startsWith('https://') || url.startsWith('http://')) {
+      shell.openExternal(url)
+    }
+    return { action: 'deny' }
+  })
+
+  // Block navigation to anything but the pinned renderer (see helper).
+  window.webContents.on('will-navigate', (event, url) => {
+    if (isAllowedMainWindowNavigation(url)) return
+    event.preventDefault()
+  })
+
+  // Harden the file-preview <webview> guests (HTML and PDF) before Electron
+  // attaches them: strip any preload/Node access they might request and reject
+  // anything that isn't the local `file://` preview they're meant for.
+  // Defense-in-depth against a renderer XSS trying to attach a guest with
+  // elevated webPreferences.
+  window.webContents.on('will-attach-webview', (event, webPreferences, params) => {
+    delete webPreferences.preload
+    webPreferences.nodeIntegration = false
+    webPreferences.nodeIntegrationInSubFrames = false
+    webPreferences.contextIsolation = true
+    webPreferences.sandbox = true
+    webPreferences.webSecurity = true
+    webPreferences.allowRunningInsecureContent = false
+
+    // Only the PDF preview (the PDF partition with a src that loads a .pdf file)
+    // gets pdfium (plugins), and it keeps scripts for the viewer. For any other
+    // guest, scripts run only when the workspace is trusted (interactive preview
+    // of your own project); for an untrusted workspace scripts are disabled so —
+    // with sandbox + webSecurity above and the partitions' network block —
+    // malicious preview HTML cannot read other local files or exfiltrate data.
+    const preferences = previewGuestPreferences({
+      partition: params.partition,
+      src: params.src,
+      workspaceTrusted: isActiveWorkspaceTrusted(),
+    })
+    webPreferences.plugins = preferences.plugins
+    if (!preferences.javascript) {
+      webPreferences.javascript = false
+    }
+
+    if (!params.src.startsWith('file://')) {
+      event.preventDefault()
+    }
+  })
+
+  // Load renderer
+  if (DEV_SERVER_URL) {
+    window.loadURL(DEV_SERVER_URL)
+  } else {
+    window.loadFile(RENDERER_INDEX_PATH)
+  }
+
+  // Dev tools in development
+  if (process.env.NODE_ENV === 'development') {
+    window.webContents.openDevTools({ mode: 'detach' })
+  }
+
+  mainWindow = window
+  return window
+}
+
+// Bring the main window to the foreground, re-creating it if it was fully
+// closed. Used by the tray, single-instance relaunch, and macOS dock activate.
+function showMainWindow(): void {
+  if (isQuitting) return
+  if (mainWindow) {
+    if (mainWindow.isMinimized()) mainWindow.restore()
+    mainWindow.show()
+    mainWindow.focus()
+  } else {
+    createMainWindow()
+  }
+}
+
+// ─── Application Menu ────────────────────────────────────────────────────────
+
+function createApplicationMenu(): void {
+  const template: Electron.MenuItemConstructorOptions[] = [
+    {
+      label: t('menu.file'),
+      submenu: [
+        {
+          label: t('common.newSession'),
+          click: () => {
+            const focusedWindow = BrowserWindow.getFocusedWindow()
+            focusedWindow?.webContents.send('menu:new-session')
+          },
+        },
+        {
+          label: t('menu.newWorkspace'),
+          accelerator: 'CmdOrCtrl+Shift+N',
+          click: () => {
+            const focusedWindow = BrowserWindow.getFocusedWindow()
+            focusedWindow?.webContents.send('menu:new-workspace')
+          },
+        },
+        {
+          label: t('menu.openProject'),
+          accelerator: 'CmdOrCtrl+O',
+          click: () => {
+            const focusedWindow = BrowserWindow.getFocusedWindow()
+            focusedWindow?.webContents.send('menu:open-project')
+          },
+        },
+        { type: 'separator' },
+        // Role items get explicit labels: Electron's own role labels are English.
+        { role: 'quit', label: t('app.quit') },
+      ],
+    },
+    {
+      label: t('menu.edit'),
+      submenu: [
+        { role: 'undo', label: t('menu.undo') },
+        { role: 'redo', label: t('menu.redo') },
+        { type: 'separator' },
+        { role: 'cut', label: t('common.cut') },
+        { role: 'copy', label: t('common.copy') },
+        { role: 'paste', label: t('common.paste') },
+        { role: 'selectAll', label: t('common.selectAll') },
+      ],
+    },
+    {
+      label: t('menu.view'),
+      submenu: [
+        // Not the bare roles: a reload destroys the renderer and its unsaved
+        // editor buffer, so both run through the same discard guard as
+        // close/quit before touching webContents.
+        {
+          label: t('menu.reload'),
+          accelerator: 'CmdOrCtrl+R',
+          click: () => void reloadMainWindowWithGuard(false),
+        },
+        {
+          label: t('menu.forceReload'),
+          accelerator: 'Shift+CmdOrCtrl+R',
+          click: () => void reloadMainWindowWithGuard(true),
+        },
+        { role: 'toggleDevTools', label: t('menu.toggleDevTools') },
+        { type: 'separator' },
+        { role: 'resetZoom', label: t('menu.actualSize') },
+        { role: 'zoomIn', label: t('menu.zoomIn') },
+        { role: 'zoomOut', label: t('menu.zoomOut') },
+        { type: 'separator' },
+        { role: 'togglefullscreen', label: t('menu.toggleFullScreen') },
+      ],
+    },
+    {
+      label: t('menu.window'),
+      submenu: [
+        { role: 'minimize', label: t('menu.minimize') },
+        { role: 'zoom', label: t('menu.zoom') },
+        // macOS: Command+W closes the session tab, as in a browser, and the
+        // window keeps its Close item on Shift+Command+W.
+        ...(process.platform === 'darwin'
+          ? [
+              {
+                label: t('workspaceTabs.closeSessionTab'),
+                accelerator: 'Command+W',
+                click: () => {
+                  BrowserWindow.getFocusedWindow()?.webContents.send('menu:close-session')
+                },
+              },
+              { role: 'close', label: t('menu.close'), accelerator: 'Shift+Command+W' },
+            ] satisfies Electron.MenuItemConstructorOptions[]
+          : [{ role: 'close', label: t('menu.close') } satisfies Electron.MenuItemConstructorOptions]),
+      ],
+    },
+  ]
+
+  Menu.setApplicationMenu(Menu.buildFromTemplate(template))
+}
+
+// ─── App Lifecycle ───────────────────────────────────────────────────────────
+
+// Register the voice-model scheme as privileged before the app is ready, so the
+// renderer may fetch model files from it under the locked CSP.
+protocol.registerSchemesAsPrivileged([
+  {
+    scheme: VOICE_PROTOCOL_SCHEME,
+    privileges: {
+      standard: true,
+      secure: true,
+      supportFetchAPI: true,
+      corsEnabled: true,
+      stream: true,
+    },
+  },
+])
+
+app.whenReady().then(async () => {
+  if (!externalUserDataDir) {
+    await migrateLegacyGuiData({
+      appDataDir: app.getPath('appData'),
+      userDataDir: app.getPath('userData'),
+    })
+  }
+
+  // Set the macOS dock icon in development only. A packaged app gets its dock
+  // icon from the Icon Composer asset (resources/icons/Icon.icon); setting a
+  // Dock image there would replace its layered look with a flat bitmap (issue
+  // #66). icon-macos.png is generated from the padded macOS icon grid in
+  // resources/icons/generate_icons.py.
+  if (process.platform === 'darwin' && app.dock && !app.isPackaged) {
+    app.dock.setIcon(nativeImage.createFromPath(join(dirname(getAppIconPath()), 'icon-macos.png')))
+  }
+
+  // Initialize workspace manager
+  workspaceManager = new WorkspaceManager()
+  await workspaceManager.initialize()
+
+  // Honor PI_DESKTOP_WORKSPACE if set: switch to (or create) the named workspace.
+  await applyWorkspaceFromEnv(workspaceManager)
+
+  // Lock both preview partitions to local files before any preview can load.
+  hardenPreviewSession()
+
+  // Serve downloaded speech-model files to the renderer. The handler streams
+  // files only from the single speech-models directory and rejects traversal.
+  protocol.handle(VOICE_PROTOCOL_SCHEME, (request) =>
+    handleVoiceProtocolRequest(request.url, getVoiceModelsDir()),
+  )
+
+  // Resolve the configured engine before exposing IPC or creating the renderer;
+  // otherwise the renderer can win the startup race and launch the default Pi
+  // binary before this setting is applied.
+  const settings = await loadAppSettings(workspaceManager)
+  setPiExecutableOverride(settings.piExecutablePath, settings.piEngine)
+
+  // Before the menu, window, and tray exist, so they are built in the saved language.
+  applyLanguageSetting(settings.language)
+
+  // Register IPC handlers before creating windows. The window getter is a
+  // lazy closure — mainWindow is created later and the notification wiring
+  // only dereferences it at event time. showMainWindow recreates the window
+  // when a notification is clicked after a full close (macOS).
+  workspaceTerminals = registerIpcHandlers(workspaceManager, {
+    getWindow: () => mainWindow,
+    showWindow: showMainWindow,
+  }, getAppIconPath())
+
+  // The renderer mirrors its editor-dirty flag on every transition; the
+  // quit/close/reload guards below read the cached value.
+  ipcMain.on(IPC_CHANNELS.UI_EDITOR_DIRTY_SET, (_event, dirty: unknown, fileName: unknown) => {
+    editorGuard.setDirty(dirty === true, typeof fileName === 'string' ? fileName : null)
+  })
+
+  // Create the application menu, and build it again in the new language
+  // whenever the language setting changes.
+  createApplicationMenu()
+  i18n.on('languageChanged', () => createApplicationMenu())
+
+  // Create main window
+  createMainWindow()
+
+  // System tray: inject deps once, then enable it if the setting is on. The
+  // one-time "still running" hint reads/persists via app settings.
+  setupTray({
+    getWindow: () => mainWindow,
+    quit: () => app.quit(),
+    iconPath: getAppIconPath(),
+    hasSeenHint: settings.hasSeenTrayHint,
+    onHintShown: () => {
+      void saveAppSettings({ hasSeenTrayHint: true })
+    },
+  })
+  setTrayEnabled(settings.minimizeToTrayOnClose)
+
+  // Warm the package catalog cache in the background so the Catalog tab is
+  // instant when first opened. Non-blocking; failures are ignored (offline etc).
+  void fetchAllCatalogPackages().catch(() => {})
+
+  // Baseline scan of the persisted activity stats, so the store reflects reality
+  // even if the home screen is never opened this run. Non-blocking.
+  void activityStatsStore.refresh()
+
+  // macOS: re-show (or re-create) the window when the dock icon is clicked.
+  // showMainWindow handles both a hidden window and a fully-closed one.
+  app.on('activate', () => {
+    showMainWindow()
+  })
+})
+
+// Quit when all windows closed (except macOS)
+app.on('window-all-closed', () => {
+  if (process.platform !== 'darwin') {
+    app.quit()
+  }
+})
+
+app.on('before-quit', (event) => {
+  // Gate BEFORE isQuitting is set: quitting destroys the renderer and its
+  // unsaved editor buffer, and a cancelled dialog must leave the tray-hide
+  // behavior (which reads isQuitting) exactly as it was.
+  if (editorGuard.needsPrompt()) {
+    event.preventDefault()
+    void confirmEditorDiscard(mainWindow).then((discard) => {
+      if (discard) {
+        editorGuard.confirmDiscard()
+        app.quit()
+      }
+    })
+    return
+  }
+  // Mark a real quit so the window `close` handler stops hiding to tray and lets
+  // the window actually close. This is the single choke point every quit path
+  // flows through (menu/tray Quit, Cmd-Ctrl+Q).
+  isQuitting = true
+})
+
+// Close the renderer before tearing down the services it can still query.
+app.on('will-quit', (event) => {
+  if (!shutdownComplete) {
+    event.preventDefault()
+    // The executor turns a synchronous stopAll() throw into a rejection, so a
+    // failed teardown is logged and the quit still resumes instead of hanging.
+    shutdownPending ??= new Promise<void>((resolve) => resolve(workspaceManager?.stopAll()))
+      .catch((error) => appLog.warn('app', 'Failed to stop workspaces on quit', error))
+      .then(() => {
+        shutdownComplete = true
+        // Native macOS terminate: is still unwinding during promise microtasks.
+        // Resume on the next turn so it cannot swallow the renewed quit request.
+        setImmediate(() => app.quit())
+      })
+    return
+  }
+  // Release the tray icon so it doesn't linger in the notification area.
+  destroyTray()
+  // Give the system-wide dictation key back to other apps.
+  globalShortcut.unregisterAll()
+  // Synchronous incremental scan + write: captures every session touched this
+  // run before we exit (async I/O isn't guaranteed to finish during shutdown).
+  activityStatsStore.flushSync()
+  appLog.flushSync()
+  workspaceTerminals?.stopAll()
+  // Windows: GUI-owned Pi TEMP does not get OS cleanup — wipe on quit.
+  cleanupPiChildTempDir()
+})
+
+// Security: prevent new window creation, and stop preview <webview> guests from
+// navigating away from their local file (e.g. a malicious HTML file redirecting
+// itself to a remote URL to phone home).
+app.on('web-contents-created', (_event, contents) => {
+  contents.setWindowOpenHandler(() => {
+    return { action: 'deny' }
+  })
+  if (contents.getType() === 'webview') {
+    contents.on('will-navigate', (event, url) => {
+      // An untrusted preview may not navigate away from its local file (e.g. a
+      // malicious page redirecting itself to a remote URL). Trusted previews of
+      // your own project may navigate freely.
+      if (!url.startsWith('file://') && !isActiveWorkspaceTrusted()) event.preventDefault()
+    })
+  }
+})
+
+async function applyWorkspaceFromEnv(manager: WorkspaceManager): Promise<void> {
+  const raw = process.env[WORKSPACE_ENV_VAR]
+  if (!raw) return
+
+  const path = resolvePath(raw)
+  if (!existsSync(path)) {
+    console.warn(`[Pi Desktop] ${WORKSPACE_ENV_VAR}=${raw} does not exist; ignoring`)
+    return
+  }
+
+  const existing = manager.getWorkspaces().find((w) => w.path === path)
+  if (existing) {
+    await manager.setActiveWorkspace(existing.id)
+    return
+  }
+
+  const name = basename(path) || path
+  const created = await manager.createWorkspace(name, path)
+  await manager.setActiveWorkspace(created.id)
+}

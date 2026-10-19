@@ -1,0 +1,1935 @@
+/**
+ * IPC channel constants and typed contracts for secure main↔renderer communication.
+ *
+ * Every channel has a strictly typed request/response shape.
+ * The preload bridge validates payloads against these contracts.
+ */
+import type { PermissionRule } from '../../resources/permission-rules'
+import type { LinkedTaskMode, RepoRole } from '../../resources/repo-set-map'
+import { AGENT_ENGINE_DEFINITIONS, type AgentEngine, type AgentEngineKind } from './agent-engine'
+export type { AgentEngine, AgentEngineKind } from './agent-engine'
+
+// ─── IPC Channel Names ──────────────────────────────────────────────────────
+
+export const IPC_CHANNELS = {
+  // Pi process lifecycle
+  PI_START: 'pi:start',
+  PI_STOP: 'pi:stop',
+  PI_RESTART: 'pi:restart',
+  PI_STATUS: 'pi:status',
+  PI_DETECT_INSTALLATIONS: 'pi:detect-installations',
+
+  // Pi commands
+  PI_PROMPT: 'pi:prompt',
+  PI_STEER: 'pi:steer',
+  PI_FOLLOW_UP: 'pi:follow-up',
+  PI_ABORT: 'pi:abort',
+  PI_BASH: 'pi:bash',
+  PI_ABORT_BASH: 'pi:abort-bash',
+
+  // Session management
+  SESSION_NEW: 'session:new',
+  SESSION_LAUNCH_TASK: 'session:launch-task',
+  SESSION_CLOSE_RUNTIME: 'session:close-runtime',
+  SESSION_SWITCH: 'session:switch',
+  SESSION_LIST_RUNTIMES: 'session:list-runtimes',
+  SESSION_FORK: 'session:fork',
+  SESSION_CLONE: 'session:clone',
+  SESSION_LIST: 'session:list',
+  SESSION_LIST_ALL: 'session:list-all',
+  SESSION_RESUME_TARGET: 'session:resume-target',
+  SESSION_GET_STATE: 'session:get-state',
+  SESSION_GET_MESSAGES: 'session:get-messages',
+  SESSION_GET_STATS: 'session:get-stats',
+  SESSION_SET_NAME: 'session:set-name',
+  SESSION_EXPORT_HTML: 'session:export-html',
+  SESSION_GET_FORK_MESSAGES: 'session:get-fork-messages',
+  SESSION_GET_STREAMING_TEXT: 'session:get-streaming-text',
+  SESSION_DELETE: 'session:delete',
+  SESSION_ARCHIVE: 'session:archive',
+  SESSION_UNARCHIVE: 'session:unarchive',
+  SESSION_LIST_ARCHIVED: 'session:list-archived',
+  SESSION_GET_LINEAGE: 'session:get-lineage',
+  SESSION_COMPACT: 'session:compact',
+
+  // Model management
+  MODEL_SET: 'model:set',
+  MODEL_CYCLE: 'model:cycle',
+  MODEL_LIST_AVAILABLE: 'model:list-available',
+  THINKING_SET_LEVEL: 'thinking:set-level',
+  THINKING_CYCLE_LEVEL: 'thinking:cycle-level',
+
+  // Settings
+  SETTINGS_GET_ALL: 'settings:get-all',
+  SETTINGS_SAVE: 'settings:save',
+  I18N_GET_ENVIRONMENT: 'i18n:get-environment',
+
+  // Permission rules
+  PERMISSION_RULES_GET: 'permission-rules:get',
+  PERMISSION_RULES_SET: 'permission-rules:set',
+  PERMISSION_RULES_IMPORT: 'permission-rules:import',
+  PERMISSION_RULES_EXPORT: 'permission-rules:export',
+  PERMISSION_RULES_WORKSPACE_STATUS: 'permission-rules:workspace-status',
+  PERMISSION_RULES_REMOVE_WORKSPACE: 'permission-rules:remove-workspace',
+  PERMISSION_RULES_SET_WORKSPACE_TRUST: 'permission-rules:set-workspace-trust',
+
+  // UI
+  UI_SELECT_RESPONSE: 'ui:select-response',
+  UI_CONFIRM_RESPONSE: 'ui:confirm-response',
+  UI_INPUT_RESPONSE: 'ui:input-response',
+  UI_EDITOR_RESPONSE: 'ui:editor-response',
+  UI_PENDING_FLUSH: 'ui:pending-flush',
+  UI_PENDING_GET: 'ui:pending-get',
+  UI_EDITOR_DIRTY_SET: 'ui:editor-dirty-set',
+
+  // System
+  SYSTEM_OPEN_DIALOG: 'system:open-dialog',
+  SYSTEM_OPEN_ATTACHMENT_DIALOG: 'system:open-attachment-dialog',
+  SYSTEM_GET_PATH: 'system:get-path',
+  SYSTEM_PATH_KIND: 'system:path-kind',
+  SYSTEM_OPEN_EXTERNAL: 'system:open-external',
+  SYSTEM_GET_VERSION: 'system:get-version',
+  UPDATE_CHECK: 'update:check',
+
+  // Activity
+  ACTIVITY_GET_STATS: 'activity:get-stats',
+
+  // Workflow run monitoring
+  WORKFLOW_LIST: 'workflow:list',
+  WORKFLOW_GET_RUN: 'workflow:get-run',
+  WORKFLOW_CONTROL: 'workflow:control',
+  WORKFLOW_SET_PERSISTENCE: 'workflow:set-persistence',
+
+  // Subagent panel
+  SUBAGENT_LIST: 'subagent:list',
+  SUBAGENT_GET_TRANSCRIPT: 'subagent:get-transcript',
+
+  // Diagnostics
+  DIAGNOSTICS_GET: 'diagnostics:get',
+
+  // Workspaces
+  WORKSPACE_LIST: 'workspace:list',
+  WORKSPACE_CREATE: 'workspace:create',
+  WORKSPACE_REMOVE: 'workspace:remove',
+  WORKSPACE_RENAME: 'workspace:rename',
+  WORKSPACE_SET_ACTIVE: 'workspace:set-active',
+  WORKSPACE_GET_ACTIVE: 'workspace:get-active',
+  WORKSPACE_CHANGE_PATH: 'workspace:change-path',
+  WORKSPACE_PATH_EXISTS: 'workspace:path-exists',
+  WORKSPACE_START_PI: 'workspace:start-pi',
+  WORKSPACE_STOP_PI: 'workspace:stop-pi',
+  WORKSPACE_CREATE_TAB: 'workspace:create-tab',
+  WORKSPACE_ACTIVITY_GET: 'workspace:activity',
+  WORKSPACE_TAKE_PENDING_ACTIVATION: 'workspace:take-pending-activation',
+
+  // Repo sets and linked tasks (one task across several git repositories)
+  REPO_SET_LIST: 'repo-set:list',
+  REPO_SET_SAVE: 'repo-set:save',
+  REPO_SET_DELETE: 'repo-set:delete',
+  REPO_SET_INSPECT_FOLDER: 'repo-set:inspect-folder',
+  LINKED_TASK_CREATE: 'linked-task:create',
+  LINKED_TASK_ADD_REPO: 'linked-task:add-repo',
+  LINKED_TASK_FOCUS_REPO: 'linked-task:focus-repo',
+  LINKED_TASK_STATUS: 'linked-task:status',
+  LINKED_TASK_SHIP: 'linked-task:ship',
+
+  // Packages
+  PACKAGE_LIST_INSTALLED: 'package:list-installed',
+  PACKAGE_INSTALL: 'package:install',
+  PACKAGE_REMOVE: 'package:remove',
+  PACKAGE_UPDATE: 'package:update',
+  PACKAGE_UPDATE_ALL: 'package:update-all',
+  PACKAGE_CHECK_UPDATES: 'package:check-updates',
+  PACKAGE_CATALOG_FETCH: 'package:catalog-fetch',
+
+  // Skills
+  SKILLS_LIST: 'skills:list',
+  COMMANDS_LIST: 'commands:list',
+  MCP_SERVERS_LIST: 'mcp:servers-list',
+
+  // Models config
+  MODELS_READ: 'models:read',
+  MODELS_WRITE: 'models:write',
+
+  // Council planning
+  COUNCIL_DETECT: 'council:detect',
+  COUNCIL_RUN_CONSULTANTS: 'council:run-consultants',
+  COUNCIL_ARBITER: 'council:arbiter',
+
+  // File operations
+  FILE_TREE: 'file:tree',
+  FILE_SEARCH: 'file:search',
+  FILE_SEARCH_CONTENT: 'file:search-content',
+  FILE_READ: 'file:read',
+  FILE_READ_ATTACHMENT: 'file:read-attachment',
+  FILE_WRITE: 'file:write',
+  FILE_DIFF: 'file:diff',
+  FILE_STAGED_DIFF: 'file:staged-diff',
+  FILE_DISCARD_DIFF: 'file:discard-diff',
+  FILE_WATCH_DEMAND: 'file:watch-demand',
+  GIT_STATUS: 'git:status',
+  GIT_BRANCH: 'git:branch',
+  GIT_PREFIX: 'git:prefix',
+  GIT_CONVEYOR_STATUS: 'git:conveyor-status',
+  GIT_COMMIT_MESSAGE_GENERATE: 'git:commit-message-generate',
+  GIT_LOCAL_BRANCHES: 'git:local-branches',
+  GIT_SWITCH_BRANCH: 'git:switch-branch',
+  GIT_CREATE_BRANCH: 'git:create-branch',
+  GIT_CONVEYOR_COMMIT: 'git:conveyor-commit',
+  GIT_CONVEYOR_PUSH: 'git:conveyor-push',
+  GIT_CONVEYOR_CREATE_PR: 'git:conveyor-create-pr',
+
+  // Terminal
+  TERMINAL_START: 'terminal:start',
+  TERMINAL_INPUT: 'terminal:input',
+  TERMINAL_RESIZE: 'terminal:resize',
+  TERMINAL_STOP: 'terminal:stop',
+
+  // Session tags
+  TAG_GET: 'tag:get',
+  TAG_SET: 'tag:set',
+  TAG_ADD: 'tag:add',
+  TAG_REMOVE: 'tag:remove',
+  TAG_GET_ALL: 'tag:get-all',
+  TAG_GET_ALL_USED: 'tag:get-all-used',
+  TAG_AUTO_GET_ALL: 'tag:auto-get-all',
+  TAG_AUTO_ENSURE: 'tag:auto-ensure',
+  TAG_AUTO_REMOVE: 'tag:auto-remove',
+
+  // Notes (reusable prompts / commands)
+  NOTES_LIST: 'notes:list',
+  NOTES_CREATE: 'notes:create',
+  NOTES_UPDATE: 'notes:update',
+  NOTES_REMOVE: 'notes:remove',
+
+  // Themes (user-created theme storage)
+  THEMES_LIST: 'themes:list',
+  THEMES_SAVE: 'themes:save',
+  THEMES_DELETE: 'themes:delete',
+  THEMES_INSTALL_URL: 'themes:install-from-url',
+  THEMES_EXPORT: 'themes:export',
+  THEMES_IMPORT: 'themes:import',
+  THEMES_GALLERY_LIST: 'themes:gallery-list',
+  THEMES_GALLERY_IMAGE: 'themes:gallery-image',
+  THEMES_SET_WINDOW_BACKGROUND: 'themes:set-window-background',
+
+  // Events (main → renderer)
+  EVENT_PI: 'event:pi',
+  EVENT_PENDING_PROMPTS: 'event:pending-prompts',
+  EVENT_WORKSPACE_ACTIVITY: 'event:workspace-activity',
+  EVENT_SESSION_RUNTIME: 'event:session-runtime',
+  EVENT_ACTIVATE_WORKSPACE: 'event:activate-workspace',
+  EVENT_FILE_CHANGE: 'event:file-change',
+  EVENT_TERMINAL_DATA: 'event:terminal-data',
+  EVENT_TERMINAL_EXIT: 'event:terminal-exit',
+  EVENT_COUNCIL_PROGRESS: 'event:council-progress',
+  EVENT_VOICE_PROGRESS: 'event:voice-progress',
+  EVENT_VOICE_SHORTCUT: 'event:voice-shortcut',
+
+  // Voice dictation
+  VOICE_STATUS: 'voice:status',
+  VOICE_INSTALL: 'voice:install',
+  VOICE_CANCEL: 'voice:cancel',
+  VOICE_REMOVE: 'voice:remove',
+  VOICE_SELECT: 'voice:select',
+
+  // TypeSafe (Jev): API key storage and agent skill install
+  TYPESAFE_STATUS: 'typesafe:status',
+  TYPESAFE_SAVE_KEY: 'typesafe:save-key',
+  TYPESAFE_CLEAR_KEY: 'typesafe:clear-key',
+  TYPESAFE_INSTALL_SKILL: 'typesafe:install-skill',
+  TYPESAFE_REMOVE_SKILL: 'typesafe:remove-skill',
+} as const
+
+// ─── Pi Process Types ───────────────────────────────────────────────────────
+
+export type PiProcessStatus = 'stopped' | 'starting' | 'running' | 'error'
+
+/**
+ * Where a 'starting' runtime is in its startup: 'spawning' at first,
+ * 'waiting-on-engine' once the notice delay passed with the process still
+ * running but readiness still pending — a slow workspace startup, or an
+ * extension startup hook waiting on a local model server.
+ */
+export type PiStartupPhase = 'spawning' | 'waiting-on-engine'
+
+export interface PiStatus {
+  status: PiProcessStatus
+  pid: number | null
+  error: string | null
+  /**
+   * Engine identity of the live child, so the UI can name what is actually
+   * running. Optional because a snapshot may predate the field; consumers
+   * fall back to Pi, which is what an unlabelled process has always been.
+   */
+  engine?: AgentEngineKind
+  /** Present only while status is 'starting'. */
+  startupPhase?: PiStartupPhase
+}
+
+export type SessionRuntimeActivity = 'working' | 'needs-approval' | 'completed' | 'failed'
+
+/** Live runtime for one Pi session. Multiple runtimes may share one workspace cwd. */
+export interface SessionRuntimeInfo extends PiStatus {
+  runtimeId: string
+  workspaceId: string
+  sessionPath: string | null
+  sessionId: string | null
+  activity: SessionRuntimeActivity | null
+  active: boolean
+  /** Main emitted marker telling the renderer to remove this closed tab. */
+  closed?: boolean
+  /**
+   * The engine's reason (empty when it gave none) for refusing the prompt main
+   * sent to start this New Task. The refused prompt never reaches the session
+   * history, so the renderer shows this in the task's chat. Cleared once a
+   * turn runs.
+   */
+  promptRefusal?: string
+}
+
+export interface SessionRuntimeCloseResult {
+  runtimeId: string
+  workspaceId: string
+  sessionPath: string | null
+  /** Active replacement chosen atomically with the close, if one exists. */
+  replacementSessionPath?: string | null
+  /** Proven header-only. Necessary for the auto-delete, never sufficient. */
+  empty: boolean
+  /**
+   * True only when this app created the session file during this run: a tab
+   * opened with no session that let the agent write a fresh JSONL. A tab that
+   * adopted an existing file — opened from the list, forked, or resumed with
+   * `--continue` — is false, because that file is the user's conversation and
+   * must survive being closed no matter how it reads on disk.
+   */
+  appCreated: boolean
+  deleted: boolean
+}
+
+export interface SessionLaunchTaskOptions {
+  workspaceId: string
+  prompt: string
+  isolated?: boolean
+}
+
+/** A branch switch or creation lands with the new status, or is refused with a reason for the user. */
+export type GitBranchSwitchResult = { ok: true; status: GitConveyorStatus } | { ok: false; error: string }
+
+export interface GitConveyorStatus {
+  branch: string | null
+  head: string
+  lastCommitMessage: string | null
+  /** Every changed row, untracked files included. */
+  dirtyFiles: number
+  /**
+   * Staged or unstaged changes to tracked files. Untracked files never reach a
+   * commit on their own, so only these block a push or a pull request.
+   */
+  dirtyTrackedFiles: number
+  ahead: number
+  behind: number
+  /**
+   * The configured upstream exists as a remote-tracking branch. False for a
+   * branch never pushed, a clone of an empty repository, or a remote branch
+   * that was deleted: Push publishes it again.
+   */
+  hasUpstream: boolean
+  /** Remote branch used by the explicit push target, when configured. */
+  pushRemote: string | null
+  /**
+   * Upstream branch that Push updates. Null when Push publishes the branch
+   * under its own name: no upstream, or an upstream that is the remote's base
+   * branch under another name.
+   */
+  upstreamBranch: string | null
+  /** Default base branch discovered from the upstream remote, when available. */
+  baseBranch: string | null
+  /** Commits on HEAD that the remote base branch lacks; null when the base is unknown. */
+  aheadOfBase: number | null
+  remoteUrl: string | null
+  /** GitHub `owner/name` a pull request targets; null when that remote is not on GitHub. */
+  pullRequestRepo: string | null
+  /** The open pull request from this branch, when GitHub reports one. */
+  openPullRequest: GitOpenPullRequest | null
+}
+
+export interface GitOpenPullRequest {
+  number: number
+  url: string
+}
+
+/** Both fields null: the commit selection has nothing to describe. */
+export interface GitCommitMessageSuggestion {
+  message: string | null
+  error: GitCommitMessageError | null
+}
+
+export type GitCommitMessageError = 'generation-failed' | 'timed-out' | 'engine-unavailable'
+
+export interface GitCommitMessageRequest {
+  /** Generate again even when this diff already has a suggestion. */
+  force: boolean
+  /** Describe only these repository-root-relative paths (the filtered Diff Viewer). */
+  paths?: string[]
+  /** Untracked files among `paths` the user chose to commit; the others stay out. */
+  newFiles?: string[]
+}
+
+export interface GitConveyorCommitOptions {
+  message: string
+  /**
+   * Commit only these repository-root-relative paths; untracked ones stay out
+   * unless listed in `newFiles`.
+   * Omitted: commit the staged index, or auto-stage tracked changes.
+   */
+  paths?: string[]
+  /**
+   * Untracked files among `paths` the user checked in the Commit dialog. They
+   * are added and committed; ignored files and directories are refused.
+   */
+  newFiles?: string[]
+}
+
+export interface GitConveyorPullRequestOptions {
+  title: string
+  body: string
+  /** Optional explicit base branch; otherwise the upstream remote HEAD is used. */
+  base?: string
+  draft?: boolean
+}
+
+export interface GitConveyorPullRequestResult {
+  url: string | null
+  output: string
+}
+
+export interface PiStartOptions {
+  cwd?: string
+  model?: string
+  provider?: string
+  /** Saved effort for fresh sessions only; never overrides a resumed session. */
+  defaultThinkingLevel?: string
+  sessionPath?: string
+  noSession?: boolean
+  // When true (and neither sessionPath, forkSessionPath nor noSession is set),
+  // Pi is launched with --continue so it resumes the most recent session for
+  // the cwd instead of creating a fresh one. Left unset, the Resume Last
+  // Session setting decides; an explicit false always starts a fresh session.
+  continueSession?: boolean
+  // Start a new session by forking this existing Pi session file. The new
+  // session is created in the supplied cwd.
+  forkSessionPath?: string
+  /**
+   * Engine this one start must spawn, overriding the configured default. Each
+   * engine keeps its sessions in its own store, so a session can only be
+   * resumed by the engine that wrote it. Absent means "use the configured
+   * engine", which is what a brand-new session does.
+   */
+  engine?: AgentEngineKind
+  args?: string[]
+  env?: Record<string, string>
+}
+
+// ─── Terminal Types ─────────────────────────────────────────────────────────
+
+export interface TerminalStartOptions {
+  cwd?: string
+  cols?: number
+  rows?: number
+}
+
+export interface TerminalStartResult {
+  pid: number
+  shell: string
+  cwd: string
+}
+
+export interface TerminalDataEvent {
+  workspaceId: string
+  data: string
+}
+
+export interface TerminalExitEvent {
+  workspaceId: string
+  exitCode: number
+  signal?: number
+}
+
+// ─── Pi RPC Event Types (subset used by renderer) ───────────────────────────
+
+export interface PiAgentStartEvent {
+  type: 'agent_start'
+}
+
+export interface PiAgentEndEvent {
+  type: 'agent_end'
+  messages: unknown[]
+}
+
+/** The text and thinking of the assistant message a Pi process is streaming, so far. */
+export interface StreamingTextSnapshot {
+  content: string
+  thinking: string
+}
+
+export interface PiMessageUpdateEvent {
+  type: 'message_update'
+  message: Record<string, unknown>
+  assistantMessageEvent: {
+    type: string
+    contentIndex?: number
+    delta?: string
+    /**
+     * Where a text or thinking delta starts in its message's text of that
+     * kind. Main stamps it (Pi sends none), so a view that attached in the
+     * middle of a message can tell a gap from the next delta.
+     */
+    offset?: number
+    partial?: Record<string, unknown>
+    content?: string
+    thinking?: string
+    toolCall?: Record<string, unknown>
+    reason?: string
+  }
+}
+
+export interface PiToolExecutionStartEvent {
+  type: 'tool_execution_start'
+  toolCallId: string
+  toolName: string
+  args: Record<string, unknown>
+}
+
+export interface PiToolExecutionUpdateEvent {
+  type: 'tool_execution_update'
+  toolCallId: string
+  toolName: string
+  args: Record<string, unknown>
+  partialResult: {
+    content: Array<{ type: string; text?: string }>
+    details: Record<string, unknown>
+  }
+}
+
+export interface PiToolExecutionEndEvent {
+  type: 'tool_execution_end'
+  toolCallId: string
+  toolName: string
+  result: {
+    content: Array<{ type: string; text?: string }>
+    details: Record<string, unknown>
+  }
+  isError: boolean
+}
+
+export interface PiTurnStartEvent {
+  type: 'turn_start'
+}
+
+export interface PiTurnEndEvent {
+  type: 'turn_end'
+  message: Record<string, unknown>
+  toolResults: unknown[]
+}
+
+export interface PiQueueUpdateEvent {
+  type: 'queue_update'
+  steering: string[]
+  followUp: string[]
+}
+
+export interface PiCompactionStartEvent {
+  type: 'compaction_start'
+  reason: string
+}
+
+export interface PiCompactionEndEvent {
+  type: 'compaction_end'
+  reason: string
+  result: unknown
+  aborted: boolean
+  willRetry: boolean
+  errorMessage?: string
+}
+
+export interface PiAutoRetryStartEvent {
+  type: 'auto_retry_start'
+  attempt: number
+  maxAttempts: number
+  delayMs: number
+  errorMessage: string
+}
+
+export interface PiAutoRetryEndEvent {
+  type: 'auto_retry_end'
+  success: boolean
+  attempt: number
+  finalError?: string
+}
+
+export interface PiExtensionErrorEvent {
+  type: 'extension_error'
+  extensionPath: string
+  event: string
+  error: string
+}
+
+export interface PiResponseEvent {
+  type: 'response'
+  command: string
+  id?: string
+  success: boolean
+  error?: string
+  data?: unknown
+}
+
+// Extension UI events
+export interface PiExtensionUiRequest {
+  type: 'extension_ui_request'
+  id: string
+  method: 'select' | 'confirm' | 'input' | 'editor' | 'notify' | 'setStatus' | 'setWidget' | 'setTitle' | 'set_editor_text' | 'open_url' | 'cancel'
+  title?: string
+  message?: string
+  options?: string[]
+  placeholder?: string
+  prefill?: string
+  notifyType?: 'info' | 'warning' | 'error'
+  statusKey?: string
+  statusText?: string
+  widgetKey?: string
+  widgetLines?: string[]
+  widgetPlacement?: string
+  timeout?: number
+  url?: string
+  launchUrl?: string
+  instructions?: string
+  targetId?: string
+}
+
+/**
+ * Blocking extension-UI prompts held in the main process, keyed by workspace
+ * id. Zero entries are omitted, so an empty object means nothing is waiting.
+ */
+export type PendingPromptCounts = Record<string, number>
+
+/**
+ * Per-workspace background activity derived in the main process from every
+ * workspace's Pi events (the renderer only receives streamed events for the
+ * active workspace, so it cannot derive this itself).
+ */
+export type WorkspaceActivityState = 'working' | 'needs-approval' | 'completed' | 'failed'
+
+export interface WorkspaceActivity {
+  state: WorkspaceActivityState
+  /** Epoch ms when the workspace entered this state. */
+  since: number
+}
+
+/** Keyed by workspace id; idle workspaces are omitted. */
+export type WorkspaceActivityMap = Record<string, WorkspaceActivity>
+
+/** Target carried by a desktop-notification click. */
+export interface WorkspaceActivationIntent {
+  workspaceId: string
+  sessionPath?: string
+  runtimeId?: string
+}
+
+// ─── Workflow monitoring ────────────────────────────────────────────────────
+
+export type WorkflowRunStatus = 'pending' | 'running' | 'paused' | 'completed' | 'failed' | 'aborted' | 'unknown'
+export type WorkflowAgentStatus = 'queued' | 'running' | 'done' | 'error' | 'skipped'
+
+export interface WorkflowAgentSummary {
+  id: number
+  callId?: string
+  label: string
+  phase?: string
+  status: WorkflowAgentStatus
+  error?: string
+  errorCode?: string
+  recoverable?: boolean
+  hasHistory: boolean
+  resultPreview?: string
+  tokens?: number
+  model?: string
+  startedAt?: string
+  endedAt?: string
+  tokenUsage?: {
+    input: number
+    output: number
+    total: number
+    cost?: number
+    cacheRead?: number
+    cacheWrite?: number
+  }
+}
+
+/**
+ * Control action dispatched to the run's owning workspace Pi process. `stop`
+ * maps to the extension's `/workflows stop <id>` (marks the run aborted),
+ * `resume` to `/workflows resume <id>` (paused/failed/pending only).
+ */
+export type WorkflowControlAction = 'stop' | 'resume'
+
+export type WorkflowControlReason =
+  | 'no-pi'
+  | 'pi-not-running'
+  | 'extension-missing'
+  | 'status-not-permitted'
+  | 'dispatch-failed'
+  | 'timeout'
+
+/** Result of a workflow control dispatch (never a fake local status change). */
+export interface WorkflowControlResult {
+  action: WorkflowControlAction
+  runId: string
+  ok: boolean
+  reason?: WorkflowControlReason
+  /** True only when the extension command was actually handed to Pi. */
+  dispatched?: boolean
+}
+
+/** Safe, renderer-sized projection of a dynamic-workflow persisted run. */
+export interface WorkflowRunSummary {
+  workspaceId: string
+  workspaceName: string
+  cwd: string
+  runId: string
+  workflowName: string
+  sessionId?: string
+  status: WorkflowRunStatus
+  pauseReason?: string
+  resetHint?: string
+  phases: string[]
+  currentPhase?: string
+  agents: WorkflowAgentSummary[]
+  startedAt: string
+  updatedAt: string
+  durationMs?: number
+  tokenUsage?: {
+    input: number
+    output: number
+    total: number
+    cost?: number
+    cacheRead?: number
+    cacheWrite?: number
+  }
+}
+
+export interface WorkflowHistoryEntry {
+  id?: string
+  timestamp?: string
+  role: string
+  kind: string
+  text: string
+  toolName?: string
+  path?: string
+  diff?: string
+  isError?: boolean
+}
+
+export interface WorkflowAgentDetail extends WorkflowAgentSummary {
+  prompt?: string
+  resultText?: string
+  history: WorkflowHistoryEntry[]
+  transcriptSource: 'persisted-session' | 'run-history' | 'none'
+  transcriptComplete: boolean
+}
+
+/** Lazy-loaded detail for one run; large fields never travel in list polling. */
+export interface WorkflowRunDetail extends WorkflowRunSummary {
+  script?: string
+  argsText?: string
+  resultText?: string
+  logs: string[]
+  agents: WorkflowAgentDetail[]
+}
+
+export interface PiMessageStartEvent {
+  type: 'message_start'
+  message: Record<string, unknown>
+}
+
+export interface PiMessageEndEvent {
+  type: 'message_end'
+  message: Record<string, unknown>
+}
+
+export interface PiStatusChangeEvent {
+  type: 'status_change'
+  status: PiProcessStatus
+  pid: number | null
+  error: string | null
+  engine?: AgentEngineKind
+  startupPhase?: PiStartupPhase
+}
+
+// Emitted by Pi when the session title changes — e.g. an auto-title extension,
+// the `/name` command, or our own rename. `name` is the new title (null/empty
+// when cleared).
+export interface PiSessionInfoChangedEvent {
+  type: 'session_info_changed'
+  name?: string | null
+}
+
+/** OMP's RPC spelling for a live session title update. */
+export interface PiSessionInfoUpdateEvent {
+  type: 'session_info_update'
+  title?: string | null
+  sessionId?: string
+}
+
+/** OMP emits this when its slash-command catalog changes. */
+export interface PiAvailableCommandsUpdateEvent {
+  type: 'available_commands_update'
+  commands: unknown[]
+}
+
+/** Output from a local-only OMP slash command. */
+export interface PiCommandOutputEvent {
+  type: 'command_output'
+  text: string
+}
+
+/**
+ * OMP's completion signal for a prompt. With `agentInvoked` false no turn ran:
+ * a local command finished, or the prompt failed with `error`.
+ */
+export interface PiPromptResultEvent {
+  type: 'prompt_result'
+  id?: string
+  agentInvoked: boolean
+  status?: 'completed' | 'aborted' | 'error'
+  error?: { message: string }
+}
+
+/**
+ * The engine's answer to a prompt it refused, or null when it took it. Pi and
+ * OMP answer a failed preflight (no API key, an expired login, no model) with
+ * `success: false` and the reason, and run no turn for it.
+ */
+export function promptRefusal(response: unknown): { reason: string } | null {
+  const answer = response as { success?: unknown; error?: unknown } | null
+  if (answer?.success !== false) return null
+  return { reason: typeof answer.error === 'string' ? answer.error : '' }
+}
+
+/**
+ * True for a prompt response that says the agent was not invoked: OMP ran a
+ * local command. Pi and OMP answer an agent prompt without `agentInvoked`.
+ */
+export function promptRanWithoutAgent(response: unknown): boolean {
+  const data = (response as { data?: { agentInvoked?: unknown } } | null)?.data
+  return data?.agentInvoked === false
+}
+
+/**
+ * True when a get_state response says no agent run is going. An accepted
+ * prompt's answer does not say whether a run follows: Pi runs an extension
+ * command, or lets an input handler take the prompt, and answers success with
+ * no run at all.
+ */
+export function reportsNoAgentRun(stateResponse: unknown): boolean {
+  const answer = stateResponse as { success?: unknown; data?: { isStreaming?: unknown } | null } | null
+  return answer?.success === true && answer.data?.isStreaming === false
+}
+
+/**
+ * True for an engine that reports how each prompt ended in a prompt_result
+ * event (OMP). It answers a prompt as soon as it admits it, before an
+ * extension command runs or a later model or API key check fails, so that
+ * event, not a get_state read, settles a prompt that ran no turn. It comes
+ * after a turn's agent_end, so one that comes before any agent_start ended a
+ * prompt that ran no turn.
+ */
+export function reportsPromptOutcome(engine: AgentEngineKind): boolean {
+  return engine === 'omp'
+}
+
+/** The refusal a prompt_result reports, or null for a prompt that ended without one. */
+export function promptResultRefusal(event: PiPromptResultEvent): { reason: string } | null {
+  return event.status === 'error' ? { reason: event.error?.message ?? '' } : null
+}
+
+/** OMP config changes that should cause the renderer to re-read get_state. */
+export interface PiConfigUpdateEvent {
+  type: 'config_update'
+  model?: unknown
+  thinkingLevel?: string
+}
+
+/** OMP subagent start/finish, pushed after `set_subagent_subscription`. */
+export interface PiSubagentLifecycleEvent {
+  type: 'subagent_lifecycle'
+  payload: unknown
+}
+
+/** OMP subagent progress, pushed at subscription level `progress`. */
+export interface PiSubagentProgressEvent {
+  type: 'subagent_progress'
+  payload: unknown
+}
+
+export type PiRpcEvent =
+  | PiAgentStartEvent
+  | PiAgentEndEvent
+  | PiMessageStartEvent
+  | PiMessageUpdateEvent
+  | PiMessageEndEvent
+  | PiToolExecutionStartEvent
+  | PiToolExecutionUpdateEvent
+  | PiToolExecutionEndEvent
+  | PiTurnStartEvent
+  | PiTurnEndEvent
+  | PiQueueUpdateEvent
+  | PiCompactionStartEvent
+  | PiCompactionEndEvent
+  | PiAutoRetryStartEvent
+  | PiAutoRetryEndEvent
+  | PiExtensionErrorEvent
+  | PiResponseEvent
+  | PiExtensionUiRequest
+  | PiStatusChangeEvent
+  | PiSessionInfoChangedEvent
+  | PiSessionInfoUpdateEvent
+  | PiAvailableCommandsUpdateEvent
+  | PiCommandOutputEvent
+  | PiPromptResultEvent
+  | PiConfigUpdateEvent
+  | PiSubagentLifecycleEvent
+  | PiSubagentProgressEvent
+
+// ─── Model Types ────────────────────────────────────────────────────────────
+
+export interface ModelInfo {
+  id: string
+  name: string
+  api: string
+  provider: string
+  baseUrl: string
+  reasoning: boolean
+  input: string[]
+  contextWindow: number
+  maxTokens: number
+  cost: {
+    input: number
+    output: number
+    cacheRead: number
+    cacheWrite: number
+  }
+  /** OMP exposes the effort values supported by the active model. */
+  thinking?: {
+    mode?: string
+    efforts?: string[]
+  }
+}
+
+// ─── Session Types ──────────────────────────────────────────────────────────
+
+export interface SessionState {
+  model: ModelInfo | null
+  thinkingLevel: string
+  isStreaming: boolean
+  isCompacting: boolean
+  steeringMode: string
+  followUpMode: string
+  sessionFile: string | null
+  sessionId: string
+  sessionName: string | null
+  autoCompactionEnabled: boolean
+  messageCount: number
+  pendingMessageCount: number
+}
+
+export interface SessionStats {
+  sessionFile: string | null
+  sessionId: string
+  userMessages: number
+  assistantMessages: number
+  toolCalls: number
+  toolResults: number
+  totalMessages: number
+  tokens: {
+    input: number
+    output: number
+    cacheRead: number
+    cacheWrite: number
+    total: number
+  }
+  cost: number
+  contextUsage: {
+    tokens: number | null
+    contextWindow: number
+    percent: number | null
+  } | null
+}
+
+export interface SessionListItem {
+  path: string
+  name: string | null
+  /** Preview of the session's first user message, or null if it has none. */
+  preview: string | null
+  /** `empty` is provably header-only; `unknown` must remain recoverable. */
+  contentState?: 'empty' | 'non-empty' | 'unknown'
+  /** Filename stem used by GUI registries (tags/archive), e.g. timestamp_uuid. */
+  sessionId: string
+  /** Pi's header UUID, used to correlate workflow runs with this session. */
+  piSessionId?: string
+  /**
+   * Engine that owns this session, taken from the store the file was indexed
+   * from. Optional because a row the index could not classify must stay
+   * listable; consumers show no engine tag rather than guessing one.
+   */
+  engine?: AgentEngineKind
+  lastModified: number
+  messageCount: number
+  projectPath: string
+  projectName: string
+}
+
+// Used by the heatmap grid helper (buildWeeks / intensityLevel).
+export interface ActivityDay {
+  date: string // local calendar day, YYYY-MM-DD
+  count: number // activity count on that day
+}
+
+// ─── Activity stats (persisted, survives session deletion) ────────────────────
+
+export interface ActivityStatsDay {
+  date: string // local calendar day, YYYY-MM-DD
+  messages: number // all `type === 'message'` records that day
+  tokens: number // assistant input + output tokens that day (all models)
+  tokensByModel: Record<string, number> // model id -> input + output that day
+}
+
+export interface ActivityModelUsage {
+  model: string // stable model id (e.g. "claude-opus-4-8", "ornith-1.0-35b@q6_k")
+  name: string | null // latest display name from models.json; null → fall back to id
+  input: number
+  output: number
+}
+
+export interface ActivityRangeStats {
+  sessions: number // distinct sessions with activity in the range
+  messages: number
+  totalTokens: number // input + output across all models
+  activeDays: number
+  currentStreak: number // consecutive active days ending today (capped by range)
+  longestStreak: number
+  peakHour: number | null // busiest local hour 0..23, or null if no activity
+  models: ActivityModelUsage[] // descending by input + output
+}
+
+// Range keys are trailing-day counts: 365 ("1y"), 180 ("6mo"), 90 ("3mo"), 30, 7.
+export type ActivityRangeKey = '365' | '180' | '90' | '30' | '7'
+
+export interface ActivityStatsResult {
+  days: ActivityStatsDay[] // ascending, length === WINDOW_DAYS, zero-filled
+  ranges: Record<ActivityRangeKey, ActivityRangeStats>
+}
+
+export interface AutoTagSessionRef {
+  sessionId: string
+  path: string
+}
+
+export interface SessionDeleteResult {
+  ok: boolean
+  method: 'trash' | 'unlink'
+  error?: string
+  /**
+   * Session promoted to active while the deleted session's runtime was closed,
+   * if one existed. The renderer opens it instead of creating a new session,
+   * which would spawn a third runtime and steal activation from this one.
+   */
+  replacementSessionPath?: string | null
+}
+
+export type ArchivedSessionsMap = Record<string, number>
+
+// File extensions Pi accepts as inline images (matches Pi's RPC image support).
+export const SUPPORTED_IMAGE_EXTENSIONS = ['png', 'jpg', 'jpeg', 'gif', 'webp'] as const
+
+/** A single image attachment in the shape Pi's RPC `prompt` command expects. */
+export interface PromptImage {
+  type: 'image'
+  mimeType: string
+  /** Base64-encoded image bytes (no data: URI prefix). */
+  data: string
+}
+
+/**
+ * Result of reading a user-selected attachment. Images are returned as a
+ * Pi-ready `PromptImage`; everything else is read as UTF-8 text to inline.
+ */
+export type AttachmentReadResult =
+  | { kind: 'image'; name: string; image: PromptImage }
+  | { kind: 'text'; name: string; content: string }
+
+/** Options for the native open dialog. Defaults to picking a directory. */
+export interface OpenDialogOptions {
+  title?: string
+  mode?: 'directory' | 'either'
+  filters?: Array<{ name: string; extensions: string[] }>
+}
+
+/** Options for the composer's multi-file attachment picker. */
+export type OpenAttachmentDialogOptions = Pick<OpenDialogOptions, 'title' | 'filters'>
+
+/** Result of SYSTEM_PATH_KIND (drag-drop folder open). */
+export interface PathKindResult {
+  exists: boolean
+  isDirectory: boolean
+}
+
+export type { SessionLineageRecord } from './session-lineage'
+export type { ModelsConfig, ProviderConfig, CustomModel } from './models-config'
+export type {
+  CouncilConfig,
+  CouncilAgentId,
+  ConsensusMode,
+  ConsultantResult,
+  ConsultantStatus,
+} from './council-config'
+
+import type { CouncilAgentId as CouncilAgentIdType, ConsultantResult as ConsultantResultType } from './council-config'
+
+/** Result of COUNCIL_DETECT. */
+export interface CouncilDetectResult {
+  agents: Array<{ id: CouncilAgentIdType; found: boolean }>
+}
+
+/**
+ * Request payload for COUNCIL_RUN_CONSULTANTS. The working directory is NOT
+ * part of the payload: the main process resolves it from the active workspace,
+ * so consultants always run against the real project tree.
+ */
+export interface CouncilRunRequest {
+  request: string
+  members: CouncilAgentIdType[]
+  timeoutSeconds: number
+  consensusMode: 'arbiter' | 'debate'
+}
+
+/** Result of COUNCIL_RUN_CONSULTANTS. */
+export interface CouncilRunResult {
+  results: ConsultantResultType[]
+}
+
+/**
+ * Request payload for COUNCIL_ARBITER. Pi merges (`merge`) or revises (`revise`)
+ * the consensus plan in an isolated read-only subprocess. As with
+ * COUNCIL_RUN_CONSULTANTS, the working directory is resolved from the active
+ * workspace in the main process, never from the renderer.
+ */
+export type CouncilArbiterRequest =
+  | { kind: 'merge'; request: string; results: ConsultantResultType[]; timeoutSeconds: number }
+  | { kind: 'revise'; request: string; plan: string; feedback: string; timeoutSeconds: number }
+
+/** Result of COUNCIL_ARBITER: the merged or revised consensus plan text. */
+export interface CouncilArbiterResult {
+  plan: string
+}
+
+/**
+ * Streamed live during a council run (main → renderer on EVENT_COUNCIL_PROGRESS).
+ * `chunk` is human-readable text appended to the consultant's live output:
+ * raw stdout for Codex, parsed text deltas for Claude.
+ */
+export interface CouncilProgressEvent {
+  id: CouncilAgentIdType
+  chunk: string
+}
+
+import type { ModelsConfig as ModelsConfigType } from './models-config'
+import type { CouncilConfig } from './council-config'
+import type { VoicePrecision, VoiceModel, VoiceModelManifest, VoiceDownloadProgress } from './voice-models'
+import type { VoiceDevice } from './voice-device'
+import type { ChatWidth } from './chat-width'
+/** Result of the MODELS_READ IPC call. */
+/**
+ * Where the custom-models config was read from. Main resolves the engine and
+ * file; the editor shows exactly this so its labels never name a file the save
+ * will not touch.
+ */
+export interface ModelsFileInfo {
+  engine: AgentEngineKind
+  /** Absolute path of the file read (and written on save). */
+  file: string
+  /** Basename, for labels ("Save models.yml"). */
+  name: string
+}
+
+/** Why the models file could not be used. Display text is built from this. */
+export type ModelsReadFailure =
+  | { kind: 'unreadable'; detail: string }
+  | { kind: 'invalid-syntax'; format: 'json' | 'yaml'; detail: string }
+  | { kind: 'missing-providers' }
+
+export type ModelsReadResult =
+  | { config: ModelsConfigType; location: ModelsFileInfo }
+  | { error: string; failure: ModelsReadFailure; raw: string; location: ModelsFileInfo }
+
+// ─── Agent Message Types ────────────────────────────────────────────────────
+
+export interface AgentTextContent {
+  type: 'text'
+  text: string
+}
+
+export interface AgentThinkingContent {
+  type: 'thinking'
+  thinking: string
+}
+
+export interface AgentToolCallContent {
+  type: 'toolCall'
+  id: string
+  name: string
+  arguments: Record<string, unknown>
+}
+
+export type AgentContentBlock = AgentTextContent | AgentThinkingContent | AgentToolCallContent
+
+export interface AgentUserMessage {
+  role: 'user'
+  content: string | AgentContentBlock[]
+  timestamp: number
+  attachments?: unknown[]
+  id?: string
+  parentId?: string
+}
+
+export interface AgentAssistantMessage {
+  role: 'assistant'
+  content: AgentContentBlock[]
+  api: string
+  provider: string
+  model: string
+  usage: {
+    input: number
+    output: number
+    cacheRead: number
+    cacheWrite: number
+    cost: {
+      input: number
+      output: number
+      cacheRead: number
+      cacheWrite: number
+      total: number
+    }
+  }
+  stopReason: string
+  timestamp: number
+  id?: string
+  parentId?: string
+}
+
+export interface AgentToolResultMessage {
+  role: 'toolResult'
+  toolCallId: string
+  toolName: string
+  content: Array<{ type: string; text?: string }>
+  isError: boolean
+  timestamp: number
+  id?: string
+  parentId?: string
+}
+
+export type AgentMessage = AgentUserMessage | AgentAssistantMessage | AgentToolResultMessage
+
+// ─── Settings Types ─────────────────────────────────────────────────────────
+
+export type PermissionMode = 'plan-readonly' | 'ask-edits' | 'ask-commands' | 'trusted'
+
+export type { PermissionRule, PermissionRuleAction, PermissionRulesFile } from '../../resources/permission-rules'
+
+export type PermissionRulesScope = 'global' | 'workspace'
+
+export type PermissionRulesGetResult =
+  | { ok: true; rules: PermissionRule[]; exists: boolean }
+  | { ok: false; error: string }
+
+export type PermissionRulesSetResult = { ok: true } | { ok: false; error: string }
+
+export type PermissionRulesRemoveResult = { ok: true } | { ok: false; error: string }
+
+export type PermissionRulesImportResult =
+  | { ok: true; rules: PermissionRule[] }
+  | { ok: false; canceled?: boolean; error?: string }
+
+export type PermissionRulesExportResult =
+  | { ok: true }
+  | { ok: false; canceled?: boolean; error?: string }
+
+export interface PermissionRulesWorkspaceStatus {
+  hasWorkspaceRules: boolean
+  workspacePath: string | null
+  acknowledged: boolean
+  // Whether the user has trusted this workspace (so its allow rules apply).
+  trusted: boolean
+  // Whether the workspace rules file actually contains any allow rules — the
+  // only case where trust changes behavior.
+  hasAllowRules: boolean
+}
+
+/** A concrete engine. `auto` is a preference, never something that is running. */
+export function isAgentEngineKind(value: unknown): value is AgentEngineKind {
+  return typeof value === 'string' && Object.hasOwn(AGENT_ENGINE_DEFINITIONS, value)
+}
+
+export interface AgentInstallation {
+  kind: AgentEngineKind
+  path: string
+  source: string
+}
+
+export interface AgentInstallationsResult {
+  installations: AgentInstallation[]
+}
+
+/**
+ * How a detection request treats the main process's installation cache. Main
+ * caches results, so a user-initiated Rescan has to ask for a fresh disk walk
+ * or it silently returns the same list it already showed.
+ */
+export interface AgentDetectionOptions {
+  force?: boolean
+}
+
+export interface AppSettings {
+  shortcuts: import('./keyboard-shortcuts').KeyboardShortcuts
+  piExecutablePath: string
+  /** Explicit engine identity; auto preserves legacy Pi/OMP detection. */
+  piEngine: AgentEngine
+  defaultArgs: string[]
+  theme: string // 'system' or a theme id (built-in or user theme)
+  // Themes 'system' switches between when the OS prefers light or dark. Each
+  // must be a theme of the matching kind; otherwise the built-in default for
+  // that slot is used.
+  systemLightTheme: string
+  systemDarkTheme: string
+  defaultModel: string | null
+  defaultProvider: string | null
+  defaultThinkingLevel: string | null
+  defaultCwd: string | null
+  // UI font size in px (chat, panels, sidebar). Applied to the document root.
+  fontSize: number
+  // Installed font family for UI and chat; empty keeps the built-in fonts.
+  uiFontFamily: string
+  // Terminal (xterm) font size in px — independent of the UI font size.
+  terminalFontSize: number
+  // Code editor (CodeMirror) font size in px — independent of the UI font size.
+  codeEditorFontSize: number
+  // Chat column width: 'normal' keeps a readable column, 'full' uses the whole
+  // chat area. Unknown values reset to 'normal' on load.
+  chatWidth: ChatWidth
+  showThinking: boolean
+  autoScroll: boolean
+  permissionMode: PermissionMode
+  // Workspace paths whose "this workspace has its own permission rules"
+  // notice has been acknowledged. Not exposed in the Settings UI.
+  permissionRulesAckWorkspaces: string[]
+  // Resume the most recent session for the workspace on launch (via Pi's
+  // --continue) instead of starting a fresh session.
+  resumeLastSession: boolean
+  // Project paths whose session group is collapsed in the Sessions panel.
+  // Persisted so the collapsed/expanded layout survives navigation and restarts.
+  collapsedSessionGroups: string[]
+  /** Sidebar width in pixels; clamped by `clampSidebarWidth` on read. */
+  sidebarWidth: number
+  // Show the Home/launcher screen on launch (Pi starts lazily on first action)
+  // instead of booting straight into Chat. When false, boot into Chat (empty
+  // chat is the Codex-style center prompt with project picker).
+  openToHomeOnLaunch: boolean
+  // Launch Pi Desktop automatically when the user logs in to their computer.
+  // Applied at the OS level: login items on macOS/Windows, a freedesktop
+  // autostart entry on Linux. Only effective in packaged builds.
+  runOnStartup: boolean
+  // Hide the window to the system tray when closed instead of quitting, keeping
+  // the app running in the background. Windows/Linux only; on macOS the window
+  // close already keeps the app alive in the Dock (native equivalent).
+  minimizeToTrayOnClose: boolean
+  // Internal: whether the one-time "still running in the tray" hint has been
+  // shown. Not exposed in the Settings UI.
+  hasSeenTrayHint: boolean
+  // Show OS desktop notifications when a turn finishes, fails, or waits for
+  // approval in a workspace the user is not currently looking at.
+  desktopNotifications: boolean
+  // Interface language: 'system' (follow the OS language list) or a bundled
+  // language code. Unknown values reset to 'system' on load.
+  language: string
+  // Multi-agent council planning configuration.
+  council: CouncilConfig
+  // Voice dictation: the installed speech-to-text model to transcribe with, or
+  // null when the user has not chosen one. No model is downloaded automatically;
+  // the mic button is inert until a model is picked and installed.
+  voiceModel: string | null
+  // Precision of the installed voice model to load: 'int8' runs on the CPU,
+  // 'fp16' on the GPU (see voice-device.ts). Unknown values reset to 'int8'.
+  voicePrecision: VoicePrecision
+  // Where dictation runs: 'auto' (GPU when a hardware GPU is found), 'cpu' or
+  // 'gpu'. It picks which precision Settings downloads. Unknown values reset
+  // to 'auto' on load.
+  voiceDevice: VoiceDevice
+}
+
+// ─── Voice Dictation Types ──────────────────────────────────────────────────
+
+/** Snapshot of voice models: the catalog, what is installed, and the choice. */
+export interface VoiceStatus {
+  catalog: VoiceModel[]
+  installed: VoiceModelManifest[]
+  selectedModel: string | null
+  selectedPrecision: VoicePrecision
+  device: VoiceDevice
+  /** The saved device needs a different set of startup switches than this run has. */
+  restartRequired: boolean
+}
+
+/** Request to download and install one model at one precision. */
+export interface VoiceInstallRequest {
+  modelId: string
+  precision: VoicePrecision
+}
+
+/** Streamed install progress (main → renderer on EVENT_VOICE_PROGRESS). */
+export interface VoiceProgressEvent {
+  modelId: string
+  precision: VoicePrecision
+  phase: 'downloading' | 'done' | 'error'
+  progress: VoiceDownloadProgress
+  error?: string
+}
+
+// ─── TypeSafe (Jev) Types ───────────────────────────────────────────────────
+
+/**
+ * Where the TypeSafe agent skill stands in the shared `~/.agents/skills` root.
+ * `installed-elsewhere` means a copy exists that Pi Desktop did not put there
+ * (for example from `npx skills add`); Pi Desktop leaves it alone.
+ */
+export type TypeSafeSkillState = 'not-installed' | 'installed' | 'installed-elsewhere'
+
+export interface TypeSafeSkillStatus {
+  state: TypeSafeSkillState
+  /** Release tag of a copy Pi Desktop installed; null otherwise. */
+  installedVersion: string | null
+  /** The pinned release tag this build downloads and installs. */
+  pinnedVersion: string
+  directory: string
+}
+
+/** Never carries the key itself — only whether one exists and where from. */
+export interface TypeSafeStatus {
+  savedKey: boolean
+  /** TYPESAFE_API_KEY is set in the app's own environment; it wins over a saved key. */
+  environmentKey: boolean
+  skill: TypeSafeSkillStatus
+}
+
+/** `ok: false` means the value was not a valid API key and nothing was saved. */
+export type TypeSafeSaveKeyResult = { ok: true; status: TypeSafeStatus } | { ok: false }
+
+/** What the renderer needs to resolve the `language` setting like main does. */
+export interface I18nEnvironment {
+  systemLanguages: string[]
+  pseudoLanguageEnabled: boolean
+}
+
+// ─── Update Check Types ─────────────────────────────────────────────────────
+
+/** Result of checking GitHub releases for a newer version. */
+export interface UpdateCheckResult {
+  updateAvailable: boolean
+  currentVersion: string
+  latestVersion: string
+  // Release page URL to open for downloading; empty when the check failed.
+  url: string
+  // Release name/title, when available.
+  name?: string
+}
+
+// ─── Workspace Types ────────────────────────────────────────────────────────
+
+export type WorkspaceKind = 'folder' | 'worktree' | 'repoSet'
+
+/** Options for creating an isolated tab from the active Git workspace. */
+export interface WorkspaceTabOptions {
+  name?: string
+  sourceWorkspaceId?: string
+  /** Optional Pi session to fork into the new worktree. */
+  forkSessionPath?: string
+  /** Original task text used to reuse the same worktree on a later launch. */
+  taskPrompt?: string
+  /** Skip the default runtime when another action will launch a task there. */
+  startPi?: boolean
+}
+
+/** Result of closing a workspace tab. Dirty worktrees are preserved. */
+export interface WorkspaceRemoveResult {
+  worktreeRemoved?: boolean
+  /** Managed worktrees kept on disk because they still hold changes. */
+  preservedWorktreePaths?: string[]
+}
+
+export interface Workspace {
+  id: string
+  name: string
+  path: string
+  createdAt: number
+  lastActiveAt: number
+  color: string
+  /** Optional for backward compatibility with older workspaces.json files. */
+  kind?: WorkspaceKind
+  /** Main repository root for managed worktrees. */
+  repoRoot?: string
+  /** Branch checked out by a managed worktree. */
+  branch?: string
+  /** Commit used as the worktree base. */
+  baseRef?: string
+  /** The source tab had local changes that were intentionally not copied. */
+  sourceWasDirty?: boolean
+  /** False for an existing user worktree adopted by the app; never delete it on close. */
+  managed?: boolean
+  /** Original task text when the app created or adopted this worktree. */
+  taskPrompt?: string
+  /** The repositories of a `repoSet` tab; `path` is its main repository's checkout. */
+  linkedTask?: LinkedTask
+}
+
+// ─── Repo Set Types ─────────────────────────────────────────────────────────
+
+export type { LinkedTaskMode, RepoMapEntry, RepoRole, RepoSetContext } from '../../resources/repo-set-map'
+
+export interface RepoSetMember {
+  /** Display name, unique in the set. */
+  name: string
+  /** Top of the user's own git checkout. */
+  sourcePath: string
+  role: RepoRole
+}
+
+/** A saved group of git repositories a linked task starts from. */
+export interface RepoSet {
+  id: string
+  name: string
+  members: RepoSetMember[]
+  createdAt: number
+  updatedAt: number
+}
+
+/** A new set (no id) or the edited version of a saved one. */
+export interface RepoSetDraft {
+  id?: string
+  name: string
+  members: RepoSetMember[]
+}
+
+/** A picked folder, resolved to the top of its git checkout. */
+export interface RepoFolderInfo {
+  path: string
+  /** Default display name: the checkout's folder name. */
+  name: string
+}
+
+export interface LinkedTaskRepo {
+  name: string
+  role: RepoRole
+  /** The user's own checkout the task started from. */
+  sourcePath: string
+  /** Main repository root, which owns the task's worktree. */
+  repoRoot: string
+  /** The checkout the agent edits: a managed worktree, or `sourcePath` in place. */
+  workPath: string
+  /** Checked-out branch; null for a detached HEAD in place. */
+  branch: string | null
+  /** Commit the worktree started from; absent in place. */
+  baseRef?: string
+  /** The app created the worktree and may remove it when the tab closes. */
+  managed: boolean
+  /** The user's checkout had uncommitted changes that the new worktree does not carry. */
+  sourceWasDirty?: boolean
+}
+
+/** One task across the repositories of a set, owned by a `repoSet` tab. */
+export interface LinkedTask {
+  setId: string
+  setName: string
+  mode: LinkedTaskMode
+  repos: LinkedTaskRepo[]
+}
+
+export interface LinkedTaskOptions {
+  setId: string
+  mode: LinkedTaskMode
+  /** Tab name and branch label; defaults to the set name. */
+  name?: string
+}
+
+/** One row of the repo bar. */
+export interface LinkedRepoStatus {
+  name: string
+  role: RepoRole
+  workPath: string
+  branch: string | null
+  /** False when the checkout was moved or deleted. */
+  exists: boolean
+  /** The diff, file, and git panels show this repository. */
+  focused: boolean
+  /** Changed files, untracked ones included. */
+  changedFiles: number
+  /** Untracked files, which reach a commit only when the user checks them. */
+  newFiles: string[]
+  pullRequestUrl: string | null
+  /** The worktree started from the last commit and left the user's uncommitted changes behind. */
+  sourceWasDirty: boolean
+}
+
+export interface LinkedShipRequest {
+  /** Commit message used in every repository with changes. */
+  message: string
+  /** Pull request title and description used in every repository. */
+  title: string
+  body: string
+  /** Untracked files the user checked, keyed by repository name. */
+  newFiles: Record<string, string[]>
+  /** Ship only these repositories (a retry); absent ships every one. */
+  repos?: string[]
+}
+
+export type LinkedShipStep = 'commit' | 'push' | 'pullRequest' | 'link'
+
+export interface LinkedRepoShipResult {
+  name: string
+  /** `unchanged`: nothing to ship; `missing`: the checkout is gone. */
+  outcome: 'shipped' | 'unchanged' | 'failed' | 'missing'
+  failedStep?: LinkedShipStep
+  error?: string
+  pullRequestUrl: string | null
+}
+
+export interface LinkedShipResult {
+  repos: LinkedRepoShipResult[]
+}
+
+// ─── Notes Types ────────────────────────────────────────────────────────────
+
+/**
+ * Scope of a note. Either the literal `'global'` (available everywhere) or a
+ * workspace id (only surfaced when that workspace is active). Stored as a
+ * single field so all notes live in one store and the UI merges by scope.
+ */
+export type NoteScope = 'global' | string
+
+/** A reusable prompt or agent command the user has saved. */
+export interface Note {
+  id: string
+  title: string
+  body: string
+  tags: string[]
+  scope: NoteScope
+  createdAt: number
+  updatedAt: number
+}
+
+/** Fields supplied when creating a note. */
+export interface NoteInput {
+  title: string
+  body: string
+  tags: string[]
+  scope: NoteScope
+}
+
+/** Mutable fields when updating a note. */
+export type NoteUpdate = Partial<NoteInput>
+
+// ─── Theme Types ────────────────────────────────────────────────────────────
+
+import type { ThemeFile } from './theme/theme-file'
+
+/** A user-created theme as stored on disk, keyed by its file-derived id. */
+export interface UserThemeRecord {
+  id: string
+  file: ThemeFile
+}
+
+/** Result of listing user themes; `warnings` reports files that failed validation. */
+export interface ThemesListResult {
+  themes: UserThemeRecord[]
+  warnings: string[]
+}
+
+/**
+ * Result of an operation that produces (or fails to produce) a saved theme:
+ * installing from a URL, or importing from a file. `canceled` distinguishes a
+ * user-initiated dialog cancellation from a genuine error.
+ */
+export type ThemeImportResult =
+  | { ok: true; theme: UserThemeRecord }
+  | { ok: false; error: string }
+  | { ok: false; canceled: true }
+
+export type ThemeExportResult =
+  | { ok: true }
+  | { ok: false; error: string }
+  | { ok: false; canceled: true }
+
+export interface GalleryTheme {
+  name: string
+  kind: 'dark' | 'light'
+  url: string
+  author?: string
+  description?: string
+  // Full validated theme content embedded in the gallery index, used to
+  // render a live preview card without fetching each theme file. Absent when
+  // the index predates embedding; the card then renders without a preview.
+  theme?: ThemeFile
+  // Optional author-provided screenshot URL (pinned to the gallery repo). The
+  // renderer fetches it lazily via THEMES_GALLERY_IMAGE, which returns a data
+  // URI (the renderer CSP forbids remote images).
+  screenshotUrl?: string
+}
+
+export type ThemeGalleryResult =
+  | { ok: true; themes: GalleryTheme[] }
+  | { ok: false; error: string }
+
+export type ThemeGalleryImageResult =
+  | { ok: true; dataUri: string }
+  | { ok: false; error: string }
+
+// ─── Package Types ──────────────────────────────────────────────────────────
+
+export interface InstalledPackage {
+  name: string
+  source: string
+  type: 'extension' | 'skill' | 'prompt' | 'theme' | 'package'
+  version: string | null
+  path: string
+}
+
+/** An installed package with a newer registry version; `source` matches its InstalledPackage. */
+export interface PackageUpdate {
+  source: string
+  installedVersion: string
+  latestVersion: string
+}
+
+export interface CatalogPackage {
+  name: string
+  description: string
+  author: string
+  type: string
+  downloads: number
+  downloadsDisplay: string
+  updatedAt: string
+  npmUrl: string | null
+  repoUrl: string | null
+  installCommand: string
+}
+
+// ─── Skill Types ────────────────────────────────────────────────────────────
+
+export interface InstalledSkill {
+  name: string
+  description: string
+  path: string
+  source: 'global' | 'project' | 'package' | 'cli'
+  enabled: boolean
+}
+
+/**
+ * Path prefix marking a skill known only from the running engine's command
+ * catalog (plugin/marketplace skills without a SKILL.md file the GUI can
+ * read). The skills panel shows the description instead of file content.
+ */
+export const RPC_SKILL_PATH_PREFIX = 'rpc:'
+
+/** True when the skill has no SKILL.md on disk (catalog-only entry). */
+export function isRpcSkillPath(path: string): boolean {
+  return path.startsWith(RPC_SKILL_PATH_PREFIX)
+}
+
+// ─── App Log Types ──────────────────────────────────────────────────────────
+
+/**
+ * One entry in the main-process application log. Persisted as JSONL in the GUI
+ * data dir and mirrored in a bounded in-memory ring for the diagnostics view.
+ */
+export interface AppLogEntry {
+  /** Epoch ms when the entry was recorded. */
+  ts: number
+  level: 'info' | 'warn' | 'error'
+  /** Short subsystem tag, e.g. 'pi', 'git', 'settings'. */
+  scope: string
+  message: string
+  /** Optional stringified error / extra context. */
+  detail?: string
+}
+
+// ─── Diagnostics Types ──────────────────────────────────────────────────────
+
+export interface DiagnosticsWorkspaceInfo {
+  id: string
+  name: string
+  path: string
+  pathExists: boolean
+  trusted: boolean
+  piStatus: PiProcessStatus
+}
+
+/**
+ * How a provider's apiKey field resolves: a literal secret, an environment
+ * variable that is present/absent, a shell command (never evaluated here), or
+ * nothing configured.
+ */
+export type ProviderKeyState = 'literal' | 'env-set' | 'env-missing' | 'shell' | 'none'
+
+export interface DiagnosticsProviderInfo {
+  name: string
+  modelCount: number
+  keyState: ProviderKeyState
+  /** The environment variable name when keyState is env-set / env-missing. */
+  envVar?: string
+}
+
+/** Where a resolved Pi path came from, for logging and error messaging. */
+export type PiResolutionSource =
+  | 'finecode'
+  | 'override'
+  | 'npm-prefix'
+  | 'path'
+  | 'version-manager'
+  | 'common-location'
+  | 'omp'
+  | 'fallback'
+
+/** Everything the Diagnostics view shows, assembled in one main-side pass. */
+export interface DiagnosticsReport {
+  generatedAt: number
+  app: {
+    version: string
+    electron: string
+    chrome: string
+    node: string
+    platform: string
+  }
+  piBinary: {
+    found: boolean
+    script: string
+    source: PiResolutionSource
+    useNode: boolean
+    nodeBinary: string
+    nodeFound: boolean
+    needsShell: boolean
+    rejectedOverride: string | null
+    failureReason: string | null
+    /** Entries on the merged (login-shell-aware) PATH used to find Pi. */
+    pathEntryCount: number
+  }
+  /** `pi --version` output (first line), or null when it could not run. */
+  piVersion: string | null
+  workspaces: DiagnosticsWorkspaceInfo[]
+  /** Null when models.json is missing or unreadable — see providersError. */
+  providers: DiagnosticsProviderInfo[] | null
+  providersError: string | null
+  permissions: {
+    mode: PermissionMode
+    /** Rule count in the global file; null when the file is invalid. */
+    globalRuleCount: number | null
+    globalRulesError: string | null
+    workspace: PermissionRulesWorkspaceStatus
+  }
+  storage: {
+    guiDataDir: string
+    settingsPath: string
+    sessionsRoot: string
+    sessionsRootExists: boolean
+  }
+  recentErrors: AppLogEntry[]
+}
+
+// ─── File Types ────────────────────────────────────────────────────────────
+
+export interface FileTreeNode {
+  name: string
+  path: string
+  relativePath: string
+  type: 'file' | 'directory'
+  children?: FileTreeNode[]
+  gitStatus?: GitFileStatus
+}
+
+export interface GitFileStatus {
+  index: string
+  worktree: string
+  isStaged: boolean
+}
+
+export interface FileSearchResult {
+  path: string
+  relativePath: string
+  name: string
+  matchType: 'filename' | 'content'
+  line?: number
+  snippet?: string
+}
+
+/**
+ * Emitted (main → renderer, debounced) when files change on disk in the
+ * active workspace. The renderer should refresh the file tree and git status
+ * wholesale; `changeType`/`relativePath` describe the most recent change in
+ * the debounce window and are informational, not an exhaustive change list.
+ */
+export interface FileChangeEvent {
+  changeType: 'add' | 'change' | 'unlink' | 'addDir' | 'unlinkDir'
+  relativePath: string
+}
+
+/** `relativePath` of a FileChangeEvent that replaced the whole worktree, such as a branch switch. */
+export const WHOLE_WORKSPACE_CHANGE_PATH = '.'
+
+export interface DiffHunk {
+  oldStart: number
+  oldLines: number
+  newStart: number
+  newLines: number
+  content: string
+  changes: DiffChange[]
+}
+
+export interface DiffChange {
+  type: 'add' | 'remove' | 'normal'
+  content: string
+  oldLine?: number
+  newLine?: number
+}
+
+export interface DiffFile {
+  oldPath: string
+  newPath: string
+  hunks: DiffHunk[]
+  isBinary: boolean
+  isNew: boolean
+  isDeleted: boolean
+}
+
+// ─── Timeline Event Types ───────────────────────────────────────────────────
+
+export type TimelineEventKind = 'agent-run'
+
+export interface TimelineEvent {
+  id: string
+  type: 'user_message' | 'assistant_message' | 'tool_start' | 'tool_end' | 'thinking' | 'compaction' | 'retry' | 'queue' | 'system' | 'error'
+  /** Stable identity for events that logic pairs up; `title` is display text. */
+  kind?: TimelineEventKind
+  timestamp: number
+  duration?: number
+  title: string
+  detail?: string
+  status?: 'running' | 'success' | 'error' | 'cancelled'
+  metadata?: Record<string, unknown>
+}

@@ -1,0 +1,4124 @@
+import { create } from 'zustand'
+import { applyThemeSettings, rememberBootTheme, setUserThemes, watchSystemTheme } from './utils/theme'
+import { applyLanguageSetting } from './i18n'
+import { applyUiFont } from './utils/ui-font'
+import { t } from '../../shared/i18n'
+import { buildPlanningPrompt } from './utils/planning-prompt'
+import { moveProjectTab, projectTabs, readProjectTabOrder, rememberProjectTabOrder } from './utils/tab-navigation'
+import { parseAgentMessage, type DisplayAttachment, type DisplayMessage } from './message-parsing'
+import { isStoppedAnswer } from '../../shared/stopped-answer'
+import { stripAnsi } from './utils/strip-ansi'
+import { createStaleGuard } from './utils/stale-guard'
+import { splitClaudeCliMarkers } from './claude-cli-markers'
+import { markUnansweredToolCallsRunning, settleRunningToolCall } from './reattached-tool-calls'
+import type { PiCommand } from '../../shared/pi-command'
+import { forkPointForUserMessage, normalizeForkMessages, type ForkPoint } from '../../shared/fork-point'
+import { buildLineageTree, type LineageNode } from '../../shared/session-lineage'
+import { clampSidebarWidth } from '../../shared/sidebar-width'
+import { workspaceNameFromFolderPath } from '../../shared/folder-drop'
+import { pathsEqual } from '../../shared/path-compare'
+import { EDITED_TITLE_MAX_CHARS, sessionPreview, stripInjectedPreamble, truncateTitle } from '../../shared/session-preview'
+import { validateModelsConfig, mergeModelsConfig, type ModelsConfig } from '../../shared/models-config'
+import {
+  applyOmpLifecycle,
+  applyOmpProgress,
+  applyOmpSubagentList,
+  applySubagentToolEvent,
+  isSubagentTool,
+  PI_ASYNC_WIDGET_KEY,
+  replacePiAsyncRuns,
+  tasksFromPiAsyncWidget,
+  type SubagentTask,
+  type SubagentTaskStatus,
+  type SubagentToolEvent,
+} from '../../shared/subagent-task'
+import {
+  resolveActiveMembers,
+  hasQuorum,
+  buildImplementationPrompt,
+  type CouncilAgentId,
+  type ConsultantResult,
+} from '../../shared/council-config'
+import type {
+  PiRpcEvent,
+  PiStatus,
+  AgentEngineKind,
+  PiProcessStatus,
+  PiStartupPhase,
+  SessionState,
+  SessionStats,
+  SessionListItem,
+  AppSettings,
+  PiMessageStartEvent,
+  PiMessageUpdateEvent,
+  PiToolExecutionStartEvent,
+  PiToolExecutionEndEvent,
+  PiToolExecutionUpdateEvent,
+  PiQueueUpdateEvent,
+  PiCompactionStartEvent,
+  PiCompactionEndEvent,
+  PiAutoRetryStartEvent,
+  PiAutoRetryEndEvent,
+  PiExtensionUiRequest,
+  Workspace,
+  LinkedTaskOptions,
+  InstalledPackage,
+  InstalledSkill,
+  CatalogPackage,
+  PackageUpdate,
+  TimelineEvent,
+  PermissionMode,
+  Note,
+  NoteInput,
+  NoteUpdate,
+  UpdateCheckResult,
+  PromptImage,
+  CouncilArbiterRequest,
+  PermissionRule,
+  PermissionRulesScope,
+  PendingPromptCounts,
+  WorkspaceActivityMap,
+  WorkflowRunSummary,
+  SessionRuntimeInfo,
+  SessionLaunchTaskOptions,
+  SessionDeleteResult,
+  ModelsFileInfo,
+  ModelInfo,
+  PiPromptResultEvent,
+} from '../../shared/ipc-contracts'
+import {
+  promptRanWithoutAgent, promptRefusal, promptResultRefusal, reportsNoAgentRun, reportsPromptOutcome,
+} from '../../shared/ipc-contracts'
+
+export type { DisplayAttachment, DisplayMessage } from './message-parsing'
+
+// ─── Preview Target ──────────────────────────────────────────────────────────
+
+/**
+ * What the side-panel preview is currently showing. `code` opens the editor
+ * (with a Source/Preview toggle for markdown & HTML); `image` opens the image
+ * viewer. `path` is absolute; `relativePath` (code only) drives the editor.
+ */
+export interface PreviewTarget {
+  kind: 'code' | 'image'
+  name: string
+  path: string
+  relativePath?: string
+}
+
+/** A secondary view in the chat's side slot. */
+export type ChatSidePanel = 'files' | 'diff' | 'tasks'
+
+/**
+ * Whether a side panel takes the whole side slot. The chat then shows no file
+ * preview beside it, so opening it unmounts the editor and its unsaved buffer.
+ * The layout and the actions that open a panel read this one rule.
+ */
+export function sidePanelHidesPreview(panel: ChatSidePanel | null): boolean {
+  return panel === 'diff' || panel === 'tasks'
+}
+
+// ─── Composer Draft ──────────────────────────────────────────────────────────
+
+// A staged attachment: either inlined as text or sent to Pi as an image block.
+export type ComposerAttachment =
+  | { kind: 'text'; name: string; path: string; content: string }
+  | { kind: 'image'; name: string; path: string; image: PromptImage }
+
+/** Unsent composer content for one workspace: its text and staged files. */
+export interface ComposerDraft {
+  text: string
+  attachments: ComposerAttachment[]
+}
+
+export const EMPTY_COMPOSER_DRAFT: ComposerDraft = { text: '', attachments: [] }
+
+// ─── Council Run State ───────────────────────────────────────────────────────
+
+export type CouncilPhase = 'detecting' | 'consulting' | 'merging' | 'awaiting-approval' | 'refused'
+
+export interface CouncilRunState {
+  phase: CouncilPhase
+  request: string
+  results: ConsultantResult[]
+  // Active consultants for this run (used to render live cards while consulting).
+  members?: CouncilAgentId[]
+  // Live output streamed per consultant during the consulting phase.
+  partials?: Record<string, string>
+  // Epoch ms when the consulting phase started (drives the elapsed indicator).
+  startedAt?: number
+  reason?: string
+  // The arbiter's consensus plan text: streamed live during 'merging', then the
+  // final plan shown at 'awaiting-approval'. Produced by an isolated read-only
+  // Pi subprocess, so untrusted consultant output never reaches the live session.
+  consensus?: string
+}
+
+// ─── Confirmation Dialog ─────────────────────────────────────────────────────
+
+export interface ConfirmOptions {
+  title?: string
+  message: string
+  confirmLabel?: string
+  cancelLabel?: string
+  // Style the confirm button as destructive (red).
+  danger?: boolean
+}
+
+export interface ConfirmRequest extends ConfirmOptions {
+  resolve: (confirmed: boolean) => void
+}
+
+/** The actions that abandon the live turn, either by replacing the session or by leaving it. */
+export type SessionChangeAction = 'switch' | 'new' | 'fork' | 'clone' | 'workspace' | 'changeFolder'
+
+/**
+ * The confirm dialog's message + confirm label for each session-change action.
+ * Built at call time (never at module load) since the text is translated; the
+ * enum drives explicit full-sentence keys rather than interpolating a shared
+ * verb fragment, so each language can restructure the sentence.
+ */
+function sessionChangePrompt(action: SessionChangeAction): { message: string; confirmLabel: string } {
+  switch (action) {
+    case 'switch':
+      return { message: t('store.confirm.switchMessage'), confirmLabel: t('store.confirm.switchAnywayLabel') }
+    case 'new':
+      return { message: t('store.confirm.newMessage'), confirmLabel: t('store.confirm.startAnywayLabel') }
+    case 'fork':
+      return { message: t('store.confirm.forkMessage'), confirmLabel: t('store.confirm.forkAnywayLabel') }
+    case 'clone':
+      return { message: t('store.confirm.cloneMessage'), confirmLabel: t('store.confirm.cloneAnywayLabel') }
+    // Leaving a workspace does not tear the session down — each workspace has its
+    // own Pi process and nothing stops it. The turn keeps running in the
+    // background: its output lands in the session file and is restored on
+    // switch-back, and any blocking prompt it raises while the user is away is
+    // held by the main process and re-shown when this workspace is active again.
+    case 'workspace':
+      return { message: t('store.confirm.workspaceMessage'), confirmLabel: t('store.confirm.switchAnywayLabel') }
+    // Unlike a workspace switch, this restarts the workspace's Pi (its working
+    // directory is bound at spawn), so the turn does not survive in the background.
+    case 'changeFolder':
+      return { message: t('store.confirm.changeFolderMessage'), confirmLabel: t('store.confirm.changeAnywayLabel') }
+  }
+}
+
+/** Total prompts held for workspaces other than the active one (whose prompt is already on screen). */
+export function countPromptsWaitingElsewhere(
+  counts: PendingPromptCounts,
+  activeWorkspaceId: string | null
+): number {
+  let total = 0
+  for (const [workspaceId, count] of Object.entries(counts)) {
+    if (workspaceId !== activeWorkspaceId) total += count
+  }
+  return total
+}
+
+/** Badge/status label for held prompts, e.g. "2 Pi prompts waiting". */
+export function formatPromptsWaiting(count: number): string {
+  return t('store.promptsWaiting', { count })
+}
+
+function councilErrorMessage(error: unknown): string {
+  return t('store.messages.councilFailed', { detail: error instanceof Error ? error.message : String(error) })
+}
+
+/**
+ * The per-turn state left behind once a turn is over. `isStreaming` otherwise
+ * only clears on `agent_end` / `turn_end`, so any path that ends a turn without
+ * those events has to apply this or the chat keeps a streaming bubble that no
+ * incoming event can close. Built fresh each call: the tool-call map is mutable
+ * and must never be shared between turns.
+ */
+function idleTurnState(): Pick<
+  AppState,
+  | 'isStreaming'
+  | 'streamingContent'
+  | 'streamingThinking'
+  | 'streamingToolCalls'
+  | 'pendingSteering'
+  | 'pendingFollowUp'
+  | 'reattachedMidTurn'
+> {
+  return {
+    isStreaming: false,
+    streamingContent: '',
+    streamingThinking: '',
+    streamingToolCalls: new Map(),
+    pendingSteering: [],
+    pendingFollowUp: [],
+    reattachedMidTurn: false,
+  }
+}
+
+/**
+ * Whether a workspace's Pi is reachable right now.
+ *
+ * Only the runtime main marked active backs that workspace's Pi manager, so a
+ * sibling still running in the background says nothing about whether a prompt
+ * can be delivered. Reading any runtime here reported a live workspace whose
+ * active runtime was stopped, which skipped the lazy start and lost the
+ * prompt in `getActivePi()`.
+ */
+function workspaceHasLivePi(
+  runtimes: Record<string, SessionRuntimeInfo>,
+  workspaceId: string
+): boolean {
+  return Object.values(runtimes).some(
+    (runtime) => runtime.workspaceId === workspaceId && runtime.active && runtime.status === 'running'
+  )
+}
+
+// ─── Store Shape ─────────────────────────────────────────────────────────────
+
+/**
+ * The start view picks a repo set (`setId`: the one to select first); the edit
+ * view changes one (`setId` null: a new set).
+ */
+export type LinkedTaskDialogView = { view: 'start'; setId?: string } | { view: 'edit'; setId: string | null }
+
+interface AppState {
+  // Pi process
+  piStatus: PiProcessStatus
+  /** Non-null only while piStatus is 'starting'. */
+  piStartupPhase: PiStartupPhase | null
+  piPid: number | null
+  piError: string | null
+  /** Which engine the live process actually is, so the UI names it correctly. */
+  piEngine: AgentEngineKind
+
+  // Session
+  sessionState: SessionState | null
+  sessionStats: SessionStats | null
+  sessionList: SessionListItem[]
+  // Live Pi runtimes keyed by runtime id. Several can share one project cwd.
+  sessionRuntimes: Record<string, SessionRuntimeInfo>
+  activeSessionRuntimeId: string | null
+  forkMessages: ForkPoint[]
+
+  // Messages
+  messages: DisplayMessage[]
+  // Shell-style recall of prompts sent this session (oldest→newest); reset per
+  // session in clearMessages. Recorded raw (before attachment inlining).
+  promptHistory: string[]
+  streamingContent: string
+  streamingThinking: string
+  streamingToolCalls: Map<
+    string,
+    { name: string; args: string; result?: string; isExecuting: boolean; isError?: boolean; startedAt?: number; durationMs?: number }
+  >
+  isStreaming: boolean
+  /**
+   * History may be incomplete after a mid-turn attach or a snapshot racing
+   * live output. Final message events recover individual bodies; backfill any
+   * earlier history once the active run is idle.
+   */
+  reattachedMidTurn: boolean
+  /** True while a session history load is in flight (switch/reload). */
+  sessionLoading: boolean
+
+  // Queue
+  pendingSteering: string[]
+  pendingFollowUp: string[]
+
+  // UI
+  currentView: 'home' | 'chat' | 'mission-control' | 'settings' | 'sessions' | 'timeline' | 'packages' | 'diff' | 'notes' | 'skills' | 'diagnostics'
+  // Scope for the Sessions view: 'current' shows only the active workspace's
+  // sessions, 'all' keeps every project's history visible. Entry points set it
+  // (sidebar Sessions = current, View all / command palette = all); the panel's
+  // toggle flips it live.
+  sessionsScope: 'all' | 'current'
+  workflowPanelOpen: boolean
+  // When set, the workflow navigator only lists runs recorded for this Pi
+  // session id (run.sessionId). null = no session scope.
+  workflowPanelFilter: string | null
+  // Project/workspace scope for the sidebar Activity entry. null = global.
+  workflowPanelWorkspaceId: string | null
+  // Bumped to request the chat scroll jump to the bottom (used when resuming a
+  // session/workspace from Home). In-app session switches leave it untouched so
+  // the chat restores each session's remembered scroll position instead.
+  chatScrollBottomNonce: number
+  // Chat side panel: which secondary view (file tree, diff, or Tasks) is open
+  // in the chat workspace. Lifted into the store so it survives navigating
+  // away from chat (e.g. into Settings) and back.
+  chatSidePanel: ChatSidePanel | null
+  sidebarOpen: boolean
+  terminalOpen: boolean
+  reviewOpen: boolean
+  settings: AppSettings | null
+  // Unsaved edits from the Settings panel (theme, piPath, permission mode,
+  // toggles, font sizes). Overlaid on `settings` so the form reflects them on
+  // reopen and they survive view switches; the terminal/editor read their font
+  // sizes from here so unsaved changes apply on remount. Cleared on Save/Reset.
+  settingsDraft: Partial<AppSettings>
+  // Unsaved per-scope permission-rules edits from the Settings panel; survive
+  // view switches like settingsDraft. null = no pending edits for that scope.
+  permissionRulesDrafts: Record<PermissionRulesScope, PermissionRule[] | null>
+  commands: PiCommand[]
+
+  // Extension UI
+  // Blocking dialog slot (select/confirm/input/editor). Main retains every
+  // request it delivers here and replays it on demand (flushPendingPrompts),
+  // so clearing this slot never loses the prompt.
+  extensionUiRequest: PiExtensionUiRequest | null
+  // Fire-and-forget notify toast. Its own slot so a toast can never clobber
+  // an unanswered blocking dialog (and vice versa); both can be on screen.
+  extensionNotify: PiExtensionUiRequest | null
+  // Blocking prompts held by main per workspace id (zero entries omitted).
+  pendingPromptCounts: PendingPromptCounts
+  // Per-workspace background activity derived in main (idle entries omitted).
+  workspaceActivity: WorkspaceActivityMap
+  // Dynamic workflow runs read from the extension's persisted run journal.
+  workflowRuns: WorkflowRunSummary[]
+  // Extension status entries (setStatus fire-and-forget). Keyed by statusKey.
+  extensionStatuses: Record<string, string>
+  // Subagent rows shared by the Tasks panel, the rail badge and the composer strip.
+  subagentTasks: SubagentTask[]
+  // OMP answered get_subagents: its rows come from subagent events, not tool events.
+  subagentEventsSupported: boolean
+  // Row open in the Tasks panel's transcript view; null shows the list.
+  selectedSubagentTaskId: string | null
+
+  // App-level confirmation dialog (themed replacement for window.confirm)
+  confirmRequest: ConfirmRequest | null
+
+  // Workspaces
+  workspaces: Workspace[]
+  projectTabOrder: string[]
+  activeWorkspace: Workspace | null
+
+  // Timeline
+  timelineEvents: TimelineEvent[]
+
+  // Packages
+  installedPackages: InstalledPackage[]
+  catalogPackages: CatalogPackage[]
+  packageLoading: boolean // install/remove/update operations (affects the Installed tab)
+  catalogLoading: boolean // catalog crawl (Catalog tab only)
+  packageNotification: { type: 'success' | 'error'; message: string } | null
+  packageUpdates: PackageUpdate[] // installed packages with a newer registry version
+  packageUpdatesChecking: boolean
+
+  // Skills
+  installedSkills: InstalledSkill[]
+
+  // Custom models config: the models file of the engine in use
+  customModels: ModelsConfig | null
+  customModelsError: string | null
+  /** Engine and file main resolved for the custom-models editor; Save writes this file. */
+  customModelsFile: ModelsFileInfo | null
+  /**
+   * The custom-models editor holds edits it has not saved. They keep the file
+   * they were made on: a change of engine reloads the editor only without them.
+   */
+  customModelsEdited: boolean
+
+  // Council run UI state (null when no council run is active)
+  councilRun: CouncilRunState | null
+
+  // File preview. A single target drives the side-panel preview; `kind` selects
+  // the viewer (code editor with Source/Preview toggle, or image viewer). `path`
+  // is absolute (readable via readAttachment / file:// even outside the
+  // workspace); `relativePath` drives the code editor's language + header.
+  previewTarget: PreviewTarget | null
+
+  // Mirror of the editor pane's unsaved-changes state. The buffer itself is
+  // component-local; this flag is what lets store actions that would destroy
+  // it (new preview target, a side panel that hides it, workspace switch) ask
+  // first.
+  editorDirty: boolean
+
+  // File search
+  fileSearchOpen: boolean
+
+  // Session tags
+  sessionTags: Record<string, string[]>
+  allUsedTags: string[]
+  // Machine-derived tags for sessions the user hasn't tagged (sessionId → tag)
+  autoTags: Record<string, string>
+
+  // Archived sessions (GUI-only registry — Pi has no archive concept)
+  archivedSessions: Record<string, number>
+  showArchived: boolean
+
+  // Notes (reusable prompts / commands)
+  notes: Note[]
+  notePickerOpen: boolean
+  commandPaletteOpen: boolean
+  taskLauncherOpen: boolean
+  /** The linked task dialog on screen, or null when it is closed. */
+  linkedTaskDialog: LinkedTaskDialogView | null
+  // Unsent composer text and attachments per workspace id ('' when no
+  // workspace is open), so switching projects never carries one project's
+  // draft into another.
+  composerDrafts: Record<string, ComposerDraft>
+  saveComposerDraft: (workspaceId: string, draft: ComposerDraft) => void
+  // Set by the diff shortcuts; the diff viewer or Git actions consume and clear it.
+  diffShortcutRequest: 'review' | 'commitPush' | null
+  // A prompt queued for insertion into the chat input. The nonce lets the
+  // chat input re-apply the same text on repeated inserts.
+  pendingInsert: { text: string; nonce: number; replace?: boolean } | null
+  // Set when a session opens; the chat input takes focus once it can, unless
+  // the user leaves chat or focuses something else first.
+  composerFocusRequested: boolean
+  // Whether the model picker is open. Kept here, not in the picker, because
+  // opening it can start the runtime, which remounts the composer.
+  modelPickerOpen: boolean
+  // Body text captured (e.g. from a message) to seed a new note in the Notes
+  // panel. Non-null opens the panel's New Note form pre-filled.
+  noteDraft: string | null
+
+  // Update check (GitHub releases). Set when a newer version is available.
+  updateInfo: UpdateCheckResult | null
+  updateDismissed: boolean
+
+  // Cross-session lineage tree
+  lineage: LineageNode[]
+}
+
+interface AppActions {
+  // Pi lifecycle
+  startPi: (options?: Record<string, unknown>) => Promise<void>
+  /**
+   * Show the session a start would continue for the active project: its
+   * bound runtime's session or, with "Resume Last Session" on, its newest
+   * session. Resolves true when a session was opened; false leaves the empty
+   * new-session view, which every start then honors.
+   */
+  openLastSession: () => Promise<boolean>
+  stopPi: () => Promise<void>
+  restartPi: (options?: Record<string, unknown>) => Promise<void>
+
+  // Messages
+  addMessage: (message: DisplayMessage) => void
+  setMessages: (messages: DisplayMessage[]) => void
+  clearMessages: () => void
+  recordPrompt: (text: string) => void
+
+  // Prompts
+  sendPrompt: (message: string, options?: { images?: PromptImage[]; attachments?: DisplayAttachment[] }) => Promise<void>
+  sendSteer: (message: string) => Promise<void>
+  sendFollowUp: (message: string) => Promise<void>
+  runCouncil: (request: string) => Promise<void>
+  approveCouncilPlan: () => Promise<void>
+  reviseCouncilPlan: (feedback: string) => Promise<void>
+  cancelCouncil: () => void
+  abort: () => Promise<void>
+  confirmSessionChange: (action: SessionChangeAction) => Promise<boolean>
+
+  // Session
+  createNewSession: () => Promise<void>
+  launchTask: (options: SessionLaunchTaskOptions) => Promise<boolean>
+  closeSessionTab: (runtimeId: string) => Promise<void>
+  switchSession: (path: string, projectPath?: string) => Promise<void>
+  /**
+   * Open a session row from any surface (sidebar, session panel, quick
+   * switcher): auto-switches or creates the owning workspace first, then
+   * switches to the session and shows Chat. The previous session runtime keeps
+   * running in the background while the new one hydrates.
+   */
+  openSessionItem: (session: SessionListItem) => Promise<void>
+  reloadActiveSession: (options?: { refreshList?: boolean }) => Promise<void>
+  refreshSessionState: () => Promise<void>
+  refreshSubagentTasks: () => Promise<void>
+  selectSubagentTask: (id: string | null) => void
+  setSubagentTaskStatus: (id: string, status: SubagentTaskStatus) => void
+  refreshSessionStats: () => Promise<void>
+  refreshSessionList: () => Promise<void>
+  setSessionName: (name: string) => Promise<void>
+  loadForkMessages: () => Promise<void>
+  /** True once the session continues from just before the entry. */
+  forkFrom: (entryId: string) => Promise<boolean>
+  /**
+   * Replace a sent user message: continue the session from just before it
+   * (the same fork as Branch from here), then send `text`. False, with the
+   * reason in the chat, when the message could not be replaced.
+   */
+  editAndResend: (messageId: string, text: string) => Promise<boolean>
+  cloneBranch: () => Promise<void>
+
+  // Model
+  setModel: (provider: string, modelId: string) => Promise<void>
+  saveDefaultModel: (provider: string, modelId: string) => Promise<void>
+  cycleModel: () => Promise<void>
+  listModels: () => Promise<ModelInfo[]>
+
+  // Thinking
+  setThinkingLevel: (level: string) => Promise<void>
+  cycleThinkingLevel: () => Promise<void>
+
+  // Context compaction
+  compactContext: () => Promise<void>
+
+  // UI
+  setCurrentView: (view: AppState['currentView']) => void
+  setSessionsScope: (scope: 'all' | 'current') => void
+  setWorkflowPanelOpen: (open: boolean) => void
+  openWorkflowRunsForSession: (sessionId: string) => void
+  openWorkflowRunsForWorkspace: (workspaceId: string | null) => void
+  refreshWorkflowRuns: () => Promise<void>
+  requestChatScrollToBottom: () => void
+  // Resolves false when a dirty-editor discard was declined (only a panel
+  // that hides the preview asks).
+  setChatSidePanel: (panel: ChatSidePanel | null) => Promise<boolean>
+  toggleSidebar: () => void
+  toggleTerminal: () => void
+  toggleReview: () => void
+  loadSettings: () => Promise<void>
+  setSettingsDraft: (patch: Partial<AppSettings>) => void
+  clearSettingsDraft: () => void
+  setPermissionRulesDraft: (scope: PermissionRulesScope, rules: PermissionRule[] | null) => void
+  setPermissionMode: (mode: PermissionMode) => Promise<void>
+  toggleSessionGroupCollapsed: (projectPath: string) => Promise<void>
+  saveSidebarWidth: (width: number) => Promise<void>
+  loadCommands: () => Promise<void>
+
+  // Events
+  handlePiEvent: (event: PiRpcEvent) => void
+  handlePendingPromptCounts: (counts: PendingPromptCounts) => void
+  handleWorkspaceActivity: (map: WorkspaceActivityMap) => void
+  handleSessionRuntime: (runtime: SessionRuntimeInfo) => void
+  /**
+   * Boot/reload recovery: the dialog slot and the counts are renderer memory
+   * only, while main keeps every held prompt. Pulls the counts snapshot and
+   * asks main to re-broadcast the active workspace's dialog. Never rejects.
+   */
+  recoverPendingPrompts: () => Promise<void>
+
+  // Extension UI
+  respondExtensionUi: (id: string, response: Record<string, unknown>) => void
+  dismissExtensionUi: () => void
+  dismissExtensionNotify: () => void
+
+  // App confirmation dialog (promise-based; resolves true on confirm)
+  requestConfirm: (options: ConfirmOptions) => Promise<boolean>
+  resolveConfirm: (confirmed: boolean) => void
+
+  // Shows the one-time "this workspace has its own permission rules" notice
+  // and records the acknowledgment in settings.
+  maybeWarnWorkspacePermissionRules: () => Promise<void>
+
+  // Workspaces
+  loadWorkspaces: () => Promise<void>
+  reorderProjectTab: (sourceId: string, targetId: string, placement: 'before' | 'after') => void
+  createWorkspace: (name: string, path: string) => Promise<void>
+  /** Create a clean Git worktree and start it as a new independent tab. */
+  createWorktreeTab: () => Promise<void>
+  /**
+   * Open a linked task from a repo set as a new tab and switch to it. Resolves
+   * false when the editor discard was declined; rejects when the task failed
+   * to start, so the dialog can show why.
+   */
+  createLinkedTaskTab: (options: LinkedTaskOptions) => Promise<boolean>
+  /** Pick a folder and add its repository to the active linked task. */
+  addRepoToLinkedTask: () => Promise<void>
+  /**
+   * Open a folder as a workspace (create if needed, switch into it, show Chat).
+   * Used by File → Open Project and by drag-dropping a folder onto the window.
+   * Resolves false if the editor discard was declined or the switch failed.
+   */
+  openFolderAsWorkspace: (folderPath: string) => Promise<boolean>
+  /**
+   * Resolves false when the editor discard was declined or the switch failed.
+   * Workspace tabs keep their Pi processes running in the background.
+   * Never spawns a process. awaitingSession: a switchSession follows
+   * immediately — hold the loading state instead of flashing the empty
+   * new-session view in between.
+   */
+  activateWorkspace: (workspaceId: string, options?: { awaitingSession?: boolean; skipDirtyConfirm?: boolean }) => Promise<boolean>
+  removeWorkspace: (workspaceId: string) => Promise<void>
+  renameWorkspace: (workspaceId: string, name: string) => Promise<void>
+  changeWorkspaceFolder: (workspaceId: string, newPath: string) => Promise<void>
+
+  // Timeline
+  addTimelineEvent: (event: TimelineEvent) => void
+  clearTimeline: () => void
+
+  // Packages
+  loadInstalledPackages: () => Promise<void>
+  installPackage: (spec: string) => Promise<void>
+  removePackage: (spec: string) => Promise<void>
+  updatePackage: (spec: string) => Promise<void>
+  updateAllPackages: () => Promise<void>
+  checkPackageUpdates: () => Promise<void>
+  loadCatalog: () => Promise<void>
+  clearPackageNotification: () => void
+
+  // Skills
+  loadSkills: () => Promise<void>
+
+  // Custom models config
+  loadCustomModels: () => Promise<void>
+  saveCustomModels: (edited: ModelsConfig) => Promise<{ ok: boolean; errors?: string[] }>
+  setCustomModelsEdited: (edited: boolean) => void
+
+  // File preview. Resolves false when a dirty-editor discard was declined and
+  // the target was left unchanged.
+  setPreviewTarget: (target: PreviewTarget | null) => Promise<boolean>
+  setEditorDirty: (dirty: boolean) => void
+  // True when the caller may proceed to destroy the editor's unsaved buffer.
+  confirmDiscardEditorChanges: () => Promise<boolean>
+
+  // File search
+  toggleFileSearch: () => void
+
+  // Session tags
+  loadTags: () => Promise<void>
+  addSessionTag: (sessionId: string, tag: string) => Promise<void>
+  removeSessionTag: (sessionId: string, tag: string) => Promise<void>
+  getTagsForSession: (sessionId: string) => string[]
+  ensureAutoTags: (sessions: Array<{ sessionId: string; path: string }>) => Promise<void>
+  removeAutoTag: (sessionId: string) => Promise<void>
+
+  // Archive / delete
+  loadArchivedSessions: () => Promise<void>
+  archiveSession: (sessionId: string) => Promise<void>
+  unarchiveSession: (sessionId: string) => Promise<void>
+  deleteSession: (session: SessionListItem) => Promise<SessionDeleteResult>
+  toggleShowArchived: () => void
+
+  // Notes
+  loadNotes: () => Promise<void>
+  saveNote: (input: NoteInput) => Promise<void>
+  updateNote: (id: string, patch: NoteUpdate) => Promise<void>
+  deleteNote: (id: string) => Promise<void>
+  insertPrompt: (text: string, replace?: boolean) => void
+  clearPendingInsert: () => void
+  setNotePickerOpen: (open: boolean) => void
+  setCommandPalette: (open: boolean) => void
+  setTaskLauncherOpen: (open: boolean) => void
+  setLinkedTaskDialog: (view: LinkedTaskDialogView | null) => void
+  requestModelSelectorOpen: () => void
+  startNoteFromText: (text: string) => void
+  clearNoteDraft: () => void
+
+  // Update check
+  checkForUpdates: () => Promise<void>
+  dismissUpdate: () => void
+
+  // Lineage
+  loadLineage: () => Promise<void>
+}
+
+// ─── Helpers ─────────────────────────────────────────────────────────────────
+
+let messageCounter = 0
+function generateId(): string {
+  return `msg-${Date.now()}-${++messageCounter}`
+}
+
+function normalizePiCommands(raw: unknown): PiCommand[] {
+  if (!Array.isArray(raw)) return []
+  return raw
+    .filter((command): command is Record<string, unknown> => typeof command === 'object' && command !== null)
+    .map((command) => ({
+      name: String(command.name ?? ''),
+      description: String(command.description ?? ''),
+      source: typeof command.source === 'string' ? command.source : 'extension',
+    }))
+    .filter((command) => command.name.length > 0)
+}
+
+// Navigation invalidates all session I/O. History and state requests also
+// have their own sequence so overlapping loads of one session cannot rewind it.
+let sessionLoadGeneration = 0
+let historyLoadId = 0
+let sessionStateRequestId = 0
+let historyLoadingRuntime: string | null = null
+
+/**
+ * Texts of prompts this GUI just sent to Pi, awaiting their echo on the RPC
+ * event stream. Pi emits a `message_start` for every user message added to
+ * the session — both ours and ones injected inside the Pi process by
+ * extensions (e.g. pi-nvim's socket bridge). Externally injected prompts must
+ * be rendered from that event or they never appear in the thread; our own
+ * prompts must be skipped, since sendPrompt already adds the bubble locally
+ * at send time. Entries expire so a prompt whose echo never arrives (send
+ * failure, process restart) cannot swallow an identical future external
+ * message.
+ */
+const pendingLocalEchoes: { text: string; sentAt: number }[] = []
+const LOCAL_ECHO_TTL_MS = 5 * 60 * 1000
+const LOCAL_ECHO_MAX = 50
+
+function recordLocalEcho(text: string): void {
+  pendingLocalEchoes.push({ text, sentAt: Date.now() })
+  if (pendingLocalEchoes.length > LOCAL_ECHO_MAX) pendingLocalEchoes.shift()
+}
+
+/** Consume the oldest pending local echo matching this content, if any. */
+function consumeLocalEcho(text: string): boolean {
+  const now = Date.now()
+  for (let i = pendingLocalEchoes.length - 1; i >= 0; i--) {
+    if (now - pendingLocalEchoes[i].sentAt > LOCAL_ECHO_TTL_MS) pendingLocalEchoes.splice(i, 1)
+  }
+  const idx = pendingLocalEchoes.findIndex((entry) => entry.text === text)
+  if (idx === -1) return false
+  pendingLocalEchoes.splice(idx, 1)
+  return true
+}
+
+// Latest path requested for switch — rapid clicks only run the final one.
+let pendingSwitchPath: string | null = null
+let switchCoalesceTimer: ReturnType<typeof setTimeout> | null = null
+/** Resolve for the in-flight coalesce wait — invoked immediately when superseded. */
+let switchCoalesceResolve: (() => void) | null = null
+// Only one get_messages/switch pipeline at a time (Pi + IPC can't keep up).
+let switchPipeline: Promise<void> = Promise.resolve()
+// The last-session lookup a start must wait for, so a send or a model-picker
+// open during the lookup joins the resumed session instead of racing it.
+let pendingLastSessionOpen: Promise<boolean> | null = null
+
+// Attach backfills ride the same pipeline as session switches so their
+// get_messages can never run concurrently with a switch's (each response is a
+// multi-MB IPC clone, and an agent_end landing inside a switch's coalesce
+// window would otherwise race it). Generation checks inside
+// reloadActiveSession still drop a backfill a newer switch superseded.
+function enqueueAttachBackfill(get: () => AppState & AppActions): Promise<void> {
+  const gen = sessionLoadGeneration
+  const workspaceId = get().activeWorkspace?.id
+  const runtimeId = get().activeSessionRuntimeId
+  const load = async (): Promise<void> => {
+    if (gen !== sessionLoadGeneration || workspaceId !== get().activeWorkspace?.id || runtimeId !== get().activeSessionRuntimeId) return
+    if (get().isStreaming) {
+      useAppStore.setState({ reattachedMidTurn: true })
+      return
+    }
+    await get().reloadActiveSession({ refreshList: false })
+  }
+  switchPipeline = switchPipeline.then(load, load)
+  return switchPipeline
+}
+
+/**
+ * Agent runs the chat on screen saw start. A prompt reads it before it is sent,
+ * so its answer can tell whether a run followed it.
+ */
+let agentRunStarts = 0
+
+/**
+ * The prompt this window sent last: the chat it went to (its
+ * sessionLoadGeneration) and agentRunStarts when it went out. A prompt_result
+ * settles that prompt only while no turn has started since, because OMP
+ * reports a turn's prompt after the turn's own agent_end: a late report for an
+ * earlier prompt must not end a newer turn.
+ */
+let latestPrompt: { generation: number; runsAtSend: number } | null = null
+
+/** The chat text for a prompt the engine refused, which may come with no reason. */
+function refusalText(reason: string): string {
+  return t('store.messages.error', { detail: reason || t('store.messages.unknownError') })
+}
+
+/**
+ * A prompt that ran no agent turn: stop waiting for one. A refused prompt
+ * shows the engine's reason. OMP reports one refusal twice, as an error
+ * response and as a prompt_result, in either order, so only the signal that
+ * still finds the turn open shows it.
+ */
+function endTurnWithoutAgent(set: ZustandSet, get: () => AppState & AppActions, refusal?: string): void {
+  if (refusal !== undefined && get().isStreaming) {
+    get().addMessage({ id: generateId(), role: 'system', content: refusalText(refusal), timestamp: Date.now() })
+  }
+  set(idleTurnState())
+  void get().refreshSessionState()
+}
+
+/**
+ * Pi answers a prompt that an extension command or an input handler took with
+ * success, and starts no run for it: no agent_start or agent_end will come.
+ * The engine's state tells whether a run is going.
+ */
+async function endTurnUnlessRunning(
+  set: ZustandSet,
+  get: () => AppState & AppActions,
+  isCurrent: () => boolean,
+  runsAtSend: number
+): Promise<void> {
+  const state = await window.piDesktop.session.getState()
+  if (isCurrent() && agentRunStarts === runsAtSend && reportsNoAgentRun(state)) endTurnWithoutAgent(set, get)
+}
+
+// Keeps the refusal line's React key stable across history loads.
+const PROMPT_REFUSAL_ID_SUFFIX = '-prompt-refusal'
+
+/**
+ * `messages` with the line that tells why the engine refused the prompt of a
+ * New Task (see SessionRuntimeInfo.promptRefusal). The refused prompt is not
+ * in the session history, so each history load of that chat adds it again.
+ */
+function withPromptRefusal(messages: DisplayMessage[], runtime: SessionRuntimeInfo | undefined): DisplayMessage[] {
+  if (runtime?.promptRefusal === undefined) return messages
+  return [...messages, {
+    id: `${runtime.runtimeId}${PROMPT_REFUSAL_ID_SUFFIX}`,
+    role: 'system',
+    content: refusalText(runtime.promptRefusal),
+    timestamp: Date.now(),
+  }]
+}
+
+/** The title a session shows in the list: its name, else a preview of its first prompt. */
+function sessionTitleForFork(sessionName: string | null | undefined, messages: DisplayMessage[]): string | null {
+  const name = sessionName?.trim()
+  if (name) return name
+  const firstPrompt = messages.find((message) => message.role === 'user')?.content
+  return firstPrompt ? sessionPreview(stripInjectedPreamble(firstPrompt)) : null
+}
+
+// Coalesce filesystem session-list walks: rapid switches used to stack N full
+// directory scans and freeze the renderer/main.
+let sessionListRefreshInFlight = false
+let sessionListRefreshQueued = false
+let sessionListRefreshTimer: ReturnType<typeof setTimeout> | null = null
+
+/**
+ * Adopt an active-workspace change the main process made on its own: creating a
+ * workspace whose path is already registered activates the existing one, as does
+ * creating the very first workspace, and removing the active one promotes
+ * another. None of those go through activateWorkspace, so the renderer has to
+ * resync the extension-UI surfaces here or a prompt held for the workspace now
+ * on screen stays invisible — the badge counts other workspaces only — and its
+ * Pi turn blocks forever.
+ *
+ * The stale dialog is cleared WITHOUT answering: main retains the request and
+ * replays it on switch-back, while a synthesized deny would hard-block the tool
+ * that asked.
+ */
+function adoptMainSideActivation(
+  get: () => AppState & AppActions,
+  set: (partial: Partial<AppState>) => void,
+  previousActiveId: string | null
+): void {
+  const active = get().activeWorkspace
+  if (active?.id === previousActiveId) return
+
+  // The preview, the chat, and an unsaved workspace-rules draft belong to the
+  // workspace that just disappeared or was activated by main. Reset them
+  // before attaching the replacement manager; otherwise closing the active tab
+  // leaves the old conversation on screen, and Save writes the draft into the
+  // promoted workspace's rules file.
+  sessionLoadGeneration += 1
+  get().setPermissionRulesDraft('workspace', null)
+  set({
+    extensionUiRequest: null,
+    previewTarget: null,
+    editorDirty: false,
+    sessionState: null,
+    sessionStats: null,
+    activeSessionRuntimeId: null,
+    timelineEvents: [],
+    piStatus: 'stopped',
+    piStartupPhase: null,
+    piPid: null,
+    piError: null,
+    ...idleTurnState(),
+  })
+  if (!active) return
+
+  void window.piDesktop.ui.flushPendingPrompts(active.id)
+  // A main-side activation is used by workspace removal and first-workspace
+  // creation, neither of which goes through activateWorkspace's session open.
+  // Start the promoted workspace when there was a previous active workspace;
+  // the first-workspace open flow starts it through its regular switch path.
+  if (previousActiveId !== null) {
+    void get().openLastSession().then((opened) => {
+      if (!opened && get().activeWorkspace?.id === active.id) void get().startPi()
+    })
+  }
+}
+
+/** A burst of session changes reloads the session list once it settles. */
+export const SESSION_LIST_REFRESH_DELAY_MS = 250
+
+/**
+ * Whether the session lists hold the active session. A new session is missing
+ * until a list reload after its first prompt, and its first turn can run for
+ * minutes, so a prompt and a turn start list it when it is missing.
+ */
+function isActiveSessionListed(state: AppState): boolean {
+  const sessionFile = state.sessionState?.sessionFile
+  return !!sessionFile && state.sessionList.some((item) => item.path === sessionFile)
+}
+
+function scheduleSessionListRefresh(get: () => AppState & AppActions): void {
+  if (sessionListRefreshTimer) clearTimeout(sessionListRefreshTimer)
+  sessionListRefreshTimer = setTimeout(() => {
+    sessionListRefreshTimer = null
+    void get().refreshSessionList()
+  }, SESSION_LIST_REFRESH_DELAY_MS)
+}
+
+const PARSE_CHUNK = 50
+
+/** Parse history in chunks, yielding to the event loop so the UI can paint. */
+async function parseMessagesChunked(
+  raw: unknown[],
+  gen: number
+): Promise<DisplayMessage[] | null> {
+  const out: DisplayMessage[] = []
+  for (let i = 0; i < raw.length; i += PARSE_CHUNK) {
+    if (gen !== sessionLoadGeneration) return null
+    const end = Math.min(i + PARSE_CHUNK, raw.length)
+    for (let j = i; j < end; j++) {
+      const parsed = parseAgentMessage(raw[j])
+      if (parsed) out.push(parsed)
+    }
+    // Yield so Windows doesn't mark the window "Not Responding".
+    await new Promise<void>((r) => setTimeout(r, 0))
+  }
+  if (gen !== sessionLoadGeneration) return null
+  return out
+}
+
+/**
+ * Walk the timeline backwards, find the most recent event matching the
+ * predicate that still has status 'running', and close it with the given
+ * status (recording duration). Returns a new array (or the same array if
+ * nothing matched).
+ */
+function closeMostRecentRunning(
+  events: TimelineEvent[],
+  match: (event: TimelineEvent) => boolean,
+  status: 'success' | 'error' | 'cancelled'
+): TimelineEvent[] {
+  for (let i = events.length - 1; i >= 0; i--) {
+    const e = events[i]
+    if (e.status !== 'running') continue
+    if (!match(e)) continue
+    const next = events.slice()
+    next[i] = { ...e, status, duration: Date.now() - e.timestamp }
+    return next
+  }
+  return events
+}
+
+// ─── Store ───────────────────────────────────────────────────────────────────
+
+type StoreGet = () => AppState & AppActions
+type StoreSet = (partial: Partial<AppState & AppActions>) => void
+
+interface ArbiterStepBase {
+  request: string
+  results: ConsultantResult[]
+}
+
+/**
+ * Drive one arbiter round (merge or revise) through the isolated read-only Pi
+ * subprocess, streaming its output live into councilRun.consensus. Returns the
+ * final plan text, or an error string if the arbiter failed. Callers own the
+ * resulting phase transition.
+ */
+async function runArbiterStep(
+  payload: CouncilArbiterRequest,
+  base: ArbiterStepBase,
+  get: StoreGet,
+  set: StoreSet,
+): Promise<{ plan?: string; error?: string }> {
+  set({ councilRun: { phase: 'merging', request: base.request, results: base.results, consensus: '' } })
+  const unsubscribe = window.piDesktop.council.onProgress(({ chunk }) => {
+    const run = get().councilRun
+    if (!run || run.phase !== 'merging') return
+    set({ councilRun: { ...run, consensus: (run.consensus ?? '') + chunk } })
+  })
+  try {
+    const { plan } = await window.piDesktop.council.arbiter(payload)
+    return { plan }
+  } catch (err) {
+    return { error: t('store.messages.arbiterFailed', { detail: err instanceof Error ? err.message : String(err) }) }
+  } finally {
+    unsubscribe()
+  }
+}
+
+/**
+ * Run one package install/remove/update under the Installed tab's shared
+ * loading flag and notification banner. The list refreshes even on failure:
+ * a multi-package update can fail after changing some packages.
+ */
+async function runPackageMutation(
+  get: StoreGet,
+  set: StoreSet,
+  mutation: () => Promise<{ success: boolean; output: string }>,
+  successMessage: string,
+  failureMessage: string,
+): Promise<void> {
+  set({ packageLoading: true, packageNotification: null })
+  try {
+    const result = await mutation()
+    await get().loadInstalledPackages()
+    set({
+      packageNotification: result.success
+        ? { type: 'success', message: successMessage }
+        : { type: 'error', message: result.output || failureMessage },
+    })
+  } catch (err) {
+    set({ packageNotification: { type: 'error', message: err instanceof Error ? err.message : String(err) } })
+  } finally {
+    set({ packageLoading: false })
+  }
+}
+
+// Only the newest update check may write its result: a check started before an
+// update finished would otherwise overwrite the fresh one with stale versions.
+let latestPackageUpdateCheck = 0
+
+// Engine changes can start reads of two models files at once; the last one wins.
+const customModelsLoads = createStaleGuard()
+
+export const useAppStore = create<AppState & AppActions>((set, get) => ({
+  // ─── Initial State ────────────────────────────────────────────────────
+
+  piStatus: 'stopped',
+  piStartupPhase: null,
+  piPid: null,
+  piError: null,
+  piEngine: 'pi',
+
+  sessionState: null,
+  sessionStats: null,
+  sessionList: [],
+  sessionRuntimes: {},
+  activeSessionRuntimeId: null,
+  forkMessages: [],
+
+  messages: [],
+  promptHistory: [],
+  streamingContent: '',
+  streamingThinking: '',
+  streamingToolCalls: new Map(),
+  isStreaming: false,
+  reattachedMidTurn: false,
+  sessionLoading: false,
+
+  pendingSteering: [],
+  pendingFollowUp: [],
+
+  // Default to the Home/launcher view; useInitialize switches to 'chat' when
+  // the openToHomeOnLaunch setting is off (legacy boot-into-chat behavior).
+  currentView: 'home',
+  sessionsScope: 'all',
+  workflowPanelOpen: false,
+  workflowPanelFilter: null,
+  workflowPanelWorkspaceId: null,
+  chatScrollBottomNonce: 0,
+  chatSidePanel: null,
+  sidebarOpen: true,
+  terminalOpen: false,
+  reviewOpen: false,
+  settings: null,
+  settingsDraft: {},
+  permissionRulesDrafts: { global: null, workspace: null },
+  commands: [],
+
+  extensionUiRequest: null,
+  extensionNotify: null,
+  pendingPromptCounts: {},
+  workspaceActivity: {},
+  workflowRuns: [],
+  extensionStatuses: {},
+  subagentTasks: [],
+  subagentEventsSupported: false,
+  selectedSubagentTaskId: null,
+  confirmRequest: null,
+
+  workspaces: [],
+  projectTabOrder: readProjectTabOrder(),
+  activeWorkspace: null,
+
+  timelineEvents: [],
+
+  installedPackages: [],
+  catalogPackages: [],
+  packageLoading: false,
+  catalogLoading: false,
+  packageNotification: null,
+  packageUpdates: [],
+  packageUpdatesChecking: false,
+
+  installedSkills: [],
+
+  customModels: null,
+  customModelsError: null,
+  customModelsFile: null,
+  customModelsEdited: false,
+  councilRun: null,
+
+  previewTarget: null,
+  editorDirty: false,
+
+  fileSearchOpen: false,
+
+  sessionTags: {},
+  autoTags: {},
+  allUsedTags: [],
+
+  archivedSessions: {},
+  showArchived: false,
+
+  notes: [],
+  notePickerOpen: false,
+  commandPaletteOpen: false,
+  taskLauncherOpen: false,
+  linkedTaskDialog: null,
+  composerDrafts: {},
+  saveComposerDraft: (workspaceId, draft) => set((state) => {
+    // The composer saves on unmount and on workspace change, which also fires
+    // after its workspace was removed; a removed workspace keeps no draft.
+    const isRemovedWorkspace = workspaceId !== '' && !state.workspaces.some((w) => w.id === workspaceId)
+    const composerDrafts = { ...state.composerDrafts }
+    const hasContent = draft.text !== '' || draft.attachments.length > 0
+    if (hasContent && !isRemovedWorkspace) composerDrafts[workspaceId] = draft
+    else delete composerDrafts[workspaceId]
+    return { composerDrafts }
+  }),
+  diffShortcutRequest: null,
+  pendingInsert: null,
+  composerFocusRequested: false,
+  modelPickerOpen: false,
+  noteDraft: null,
+  updateInfo: null,
+  updateDismissed: false,
+
+  lineage: [],
+
+  // ─── Pi Lifecycle ─────────────────────────────────────────────────────
+
+  startPi: async (options) => {
+    if (pendingLastSessionOpen) await pendingLastSessionOpen
+    // Don't start if already running
+    if (get().piStatus === 'running') return
+    const gen = sessionLoadGeneration
+    const workspaceId = get().activeWorkspace?.id
+    const isCurrent = (): boolean => gen === sessionLoadGeneration && workspaceId === get().activeWorkspace?.id
+
+    try {
+      // The renderer starts only what the chat shows. A resumed session is
+      // already bound to its runtime (its --session outranks this flag), so an
+      // unbound start is always the empty new-session view and must never
+      // pick up an earlier conversation through --continue.
+      const status = await window.piDesktop.pi.start({ continueSession: false, ...options })
+      if (!isCurrent()) return
+      set({ piStatus: status.status, piStartupPhase: status.startupPhase ?? null, piPid: status.pid, piError: status.error, piEngine: status.engine ?? 'pi' })
+
+      if (status.status === 'running') {
+        await get().refreshSessionState()
+        if (!isCurrent()) return
+        await get().refreshSessionStats()
+        if (!isCurrent()) return
+        await get().refreshSessionList()
+        if (!isCurrent()) return
+        await get().maybeWarnWorkspacePermissionRules()
+      }
+    } catch (err) {
+      if (!isCurrent()) return
+      set({ piStatus: 'error', piStartupPhase: null, piError: err instanceof Error ? err.message : String(err) })
+    }
+  },
+
+  openLastSession: async () => {
+    const workspace = get().activeWorkspace
+    if (!workspace) return false
+    const gen = sessionLoadGeneration
+    const isCurrent = (): boolean => gen === sessionLoadGeneration && workspace.id === get().activeWorkspace?.id
+    const open = async (): Promise<boolean> => {
+      // Hold the empty new-session view back while the lookup runs; showing
+      // it and then swapping in the resumed history would flash.
+      set({ sessionLoading: true })
+      let sessionPath: string | null = null
+      try {
+        sessionPath = await window.piDesktop.session.resumeTarget(workspace.path)
+      } catch {
+        // A failed lookup leaves the empty chat, and starts then match it.
+      }
+      if (!isCurrent()) return false
+      if (!sessionPath) {
+        set({ sessionLoading: false })
+        return false
+      }
+      await get().switchSession(sessionPath, workspace.path)
+      return true
+    }
+    const lookup = open()
+    pendingLastSessionOpen = lookup
+    try {
+      return await lookup
+    } finally {
+      if (pendingLastSessionOpen === lookup) pendingLastSessionOpen = null
+    }
+  },
+
+  stopPi: async () => {
+    try {
+      const status = await window.piDesktop.pi.stop()
+      set({ piStatus: status.status, piStartupPhase: status.startupPhase ?? null, piPid: status.pid, piError: status.error, piEngine: status.engine ?? 'pi' })
+    } catch (err) {
+      set({ piStatus: 'error', piStartupPhase: null, piError: err instanceof Error ? err.message : String(err) })
+    }
+  },
+
+  restartPi: async (options) => {
+    try {
+      const status = await window.piDesktop.pi.restart(options as Record<string, unknown> | undefined)
+      set({ piStatus: status.status, piStartupPhase: status.startupPhase ?? null, piPid: status.pid, piError: status.error, piEngine: status.engine ?? 'pi' })
+
+      // Re-read session state after a restart so the status bar's model label
+      // and stats reflect a changed models.json (mirrors startPi). Without this
+      // the label keeps the pre-restart model.
+      if (status.status === 'running') {
+        await get().refreshSessionState()
+        await get().refreshSessionStats()
+        await get().refreshSessionList()
+      }
+    } catch (err) {
+      set({ piStatus: 'error', piStartupPhase: null, piError: err instanceof Error ? err.message : String(err) })
+    }
+  },
+
+  // ─── Messages ─────────────────────────────────────────────────────────
+
+  addMessage: (message) =>
+    set((state) => ({
+      messages: [...state.messages, message],
+    })),
+
+  setMessages: (messages) => set({ messages }),
+
+  // Tears down the whole chat context. The turn being left behind ends with it,
+  // so its streaming state and queue counters go too — otherwise the newly
+  // loaded session inherits a stuck spinner and a stale "queued steers" badge.
+  clearMessages: () => {
+    historyLoadId += 1
+    historyLoadingRuntime = null
+    set({
+      messages: [],
+      promptHistory: [],
+      subagentTasks: [],
+      subagentEventsSupported: false,
+      selectedSubagentTaskId: null,
+      ...idleTurnState(),
+    })
+  },
+
+  // Append a sent prompt to the recall history. Ignores blanks and consecutive
+  // duplicates (shell-style), and caps the list so it can't grow unbounded.
+  recordPrompt: (text) =>
+    set((state) => {
+      const trimmed = text.trim()
+      if (!trimmed) return state
+      const history = state.promptHistory
+      if (history[history.length - 1] === trimmed) return state
+      const next = [...history, trimmed]
+      if (next.length > 200) next.shift()
+      return { promptHistory: next }
+    }),
+
+  // ─── Prompts ──────────────────────────────────────────────────────────
+
+  sendPrompt: async (message, options) => {
+    const trimmed = message.trim().toLowerCase()
+    if (trimmed === '/workflow' || trimmed === '/workflows') {
+      // Route through the action so a session-scoped filter can never leak
+      // into the global view opened from chat.
+      get().setWorkflowPanelOpen(true)
+      return
+    }
+    if (trimmed.startsWith('/workflows run ')) get().setWorkflowPanelOpen(true)
+
+    // A stopped runtime starts on the first prompt: the bound session when
+    // the chat shows one, otherwise a new session for the empty chat.
+    if (get().piStatus !== 'running') {
+      await get().startPi()
+      if (get().piStatus !== 'running') return
+    }
+
+    const { sessionState, settings } = get()
+
+    // Extract #tags from message
+    const tagMatches = message.match(/#([a-z0-9_-]+)/gi)
+    if (tagMatches && sessionState?.sessionId) {
+      for (const match of tagMatches) {
+        const tag = match.slice(1).toLowerCase()
+        await get().addSessionTag(sessionState.sessionId, tag)
+      }
+    }
+
+    const { isStreaming } = get()
+    // Add user message immediately
+    get().addMessage({
+      id: generateId(),
+      role: 'user',
+      content: message,
+      timestamp: Date.now(),
+      attachments: options?.attachments,
+    })
+
+    if (!isStreaming) {
+      set({ isStreaming: true, streamingContent: '', streamingThinking: '', streamingToolCalls: new Map() })
+      if (!isActiveSessionListed(get())) scheduleSessionListRefresh(get)
+    }
+
+    try {
+      if (isStreaming) {
+        // Queue as steering during streaming, carrying any image attachments.
+        recordLocalEcho(message)
+        await window.piDesktop.commands.steer(message, options?.images)
+      } else {
+        const prompt = settings?.permissionMode === 'plan-readonly'
+          ? buildPlanningPrompt(message)
+          : message
+        // Record the text actually sent (plan mode wraps it), not the text
+        // displayed — Pi's message_start echo carries the sent form.
+        recordLocalEcho(prompt)
+        const gen = sessionLoadGeneration
+        const workspaceId = get().activeWorkspace?.id
+        // The answer belongs to the chat the prompt was sent from.
+        const isCurrent = (): boolean => gen === sessionLoadGeneration && workspaceId === get().activeWorkspace?.id
+        const runsAtSend = agentRunStarts
+        // Set before the prompt goes out: OMP can report the outcome before its answer.
+        latestPrompt = { generation: gen, runsAtSend }
+        const response = await window.piDesktop.commands.prompt(prompt, options)
+        if (!isCurrent()) return
+        // None of these answers starts a turn, so no agent_end will end the stream.
+        const refusal = promptRefusal(response)
+        if (refusal) endTurnWithoutAgent(set, get, refusal.reason)
+        // OMP answers a local slash command (`/context`) in the response itself.
+        else if (promptRanWithoutAgent(response)) endTurnWithoutAgent(set, get)
+        // OMP's prompt_result settles a prompt that runs no turn (see the event below).
+        else if (agentRunStarts === runsAtSend && !reportsPromptOutcome(get().piEngine)) {
+          await endTurnUnlessRunning(set, get, isCurrent, runsAtSend)
+        }
+      }
+    } catch (err) {
+      get().addMessage({
+        id: generateId(),
+        role: 'system',
+        content: t('store.messages.error', { detail: err instanceof Error ? err.message : String(err) }),
+        timestamp: Date.now(),
+      })
+      if (!isStreaming) set({ isStreaming: false })
+    }
+  },
+
+  sendSteer: async (message) => {
+    try {
+      // Steers are intentionally not rendered as bubbles; record the echo so
+      // the message_start handler does not render one as an external prompt.
+      recordLocalEcho(message)
+      await window.piDesktop.commands.steer(message)
+    } catch (err) {
+      get().addMessage({
+        id: generateId(),
+        role: 'system',
+        content: t('store.messages.steerError', { detail: err instanceof Error ? err.message : String(err) }),
+        timestamp: Date.now(),
+      })
+    }
+  },
+
+  sendFollowUp: async (message) => {
+    try {
+      // Same as sendSteer: suppress the echo-rendered external bubble.
+      recordLocalEcho(message)
+      await window.piDesktop.commands.followUp(message)
+    } catch (err) {
+      get().addMessage({
+        id: generateId(),
+        role: 'system',
+        content: t('store.messages.followUpError', { detail: err instanceof Error ? err.message : String(err) }),
+        timestamp: Date.now(),
+      })
+    }
+  },
+
+  runCouncil: async (request) => {
+    const { piStatus, settings } = get()
+    if (piStatus !== 'running' || !request.trim()) return
+    const config = settings?.council
+    if (!config) return
+
+    set({ councilRun: { phase: 'detecting', request, results: [] } })
+
+    try {
+      const detectResult = await window.piDesktop.council.detect()
+      const detected = { pi: false, claude: false, codex: false } as Record<CouncilAgentId, boolean>
+      for (const a of detectResult.agents) detected[a.id] = a.found
+
+      const resolution = resolveActiveMembers(config, detected)
+      if (!resolution.canRun) {
+        set({ councilRun: { phase: 'refused', request, results: [], reason: resolution.reason } })
+        return
+      }
+
+      set({
+        councilRun: {
+          phase: 'consulting',
+          request,
+          results: [],
+          members: resolution.active,
+          partials: {},
+          startedAt: Date.now(),
+        },
+      })
+
+      // Stream live consultant output into councilRun.partials while consulting.
+      const unsubscribe = window.piDesktop.council.onProgress(({ id, chunk }) => {
+        const run = get().councilRun
+        if (!run || run.phase !== 'consulting') return
+        const partials = { ...(run.partials ?? {}) }
+        partials[id] = (partials[id] ?? '') + chunk
+        set({ councilRun: { ...run, partials } })
+      })
+
+      let results: ConsultantResult[]
+      try {
+        ;({ results } = await window.piDesktop.council.runConsultants({
+          request,
+          members: resolution.active,
+          timeoutSeconds: config.timeoutSeconds,
+          consensusMode: config.consensusMode,
+        }))
+      } finally {
+        unsubscribe()
+      }
+
+      if (!hasQuorum(results)) {
+        set({
+          councilRun: {
+            phase: 'refused',
+            request,
+            results,
+            reason: t('store.messages.councilNoQuorum'),
+          },
+        })
+        return
+      }
+
+      // The arbiter runs in an isolated read-only Pi subprocess. Consultant plans
+      // are untrusted input, so they are never fed to the live (writable) session —
+      // only the vetted consensus plan is, and only after the user approves it.
+      const merged = await runArbiterStep(
+        { kind: 'merge', request, results, timeoutSeconds: config.timeoutSeconds },
+        { request, results },
+        get,
+        set,
+      )
+      if (merged.error) {
+        set({ councilRun: { phase: 'refused', request, results, reason: merged.error } })
+        return
+      }
+      set({ councilRun: { phase: 'awaiting-approval', request, results, consensus: merged.plan } })
+    } catch (error) {
+      set({ councilRun: { phase: 'refused', request, results: [], reason: councilErrorMessage(error) } })
+    }
+  },
+
+  approveCouncilPlan: async () => {
+    const run = get().councilRun
+    if (!run || run.phase !== 'awaiting-approval' || !run.consensus?.trim()) return
+    const plan = run.consensus
+    set({ councilRun: null })
+    // Only the approved plan crosses into the writable session — never raw
+    // consultant output — so it cannot drive tools before this approval gate.
+    await get().sendPrompt(buildImplementationPrompt(plan))
+  },
+
+  reviseCouncilPlan: async (feedback) => {
+    const run = get().councilRun
+    if (!run || run.phase !== 'awaiting-approval' || !feedback.trim() || !run.consensus) return
+    const { request, results, consensus } = run
+    const config = get().settings?.council
+    if (!config) return
+    const revised = await runArbiterStep(
+      { kind: 'revise', request, plan: consensus, feedback, timeoutSeconds: config.timeoutSeconds },
+      { request, results },
+      get,
+      set,
+    )
+    if (revised.error) {
+      // Keep the previous plan at the approval gate and surface the failure.
+      set({ councilRun: { phase: 'awaiting-approval', request, results, consensus, reason: revised.error } })
+      return
+    }
+    set({ councilRun: { phase: 'awaiting-approval', request, results, consensus: revised.plan } })
+  },
+
+  cancelCouncil: () => set({ councilRun: null }),
+
+  abort: async () => {
+    try {
+      await window.piDesktop.commands.abort()
+      set({ isStreaming: false })
+    } catch {
+      // Abort may fail if nothing is running
+    }
+  },
+
+  // Gate destructive actions that still replace or discard work in the active
+  // runtime. Session navigation itself is deliberately not included: every
+  // session owns a separate Pi process, so leaving it running is safe.
+  //
+  // Must be consulted BEFORE anything calls clearMessages(): that resets
+  // `isStreaming`, which is the signal this gate reads.
+  confirmSessionChange: async (action) => {
+    if (!get().isStreaming) return true
+    const { message, confirmLabel } = sessionChangePrompt(action)
+    return get().requestConfirm({
+      title: t('store.confirm.stillWorkingTitle'),
+      message,
+      confirmLabel,
+      cancelLabel: t('store.confirm.keepWorkingLabel'),
+      // Discards work in progress, so the confirm button reads as destructive and
+      // "Keep working" takes the initial focus.
+      danger: true,
+    })
+  },
+
+  // ─── Session ──────────────────────────────────────────────────────────
+
+  createNewSession: async () => {
+    const gen = ++sessionLoadGeneration
+    try {
+      // A new session owns a new Pi process. Never stop or warn about the
+      // session the user is leaving; it continues working in the background.
+      const result = await window.piDesktop.session.createNew() as SessionRuntimeInfo | { success?: boolean; error?: string } | null
+      if (gen !== sessionLoadGeneration) return
+      if (result && 'success' in result && result.success === false) {
+        get().addMessage({
+          id: generateId(),
+          role: 'system',
+          content: result.error ?? t('store.messages.cannotCreateSession'),
+          timestamp: Date.now(),
+        })
+        set(idleTurnState())
+        return
+      }
+      get().clearMessages()
+      const runtime = result && 'runtimeId' in result ? result : null
+      set({
+        currentView: 'chat',
+        sessionState: null,
+        sessionStats: null,
+        composerFocusRequested: true,
+        // A new session has no history to wait for. Show the empty chat
+        // immediately; the runtime event hydrates its generated session path
+        // when Pi is ready, while piStatus still communicates startup.
+        sessionLoading: false,
+        ...(runtime ? {
+          activeSessionRuntimeId: runtime.runtimeId,
+          piStatus: runtime.status === 'stopped' ? 'starting' : runtime.status,
+          piPid: runtime.pid,
+          piEngine: runtime.engine ?? 'pi',
+          piError: runtime.error,
+        } : {}),
+      })
+      // The runtime start is intentionally asynchronous. Its runtime event
+      // hydrates this empty chat once Pi is ready.
+      scheduleSessionListRefresh(get)
+    } catch (err) {
+      if (gen !== sessionLoadGeneration) return
+      get().addMessage({
+        id: generateId(),
+        role: 'system',
+        content: t('store.messages.newSessionError', { detail: err instanceof Error ? err.message : String(err) }),
+        timestamp: Date.now(),
+      })
+    }
+  },
+
+  launchTask: async (options) => {
+    const prompt = options.prompt.trim()
+    if (!prompt) return false
+    let workspaceId = options.workspaceId
+    let gen = 0
+    try {
+      if (get().activeWorkspace?.id !== workspaceId) {
+        if (!(await get().activateWorkspace(workspaceId, { awaitingSession: true }))) return false
+      }
+      let reusedWorktree = false
+      if (options.isolated) {
+        const label = prompt.split(/\r?\n/, 1)[0]?.trim().slice(0, 60) || t('store.messages.defaultTaskLabel')
+        const knownWorkspaceIds = new Set(get().workspaces.map((workspace) => workspace.id))
+        const workspace = await window.piDesktop.workspace.createTab({
+          name: label,
+          sourceWorkspaceId: workspaceId,
+          taskPrompt: prompt,
+          startPi: false,
+        })
+        reusedWorktree = knownWorkspaceIds.has(workspace.id) || workspace.managed === false
+        await get().loadWorkspaces()
+        if (!(await get().activateWorkspace(workspace.id, { awaitingSession: true }))) return false
+        workspaceId = workspace.id
+      }
+
+      gen = ++sessionLoadGeneration
+      const runtime = await window.piDesktop.session.launchTask({
+        workspaceId,
+        prompt,
+      })
+      if (gen !== sessionLoadGeneration) return false
+      get().clearMessages()
+      set({
+        currentView: 'chat',
+        sessionState: null,
+        sessionStats: null,
+        sessionLoading: true,
+        activeSessionRuntimeId: runtime.runtimeId,
+        piStatus: runtime.status === 'stopped' ? 'starting' : runtime.status,
+        piPid: runtime.pid,
+        piEngine: runtime.engine ?? 'pi',
+        piError: runtime.error,
+      })
+      if (reusedWorktree) {
+        get().addMessage({
+          id: generateId(),
+          role: 'system',
+          content: t('store.messages.reusedWorktree'),
+          timestamp: Date.now(),
+        })
+      }
+      scheduleSessionListRefresh(get)
+      return true
+    } catch (err) {
+      if (gen !== 0 && gen !== sessionLoadGeneration) return false
+      get().addMessage({
+        id: generateId(),
+        role: 'system',
+        content: t('store.messages.taskLaunchError', { detail: err instanceof Error ? err.message : String(err) }),
+        timestamp: Date.now(),
+      })
+      set({ sessionLoading: false })
+      return false
+    }
+  },
+
+  closeSessionTab: async (runtimeId) => {
+    const runtime = get().sessionRuntimes[runtimeId]
+    if (!runtime) return
+
+    if (runtime.activity === 'working' || runtime.activity === 'needs-approval') {
+      const confirmed = await get().requestConfirm({
+        title: t('store.confirm.closeSessionTabTitle'),
+        message: t('store.confirm.closeSessionTabMessage'),
+        confirmLabel: t('store.confirm.closeTabLabel'),
+        cancelLabel: t('store.confirm.keepWorkingLabel'),
+        danger: true,
+      })
+      if (!confirmed) return
+    }
+
+    const wasActive = runtimeId === get().activeSessionRuntimeId || runtime.active
+    try {
+      const result = await window.piDesktop.session.closeRuntime(runtimeId)
+      if (!result) return
+
+      // The main process broadcasts the closed marker, but remove locally too
+      // so a renderer that races that event cannot leave a ghost tab behind.
+      set((state) => {
+        const { [runtimeId]: _closed, ...remaining } = state.sessionRuntimes
+        return {
+          sessionRuntimes: remaining,
+          ...(state.activeSessionRuntimeId === runtimeId ? { activeSessionRuntimeId: null } : {}),
+        }
+      })
+
+      if (wasActive) {
+        const replacementPath = result.replacementSessionPath
+        if (replacementPath) {
+          await get().switchSession(replacementPath, get().activeWorkspace?.path)
+        } else {
+          get().clearMessages()
+          set({
+            sessionState: null,
+            sessionStats: null,
+            sessionLoading: false,
+            activeSessionRuntimeId: null,
+            piStatus: 'stopped',
+            piPid: null,
+            piError: null,
+          })
+        }
+      }
+      void get().refreshSessionList()
+    } catch (err) {
+      get().addMessage({
+        id: generateId(),
+        role: 'system',
+        content: t('store.messages.closeSessionError', { detail: err instanceof Error ? err.message : String(err) }),
+        timestamp: Date.now(),
+      })
+    }
+  },
+
+  switchSession: async (path, projectPath) => {
+    // Already on this session — avoid a full history reload. The explicit
+    // sessionLoading check still handles a fast workspace switch that cleared
+    // the view before the target runtime was bound.
+    if (
+      get().sessionState?.sessionFile === path &&
+      !get().sessionLoading &&
+      get().messages.length > 0
+    ) {
+      // A focus request outside chat is dropped, so open chat with it.
+      set({ currentView: 'chat', composerFocusRequested: true })
+      return
+    }
+
+    // Coalesce rapid clicks: only the last target starts hydration.
+    pendingSwitchPath = path
+    const gen = ++sessionLoadGeneration
+    if (switchCoalesceTimer) {
+      clearTimeout(switchCoalesceTimer)
+      switchCoalesceTimer = null
+    }
+    if (switchCoalesceResolve) {
+      const prev = switchCoalesceResolve
+      switchCoalesceResolve = null
+      prev()
+    }
+    await new Promise<void>((resolve) => {
+      switchCoalesceResolve = resolve
+      switchCoalesceTimer = setTimeout(() => {
+        switchCoalesceTimer = null
+        switchCoalesceResolve = null
+        resolve()
+      }, 40)
+    })
+    if (gen !== sessionLoadGeneration || pendingSwitchPath !== path) return
+
+    const run = async (): Promise<void> => {
+      if (gen !== sessionLoadGeneration || pendingSwitchPath !== path) return
+      try {
+        // Binding a different session is safe: its Pi process continues in the
+        // background. Render the new target immediately; only hydration waits.
+        set({
+          sessionLoading: true,
+          sessionState: null,
+          sessionStats: null,
+          activeSessionRuntimeId: null,
+          // The dialog belongs to the runtime being left. Main retains its
+          // origin and replays it when the user switches back.
+          extensionUiRequest: null,
+        })
+        get().clearMessages()
+        const result = await window.piDesktop.session.switch(path, projectPath) as SessionRuntimeInfo | { success?: boolean; error?: string } | null
+        if (gen !== sessionLoadGeneration) return
+        if (result && 'success' in result && result.success === false) {
+          set({ sessionLoading: false, ...idleTurnState() })
+          get().addMessage({
+            id: generateId(),
+            role: 'system',
+            content: result.error ?? t('store.messages.cannotActivateSession'),
+            timestamp: Date.now(),
+          })
+          return
+        }
+        const runtime = result && 'runtimeId' in result ? result : null
+        const reattaching = runtime?.activity === 'working' || runtime?.activity === 'needs-approval'
+        if (get().activeWorkspace?.id) void window.piDesktop.ui.flushPendingPrompts(get().activeWorkspace!.id)
+        set({
+          currentView: 'chat',
+          composerFocusRequested: true,
+          sessionLoading: runtime?.status !== 'running',
+          ...(runtime ? {
+            activeSessionRuntimeId: runtime.runtimeId,
+            piStatus: runtime.status,
+            piPid: runtime.pid,
+            piEngine: runtime.engine ?? 'pi',
+            piError: runtime.error,
+          } : {}),
+        })
+        // If the runtime is already ready this starts hydration now. If it is
+        // still starting, handleSessionRuntime retries on its running event.
+        void get().reloadActiveSession({ refreshList: false })
+        if (reattaching) set({ isStreaming: true, reattachedMidTurn: true })
+        scheduleSessionListRefresh(get)
+      } catch (err) {
+        if (gen !== sessionLoadGeneration) return
+        set({ sessionLoading: false, ...idleTurnState() })
+        get().addMessage({
+          id: generateId(),
+          role: 'system',
+          content: t('store.messages.switchSessionError', { detail: err instanceof Error ? err.message : String(err) }),
+          timestamp: Date.now(),
+        })
+      }
+    }
+
+    switchPipeline = switchPipeline.then(run, run)
+    await switchPipeline
+  },
+
+  reloadActiveSession: async (options) => {
+    const gen = sessionLoadGeneration
+    const refreshList = options?.refreshList ?? true
+
+    // A runtime that has not finished starting cannot answer get_messages —
+    // its 'running' event re-runs this. Ending the loading state here would
+    // flash the empty new-session view between the click and startup.
+    if (get().piStatus !== 'running') return
+
+    const loadId = ++historyLoadId
+    const runtimeId = get().activeSessionRuntimeId
+    const workspaceId = get().activeWorkspace?.id
+    const messagesAtStart = get().messages
+    historyLoadingRuntime = runtimeId
+    const isCurrent = (): boolean => loadId === historyLoadId && gen === sessionLoadGeneration &&
+      runtimeId === get().activeSessionRuntimeId && workspaceId === get().activeWorkspace?.id
+    set({ sessionLoading: true })
+    void get().refreshSessionState()
+    void get().refreshSessionStats()
+
+    try {
+      const response = await window.piDesktop.session.getMessages()
+      if (!isCurrent()) return
+
+      if (response && typeof response === 'object') {
+        const resp = response as {
+          success?: boolean
+          data?: {
+            messages?: unknown[]
+            truncatedFromStart?: boolean
+            totalMessageCount?: number
+          }
+        }
+        if (resp.success && resp.data?.messages) {
+          const rawMessages = resp.data.messages as unknown[]
+          const shippedCount = rawMessages.length
+          const loaded = await parseMessagesChunked(rawMessages, gen)
+          if (loaded === null || !isCurrent()) return
+          // A snapshot taken before a live commit must never replace that commit.
+          // Recover missing pre-attach history at the next idle boundary instead.
+          if (get().messages !== messagesAtStart || (get().isStreaming && messagesAtStart.length > 0)) {
+            set({ sessionLoading: false, reattachedMidTurn: get().isStreaming })
+            if (!get().isStreaming) void enqueueAttachBackfill(get)
+            return
+          }
+          const truncated = resp.data.truncatedFromStart === true
+          const total = typeof resp.data.totalMessageCount === 'number' ? resp.data.totalMessageCount : shippedCount
+          // Surface a one-line notice when older turns were dropped for perf.
+          // Use the raw shipped count (not parse survivors) for "latest N of M".
+          if (truncated && shippedCount > 0) {
+            loaded.unshift({
+              id: generateId(),
+              role: 'system',
+              content: t('store.messages.truncatedHistory', { count: shippedCount, total }),
+              timestamp: Date.now(),
+            })
+          }
+          // Preserve React keys and the user's open reasoning blocks when an
+          // idle backfill returns the same messages with fresh parser IDs.
+          const previous = new Map<string, DisplayMessage[]>()
+          const key = (entry: DisplayMessage): string => JSON.stringify([
+            entry.role, entry.content, entry.thinking, entry.toolCallId,
+            !entry.content && !entry.thinking ? entry.toolCalls?.map((call) => call.id) : undefined,
+          ])
+          for (const entry of messagesAtStart) {
+            const identity = key(entry)
+            const matches = previous.get(identity) ?? []
+            matches.push(entry)
+            previous.set(identity, matches)
+          }
+          const messages = loaded.map((entry) => {
+            const existing = previous.get(key(entry))?.shift()
+            return existing ? { ...entry, id: existing.id, initiallyShowThinking: existing.initiallyShowThinking } : entry
+          })
+          // Back in a turn that is still running: its unanswered tools are running.
+          const reattached = get().isStreaming && get().reattachedMidTurn
+          set({
+            messages: withPromptRefusal(
+              reattached ? markUnansweredToolCallsRunning(messages) : messages,
+              runtimeId ? get().sessionRuntimes[runtimeId] : undefined
+            ),
+            sessionLoading: false,
+          })
+        } else {
+          set({ sessionLoading: false })
+        }
+      } else {
+        set({ sessionLoading: false })
+      }
+      if (refreshList) scheduleSessionListRefresh(get)
+    } catch {
+      if (isCurrent()) set({ sessionLoading: false })
+    } finally {
+      if (loadId === historyLoadId) historyLoadingRuntime = null
+    }
+  },
+
+  openSessionItem: async (session) => {
+    // Auto-switch workspace if the session is from a different project. Skip
+    // the resume+history load — switchSession below loads the target session
+    // once. Paths are compared the way main compares them (case-insensitive on
+    // Windows): a casing mismatch here would route an existing workspace down
+    // the create path, which main turns into a silent activation.
+    const { activeWorkspace, workspaces } = get()
+    const projectPath = session.projectPath
+    if (projectPath && !(activeWorkspace && pathsEqual(activeWorkspace.path, projectPath))) {
+      const matchingWs = workspaces.find((w) => pathsEqual(w.path, projectPath))
+      if (matchingWs) {
+        if (!(await get().activateWorkspace(matchingWs.id, { awaitingSession: true }))) return
+      } else {
+        await get().createWorkspace(session.projectName, projectPath)
+        const newWs = get().workspaces.find((w) => pathsEqual(w.path, projectPath))
+        if (newWs && !(await get().activateWorkspace(newWs.id, { awaitingSession: true }))) return
+      }
+    }
+    // switchSession's working-workspace guard covers the live-turn cases from
+    // here on: the turn's own session re-attaches instead of switching, and
+    // opening a different session of a mid-turn workspace warns first.
+    await get().switchSession(session.path, projectPath)
+    // Bring the chat into view (may be on Settings/Notes/etc.). In-app
+    // switches keep their remembered scroll position, so no force-to-bottom.
+    get().setCurrentView('chat')
+  },
+
+  refreshSessionState: async () => {
+    const requestId = ++sessionStateRequestId
+    const gen = sessionLoadGeneration
+    const runtimeId = get().activeSessionRuntimeId
+    const workspaceId = get().activeWorkspace?.id
+    try {
+      const response = await window.piDesktop.session.getState()
+      if (requestId !== sessionStateRequestId || gen !== sessionLoadGeneration ||
+        runtimeId !== get().activeSessionRuntimeId || workspaceId !== get().activeWorkspace?.id) return
+      if (response && typeof response === 'object') {
+        const resp = response as { success?: boolean; data?: SessionState }
+        if (resp.success && resp.data) {
+          set({ sessionState: resp.data })
+          void get().refreshSubagentTasks()
+        }
+      }
+    } catch {
+      // Silent failure
+    }
+  },
+
+  // Seed OMP's running subagents and learn whether OMP reports them by event.
+  // Called with every session-state refresh, so a chat switch re-seeds it.
+  refreshSubagentTasks: async () => {
+    const gen = sessionLoadGeneration
+    const runtimeId = get().activeSessionRuntimeId
+    if (!runtimeId) return
+    try {
+      const result = await window.piDesktop.subagents.list(runtimeId)
+      if (gen !== sessionLoadGeneration || runtimeId !== get().activeSessionRuntimeId) return
+      set((state) => ({
+        subagentEventsSupported: result.supported,
+        subagentTasks: result.supported ? applyOmpSubagentList(state.subagentTasks, result.tasks) : state.subagentTasks,
+      }))
+    } catch {
+      // No list: the rows the events and tools gave stay as they are.
+    }
+  },
+
+  selectSubagentTask: (id) => set({ selectedSubagentTaskId: id }),
+
+  setSubagentTaskStatus: (id, status) =>
+    set((state) => ({
+      subagentTasks: state.subagentTasks.map((task) =>
+        task.id === id && task.status !== status ? { ...task, status, currentTool: undefined } : task
+      ),
+    })),
+
+  refreshSessionStats: async () => {
+    try {
+      const response = await window.piDesktop.session.getStats()
+      if (response && typeof response === 'object') {
+        const resp = response as { success?: boolean; data?: SessionStats }
+        if (resp.success && resp.data) {
+          set({ sessionStats: resp.data })
+        }
+      }
+    } catch {
+      // Silent failure
+    }
+  },
+
+  refreshSessionList: async () => {
+    if (sessionListRefreshInFlight) {
+      sessionListRefreshQueued = true
+      return
+    }
+    sessionListRefreshInFlight = true
+    try {
+      const list = await window.piDesktop.session.list()
+      const sessionState = get().sessionState
+      const activeWorkspace = get().activeWorkspace
+      // A prompt on screen counts: the engine may not have recorded it yet.
+      const activeHasContent =
+        (sessionState?.messageCount ?? 0) > 0 || get().messages.some((message) => message.role === 'user')
+      const hasActiveSession = activeHasContent && sessionState?.sessionFile
+        ? list.some((item) => item.path === sessionState.sessionFile || item.sessionId === sessionState.sessionId)
+        : false
+
+      const sessionList = hasActiveSession
+        ? list
+        : activeHasContent && sessionState?.sessionFile
+        ? [
+            {
+              path: sessionState.sessionFile,
+              name: sessionState.sessionName,
+              // The engine may not have written the file yet, so the preview is
+              // the first prompt on screen until a list refresh reads the file.
+              preview: get().messages.find((message) => message.role === 'user')?.content ?? null,
+              sessionId: sessionState.sessionId,
+              piSessionId: sessionState.sessionId,
+              lastModified: Date.now(),
+              messageCount: sessionState.messageCount,
+              projectPath: activeWorkspace?.path ?? '',
+              projectName: activeWorkspace?.name ?? '',
+            },
+            ...list,
+          ]
+        : list
+
+      set({ sessionList })
+    } catch {
+      // Silent failure
+    } finally {
+      sessionListRefreshInFlight = false
+      if (sessionListRefreshQueued) {
+        sessionListRefreshQueued = false
+        void get().refreshSessionList()
+      }
+    }
+  },
+
+  setSessionName: async (name) => {
+    try {
+      await window.piDesktop.session.setName(name)
+      // No manual refresh: Pi emits `session_info_changed` after setting the
+      // name, and handlePiEvent applies it to the Current Session panel and the
+      // Recent row — the same path used by auto-title extensions.
+    } catch {
+      // Silent failure
+    }
+  },
+
+  loadForkMessages: async () => {
+    try {
+      const raw = await window.piDesktop.session.getForkMessages()
+      set({ forkMessages: normalizeForkMessages(raw) })
+    } catch {
+      set({ forkMessages: [] })
+    }
+  },
+
+  forkFrom: async (entryId) => {
+    if (!(await get().confirmSessionChange('fork'))) return false
+    const result = (await window.piDesktop.session.fork(entryId)) as
+      { success?: boolean; data?: { cancelled?: boolean } } | null
+    if (!result?.success) return false
+    await get().reloadActiveSession()
+    // An extension can cancel the fork; the session then stays where it was.
+    return result.data?.cancelled !== true
+  },
+
+  editAndResend: async (messageId, text) => {
+    try {
+      await get().loadForkMessages()
+      const point = forkPointForUserMessage(get().messages, messageId, get().forkMessages)
+      if (!point) throw new Error(t('store.messages.editNotInSession'))
+      const title = sessionTitleForFork(get().sessionState?.sessionName, get().messages)
+      if (!(await get().forkFrom(point.entryId))) return false
+      // The fork starts with the same first message, so unnamed it would list
+      // under the same title as the session it came from.
+      if (title) {
+        await get().setSessionName(t('store.messages.editedSessionName', { title: truncateTitle(title, EDITED_TITLE_MAX_CHARS) }))
+      }
+    } catch (err) {
+      get().addMessage({
+        id: generateId(),
+        role: 'system',
+        content: t('store.messages.editResendError', { detail: err instanceof Error ? err.message : String(err) }),
+        timestamp: Date.now(),
+      })
+      return false
+    }
+    await get().sendPrompt(text)
+    return true
+  },
+
+  cloneBranch: async () => {
+    if (!(await get().confirmSessionChange('clone'))) return
+    const result = (await window.piDesktop.session.clone()) as { success?: boolean } | null
+    if (result?.success) {
+      await get().reloadActiveSession()
+    }
+  },
+
+  // ─── Model ────────────────────────────────────────────────────────────
+
+  setModel: async (provider, modelId) => {
+    try {
+      // The runtime stopped after the picker listed: keep the choice for the next start.
+      if (get().piStatus !== 'running') {
+        await get().saveDefaultModel(provider, modelId)
+        return
+      }
+      await window.piDesktop.model.set(provider, modelId)
+      try {
+        await get().saveDefaultModel(provider, modelId)
+      } catch {
+        // Non-fatal — model still applied for this session.
+      }
+      set({ composerFocusRequested: true })
+      get().refreshSessionState()
+    } catch (err) {
+      get().addMessage({
+        id: generateId(),
+        role: 'system',
+        content: t('store.messages.modelError', { detail: err instanceof Error ? err.message : String(err) }),
+        timestamp: Date.now(),
+      })
+    }
+  },
+
+  // Remember for next Pi start / home composer (settings defaults).
+  saveDefaultModel: async (provider, modelId) => {
+    const updated = await window.piDesktop.settings.save({
+      defaultProvider: provider,
+      defaultModel: modelId,
+    })
+    set({ settings: updated })
+  },
+
+  cycleModel: async () => {
+    try {
+      await window.piDesktop.model.cycle()
+      get().refreshSessionState()
+    } catch {
+      // Silent failure
+    }
+  },
+
+  listModels: async () => {
+    const gen = sessionLoadGeneration
+    const workspaceId = get().activeWorkspace?.id
+    const isCurrent = (): boolean => gen === sessionLoadGeneration && workspaceId === get().activeWorkspace?.id
+    // The picker is also usable on a fresh composer. Starting the runtime
+    // discovers the engine's real catalog without sending a prompt; like every
+    // renderer start it opens what the chat shows (see startPi).
+    if (get().piStatus !== 'running') await get().startPi()
+    if (!isCurrent() || get().piStatus !== 'running') {
+      throw new Error(t('models.selector.loadFailed'))
+    }
+    const response = (await window.piDesktop.model.listAvailable()) as {
+      success?: boolean
+      data?: { models?: ModelInfo[] }
+    } | null
+    if (!isCurrent() || !response?.success || !Array.isArray(response.data?.models)) {
+      throw new Error(t('models.selector.loadFailed'))
+    }
+    return response.data.models
+  },
+
+  // ─── Thinking ─────────────────────────────────────────────────────────
+
+  setThinkingLevel: async (level) => {
+    try {
+      const response = await window.piDesktop.thinking.setLevel(level) as { success?: boolean } | null
+      if (!response?.success) return
+      try {
+        const updated = await window.piDesktop.settings.save({ defaultThinkingLevel: level })
+        set({ settings: updated })
+      } finally {
+        await get().refreshSessionState()
+      }
+    } catch {
+      // Silent failure
+    }
+  },
+
+  cycleThinkingLevel: async () => {
+    try {
+      const response = await window.piDesktop.thinking.cycleLevel() as { success?: boolean } | null
+      if (!response?.success) return
+      const state = await window.piDesktop.session.getState() as { success?: boolean; data?: SessionState } | null
+      if (state?.success && state.data?.thinkingLevel) {
+        try {
+          const updated = await window.piDesktop.settings.save({ defaultThinkingLevel: state.data.thinkingLevel })
+          set({ settings: updated })
+        } finally {
+          await get().refreshSessionState()
+        }
+      }
+    } catch {
+      // Silent failure
+    }
+  },
+
+  compactContext: async () => {
+    try {
+      await window.piDesktop.session.compact()
+      // compaction_start/end events drive the chat system messages; refresh
+      // state + stats so the context-usage figures update afterwards.
+      get().refreshSessionState()
+      get().refreshSessionStats()
+    } catch {
+      // Silent failure
+    }
+  },
+
+  // ─── UI ───────────────────────────────────────────────────────────────
+
+  setCurrentView: (view) => set({ currentView: view }),
+  // Lifted into the store so the scope survives SessionPanel remounts (it
+  // unmounts on every navigation) and so sidebar entry points can set it.
+  setSessionsScope: (scope) => set({ sessionsScope: scope }),
+  // A direct global entry point (slash command) clears project/session scope.
+  // Closing merely hides the panel and PRESERVES the scope so a reopen stays in
+  // the same project or session.
+  setWorkflowPanelOpen: (open) =>
+    set((state) => ({
+      workflowPanelOpen: open,
+      workflowPanelFilter: open ? null : state.workflowPanelFilter,
+      workflowPanelWorkspaceId: open ? null : state.workflowPanelWorkspaceId,
+    })),
+  openWorkflowRunsForSession: (sessionId) => set({
+    workflowPanelOpen: true,
+    workflowPanelFilter: sessionId,
+    workflowPanelWorkspaceId: null,
+  }),
+  // Project/workspace scope for the sidebar Activity entry. null = global.
+  // The signature is null-widened: the Tools entry opens the global list with
+  // an explicit null (the same value a direct global open falls back to).
+  openWorkflowRunsForWorkspace: (workspaceId: string | null) => set({
+    workflowPanelOpen: true,
+    workflowPanelFilter: null,
+    workflowPanelWorkspaceId: workspaceId,
+  }),
+  refreshWorkflowRuns: async () => {
+    try {
+      const workflowRuns = await window.piDesktop.workflows.list()
+      set({ workflowRuns })
+    } catch {
+      set({ workflowRuns: [] })
+    }
+  },
+  requestChatScrollToBottom: () =>
+    set((state) => ({ chatScrollBottomNonce: state.chatScrollBottomNonce + 1 })),
+  setChatSidePanel: async (panel) => {
+    // A panel that hides the preview unmounts a dirty FilePreview, so it asks
+    // first. The file tree leaves the editor mounted beside it.
+    if (sidePanelHidesPreview(panel)) {
+      if (!(await get().confirmDiscardEditorChanges())) return false
+      set({ chatSidePanel: panel, editorDirty: false })
+      return true
+    }
+    set({ chatSidePanel: panel })
+    return true
+  },
+
+  toggleSidebar: () => set((state) => ({ sidebarOpen: !state.sidebarOpen })),
+
+  toggleTerminal: () => set((state) => ({ terminalOpen: !state.terminalOpen })),
+
+  toggleReview: () => set((state) => ({ reviewOpen: !state.reviewOpen })),
+
+  loadSettings: async () => {
+    try {
+      const settings = await window.piDesktop.settings.getAll()
+      set({ settings })
+
+      // User themes are optional: when the list fails, the built-in themes,
+      // font size, and language below must still apply.
+      try {
+        const { themes, warnings } = await window.piDesktop.themes.list()
+        for (const warning of warnings) {
+          console.warn(warning)
+        }
+        setUserThemes(themes)
+      } catch (error) {
+        console.warn('[settings] user themes unavailable', error)
+      }
+
+      applyThemeSettings(settings)
+      rememberBootTheme(settings)
+      // Re-apply on OS light/dark changes while the app is open, but only
+      // when the effective (draft or saved) theme is 'system'.
+      watchSystemTheme(() => {
+        const state = get()
+        return state.settingsDraft.theme ?? state.settings?.theme ?? 'system'
+      })
+
+      // Apply font size
+      document.documentElement.style.fontSize = `${settings.fontSize}px`
+      applyUiFont(settings.uiFontFamily)
+
+      // Settings reload after each save, so this also applies a changed language.
+      await applyLanguageSetting(settings.language)
+    } catch {
+      // Silent failure
+    }
+  },
+
+  setSettingsDraft: (patch) =>
+    set((state) => ({ settingsDraft: { ...state.settingsDraft, ...patch } })),
+
+  setPermissionRulesDraft: (scope, rules) =>
+    set((state) => ({ permissionRulesDrafts: { ...state.permissionRulesDrafts, [scope]: rules } })),
+
+  clearSettingsDraft: () =>
+    set({ settingsDraft: {}, permissionRulesDrafts: { global: null, workspace: null } }),
+
+  setPermissionMode: async (mode) => {
+    const updated = await window.piDesktop.settings.save({ permissionMode: mode })
+    set({ settings: updated })
+    if (get().piStatus === 'running') {
+      await get().restartPi()
+    }
+  },
+
+  saveSidebarWidth: async (width) => {
+    // Called once when a drag ends, never per mousemove — the live width is local
+    // to the sidebar so dragging does not write settings.json on every pixel.
+    const updated = await window.piDesktop.settings.save({
+      sidebarWidth: clampSidebarWidth(width),
+    })
+    set({ settings: updated })
+  },
+
+  toggleSessionGroupCollapsed: async (projectPath) => {
+    const current = get().settings?.collapsedSessionGroups ?? []
+    const next = current.includes(projectPath)
+      ? current.filter((p) => p !== projectPath)
+      : [...current, projectPath]
+    const updated = await window.piDesktop.settings.save({ collapsedSessionGroups: next })
+    set({ settings: updated })
+  },
+
+  loadCommands: async () => {
+    try {
+      set({ commands: normalizePiCommands(await window.piDesktop.piCommands.list()) })
+    } catch {
+      set({ commands: [] })
+    }
+  },
+
+  // ─── Event Handling ───────────────────────────────────────────────────
+
+  handlePiEvent: (event) => {
+    if ((event.type === 'message_update' || event.type === 'tool_execution_start' || event.type === 'tool_execution_update') && !get().isStreaming) {
+      // An attach can miss agent_start. Live output is stronger evidence than
+      // a runtime snapshot that is still loading.
+      set({ isStreaming: true, reattachedMidTurn: true })
+    }
+    switch (event.type) {
+      case 'message_start': {
+        // User messages can enter the session without passing through this
+        // GUI — pi-nvim and other socket/extension bridges inject prompts
+        // directly inside the Pi process. Render those here, or the thread
+        // shows only the assistant's replies. Our own prompts arrive on this
+        // event too, but sendPrompt already rendered them at send time, so a
+        // matching pending echo means skip. Assistant-role message_start is
+        // ignored: assistant content renders via message_update / message_end.
+        const startedMessage = (event as PiMessageStartEvent).message
+        if (startedMessage && (startedMessage as { role?: unknown }).role === 'user') {
+          const parsed = parseAgentMessage(startedMessage)
+          if (parsed && parsed.content.trim() && !consumeLocalEcho(parsed.content)) {
+            get().addMessage(parsed)
+            // Mirror sendPrompt's turn-start state so the external turn gets
+            // a live streaming bubble instead of content appearing only at
+            // message_end. agent_end clears isStreaming as usual. When a turn
+            // is already streaming (an external steer injected mid-turn), the
+            // in-progress content and tool-call state must survive.
+            if (!get().isStreaming) {
+              set({
+                isStreaming: true,
+                streamingContent: '',
+                streamingThinking: '',
+                streamingToolCalls: new Map(),
+              })
+            }
+            get().addTimelineEvent({
+              id: generateId(),
+              type: 'system',
+              timestamp: Date.now(),
+              title: t('timeline.externalPromptReceived'),
+              status: 'success',
+            })
+          }
+        }
+        break
+      }
+
+      case 'message_update':
+        handleMessageUpdate(event as PiMessageUpdateEvent, set, get)
+        break
+
+      case 'message_end': {
+        const endedMessage = (event as { message?: Record<string, unknown> }).message
+        // Tool results and user echoes do not finish the assistant stream.
+        // In particular, other tools may still be executing in parallel.
+        if (endedMessage?.role !== 'assistant') break
+        handleTurnComplete(set, endedMessage, false)
+        // turn_end re-delivers the same message, so errors surface only here.
+        const turnError = turnErrorText(endedMessage)
+        if (turnError) {
+          get().addMessage({
+            id: generateId(),
+            role: 'system',
+            content: t('store.messages.error', { detail: turnError }),
+            timestamp: Date.now(),
+          })
+        }
+        get().addTimelineEvent({
+          id: generateId(),
+          type: 'assistant_message',
+          timestamp: Date.now(),
+          title: turnError ? t('timeline.assistantResponseFailed') : t('timeline.assistantResponseComplete'),
+          status: turnError ? 'error' : 'success',
+        })
+        break
+      }
+
+      case 'turn_end':
+        handleTurnComplete(set, (event as { message?: Record<string, unknown> }).message, true)
+        break
+
+      case 'agent_start': {
+        agentRunStarts += 1
+        // A fresh turn means real stream context from its first byte — any
+        // pending mid-turn-attach backfill was already handled at agent_end.
+        set({ isStreaming: true, reattachedMidTurn: false })
+        get().addTimelineEvent({
+          id: generateId(),
+          type: 'system',
+          kind: 'agent-run',
+          timestamp: Date.now(),
+          title: t('timeline.agentStarted'),
+          status: 'running',
+        })
+        // A turn this window did not prompt (a queued or external prompt) can
+        // also be a new session's first. The fresh session state names its file.
+        if (!isActiveSessionListed(get())) {
+          void get().refreshSessionState().then(() => scheduleSessionListRefresh(get))
+        }
+        break
+      }
+
+      case 'agent_end':
+        handleTurnComplete(set, undefined, true)
+        set((state) => ({
+          isStreaming: false,
+          // Close out the matching agent-run entry so its spinner stops.
+          // Without this, the run-state indicator on the start entry
+          // persists forever even after the agent completes.
+          timelineEvents: closeMostRecentRunning(state.timelineEvents, (e) => e.kind === 'agent-run', 'success'),
+        }))
+        get().refreshSessionStats()
+        // Pi writes a new session's file only after its first assistant
+        // message, so a finished turn is when the session lists can show it.
+        // The fresh session state names that file and its message count.
+        void get().refreshSessionState().then(() => scheduleSessionListRefresh(get))
+        get().addTimelineEvent({
+          id: generateId(),
+          type: 'system',
+          timestamp: Date.now(),
+          title: t('timeline.agentFinished'),
+          status: 'success',
+        })
+        // Attached mid-turn and the turn just ended: the stream buffers never
+        // held the full response, so pull the finished messages from the
+        // session instead of leaving the pre-attach view on screen.
+        if (get().reattachedMidTurn) {
+          set({ reattachedMidTurn: false })
+          void enqueueAttachBackfill(get)
+        }
+        break
+
+      case 'tool_execution_start':
+        handleToolStart(event as PiToolExecutionStartEvent, set)
+        get().addTimelineEvent({
+          id: generateId(),
+          type: 'tool_start',
+          timestamp: Date.now(),
+          title: t('timeline.tool', { tool: (event as PiToolExecutionStartEvent).toolName }),
+          detail: JSON.stringify((event as PiToolExecutionStartEvent).args).slice(0, 200),
+          status: 'running',
+          metadata: { toolCallId: (event as PiToolExecutionStartEvent).toolCallId },
+        })
+        break
+
+      case 'tool_execution_update':
+        handleToolUpdate(event as PiToolExecutionUpdateEvent, set)
+        break
+
+      case 'tool_execution_end': {
+        handleToolEnd(event as PiToolExecutionEndEvent, set)
+        const toolEvent = event as PiToolExecutionEndEvent
+        set((state) => ({
+          // Close out the matching tool_start entry (paired by toolCallId)
+          // so its spinner stops.
+          timelineEvents: closeMostRecentRunning(state.timelineEvents, (e) =>
+            e.type === 'tool_start' &&
+            (e.metadata as Record<string, unknown> | undefined)?.toolCallId === toolEvent.toolCallId
+          , toolEvent.isError ? 'error' : 'success'),
+        }))
+        get().addTimelineEvent({
+          id: generateId(),
+          type: 'tool_end',
+          timestamp: Date.now(),
+          title: t('timeline.tool', { tool: toolEvent.toolName }),
+          status: toolEvent.isError ? 'error' : 'success',
+          metadata: { toolCallId: toolEvent.toolCallId },
+        })
+        break
+      }
+
+      case 'queue_update':
+        handleQueueUpdate(event as PiQueueUpdateEvent, set)
+        break
+
+      case 'compaction_start':
+      case 'compaction_end':
+        handleCompaction(event as PiCompactionStartEvent | PiCompactionEndEvent, set)
+        get().addTimelineEvent({
+          id: generateId(),
+          type: 'compaction',
+          timestamp: Date.now(),
+          title: event.type === 'compaction_start' ? t('timeline.compactionStarted') : t('timeline.compactionComplete'),
+          status: event.type === 'compaction_start' ? 'running' : 'success',
+        })
+        break
+
+      case 'auto_retry_start':
+      case 'auto_retry_end':
+        handleAutoRetry(event as PiAutoRetryStartEvent | PiAutoRetryEndEvent, set, get)
+        get().addTimelineEvent({
+          id: generateId(),
+          type: 'retry',
+          timestamp: Date.now(),
+          title: event.type === 'auto_retry_start' ? t('timeline.retryAttempt', { attempt: (event as PiAutoRetryStartEvent).attempt }) : t('timeline.retryComplete'),
+          status: event.type === 'auto_retry_start' ? 'running' : ((event as PiAutoRetryEndEvent).success ? 'success' : 'error'),
+        })
+        break
+
+      case 'available_commands_update':
+        set({ commands: normalizePiCommands((event as { commands?: unknown }).commands) })
+        break
+
+      case 'command_output': {
+        const text = (event as { text?: unknown }).text
+        // OMP writes command output for its terminal UI, colors included.
+        const content = typeof text === 'string' ? stripAnsi(text) : ''
+        if (content.trim()) {
+          get().addMessage({ id: generateId(), role: 'system', content, timestamp: Date.now() })
+        }
+        break
+      }
+
+      case 'prompt_result': {
+        // Before any turn started for it, the prompt ran none: a refusal after
+        // admission (its error reaches no message_end), a finished command, or a stop.
+        if (latestPrompt?.generation === sessionLoadGeneration && latestPrompt.runsAtSend === agentRunStarts) {
+          endTurnWithoutAgent(set, get, promptResultRefusal(event as PiPromptResultEvent)?.reason)
+        }
+        break
+      }
+
+      case 'subagent_lifecycle':
+        set((state) => ({ subagentTasks: applyOmpLifecycle(state.subagentTasks, event.payload) }))
+        break
+
+      case 'subagent_progress':
+        set((state) => ({ subagentTasks: applyOmpProgress(state.subagentTasks, event.payload) }))
+        break
+
+      case 'config_update':
+        void get().refreshSessionState()
+        break
+
+      case 'extension_ui_request': {
+        const uiEvent = event as PiExtensionUiRequest
+        if (uiEvent.method === 'open_url') {
+          const url = uiEvent.launchUrl ?? uiEvent.url
+          if (url) void window.piDesktop.system.openExternal(url)
+        } else if (uiEvent.method === 'cancel') {
+          set((state) => state.extensionUiRequest?.id === uiEvent.targetId ? { extensionUiRequest: null } : state)
+        } else if (uiEvent.method === 'setWidget') {
+          // pi-subagents reports background runs as one JSON line. Its inspect
+          // replies are consumed in main; other widgets have no surface yet.
+          if (uiEvent.widgetKey === PI_ASYNC_WIDGET_KEY) {
+            const snapshot = tasksFromPiAsyncWidget(uiEvent.widgetLines)
+            if (snapshot) set((state) => ({ subagentTasks: replacePiAsyncRuns(state.subagentTasks, snapshot) }))
+          }
+        } else if (uiEvent.method === 'setStatus') {
+          set((state) => {
+            const key = uiEvent.statusKey ?? 'default'
+            if (uiEvent.statusText === undefined) {
+              const { [key]: _removed, ...rest } = state.extensionStatuses
+              return { extensionStatuses: rest }
+            }
+            return {
+              extensionStatuses: {
+                ...state.extensionStatuses,
+                [key]: uiEvent.statusText,
+              },
+            }
+          })
+        } else if (uiEvent.method === 'setTitle' || uiEvent.method === 'set_editor_text') {
+          // Fire-and-forget: nothing to store in state.
+        } else if (uiEvent.method === 'notify') {
+          // Toast slot: kept apart from the dialog slot so a notification can
+          // never clobber an unanswered blocking prompt.
+          set({ extensionNotify: uiEvent })
+        } else if (uiEvent.method === 'select' || uiEvent.method === 'confirm' || uiEvent.method === 'input' || uiEvent.method === 'editor') {
+          set({ extensionUiRequest: uiEvent })
+        }
+        break
+      }
+
+      case 'session_info_changed':
+      case 'session_info_update': {
+        // Live title update (auto-title extension, /name, or our rename).
+        // Apply the new name directly to the active session's state + list row
+        // so both the Current Session panel and its Recent row update instantly,
+        // with no file read or RPC round-trip.
+        const info = event as { name?: unknown; title?: unknown; sessionId?: unknown }
+        const rawName = info.name ?? info.title
+        const newName = (typeof rawName === 'string' && rawName.trim()) || null
+        set((state) => {
+          const activeFile = state.sessionState?.sessionFile ?? null
+          return {
+            sessionState: state.sessionState
+              ? {
+                  ...state.sessionState,
+                  sessionName: newName,
+                  ...(typeof info.sessionId === 'string' ? { sessionId: info.sessionId } : {}),
+                }
+              : state.sessionState,
+            sessionList: activeFile
+              ? state.sessionList.map((s) => (s.path === activeFile ? { ...s, name: newName } : s))
+              : state.sessionList,
+          }
+        })
+        break
+      }
+
+      case 'status_change': {
+        const statusEvent = event as unknown as PiStatus
+        set({
+          piStatus: statusEvent.status,
+          piStartupPhase: statusEvent.startupPhase ?? null,
+          piPid: statusEvent.pid,
+          piError: statusEvent.error,
+          ...(statusEvent.engine ? { piEngine: statusEvent.engine } : {}),
+        })
+        if ((statusEvent.status === 'stopped' || statusEvent.status === 'error') && get().isStreaming) {
+          handleTurnComplete(set, undefined, true)
+          set({ isStreaming: false, reattachedMidTurn: false })
+        }
+        if (statusEvent.status === 'running') {
+          get().loadCommands()
+          get().loadSkills()
+        }
+        break
+      }
+    }
+  },
+
+  respondExtensionUi: (id, response) => {
+    const { extensionUiRequest } = get()
+    if (!extensionUiRequest || extensionUiRequest.id !== id) return
+
+    if (extensionUiRequest.method === 'confirm') {
+      window.piDesktop.ui.respondConfirm(id, !!response.confirmed)
+    } else if (extensionUiRequest.method === 'select' || extensionUiRequest.method === 'input' || extensionUiRequest.method === 'editor') {
+      window.piDesktop.ui.respondInput(id, String(response.value ?? ''))
+    }
+
+    set({ extensionUiRequest: null })
+  },
+
+  dismissExtensionUi: () => {
+    const { extensionUiRequest } = get()
+    if (extensionUiRequest) {
+      if (extensionUiRequest.method === 'confirm') {
+        window.piDesktop.ui.respondConfirm(extensionUiRequest.id, false)
+      } else {
+        window.piDesktop.ui.respondInput(extensionUiRequest.id, '')
+      }
+      set({ extensionUiRequest: null })
+    }
+  },
+
+  dismissExtensionNotify: () => {
+    const { extensionNotify } = get()
+    if (!extensionNotify) return
+    // Pi ignores responses to unknown ids, so answering a fire-and-forget
+    // notify is harmless — and it must never touch the dialog slot.
+    window.piDesktop.ui.respondInput(extensionNotify.id, '')
+    set({ extensionNotify: null })
+  },
+
+  handlePendingPromptCounts: (counts) => set({ pendingPromptCounts: counts }),
+
+  handleWorkspaceActivity: (map) => {
+    // Workspace activity aggregates sibling sessions; it cannot drive this
+    // chat's streaming lifecycle. Only the active runtime's events may do that.
+    set({ workspaceActivity: map })
+  },
+
+  handleSessionRuntime: (runtime) => {
+    const expectedRuntimeId = get().activeSessionRuntimeId
+    const refusalArrived = runtime.promptRefusal !== undefined &&
+      runtime.promptRefusal !== get().sessionRuntimes[runtime.runtimeId]?.promptRefusal
+    if (runtime.closed) {
+      set((current) => {
+        const { [runtime.runtimeId]: _closed, ...remaining } = current.sessionRuntimes
+        return {
+          sessionRuntimes: remaining,
+          ...(current.activeSessionRuntimeId === runtime.runtimeId ? { activeSessionRuntimeId: null } : {}),
+        }
+      })
+      return
+    }
+    set((current) => ({
+      sessionRuntimes: { ...current.sessionRuntimes, [runtime.runtimeId]: runtime },
+      activeSessionRuntimeId: runtime.active
+        ? runtime.runtimeId
+        : current.activeSessionRuntimeId === runtime.runtimeId
+          ? null
+          : current.activeSessionRuntimeId,
+      ...(runtime.active ? {
+        piStatus: runtime.status,
+        piPid: runtime.pid,
+        piEngine: runtime.engine ?? 'pi',
+        piError: runtime.error,
+        ...(runtime.status === 'error' || runtime.status === 'stopped' ? { sessionLoading: false } : {}),
+      } : {}),
+    }))
+    // A newly-created session is intentionally empty, so its renderer stays
+    // in sessionLoading until Pi reports the generated session path. Hydrate
+    // that expected active runtime even though loading is still true; the old
+    // guard made New Session look stuck forever after Pi was already ready.
+    const current = get()
+    if (runtime.active && runtime.workspaceId === current.activeWorkspace?.id) {
+      const working = runtime.activity === 'working' || runtime.activity === 'needs-approval'
+      if ((runtime.status === 'stopped' || runtime.status === 'error') && current.isStreaming) {
+        handleTurnComplete(set, undefined, true)
+        set({ isStreaming: false, reattachedMidTurn: false })
+      } else if (working && !current.isStreaming && (!current.sessionLoading || expectedRuntimeId === runtime.runtimeId)) {
+        set({ isStreaming: true, reattachedMidTurn: true })
+      } else if (!working && current.reattachedMidTurn) {
+        set({ isStreaming: false, reattachedMidTurn: false })
+        void enqueueAttachBackfill(get)
+      } else if (refusalArrived) {
+        // The refusal of a task prompt shows with the chat's history.
+        void enqueueAttachBackfill(get)
+      }
+    }
+    if (
+      runtime.active &&
+      runtime.status === 'running' &&
+      runtime.sessionPath &&
+      current.sessionState?.sessionFile !== runtime.sessionPath &&
+      historyLoadingRuntime !== runtime.runtimeId &&
+      (!current.sessionLoading || current.activeSessionRuntimeId === runtime.runtimeId)
+    ) {
+      void get().reloadActiveSession({ refreshList: false })
+    }
+  },
+
+  recoverPendingPrompts: async () => {
+    // Isolated: the activity snapshot is cosmetic and must never block the
+    // prompt flush below, which recovers a held blocking dialog.
+    try {
+      get().handleWorkspaceActivity(await window.piDesktop.workspace.getActivity())
+    } catch {
+      // Non-fatal: the next activity broadcast catches the renderer up.
+    }
+    try {
+      get().handlePendingPromptCounts(await window.piDesktop.ui.getPendingPrompts())
+      const workspace = await window.piDesktop.workspace.getActive()
+      if (workspace) await window.piDesktop.ui.flushPendingPrompts(workspace.id)
+    } catch {
+      // Non-fatal: the next counts broadcast or flush catches the renderer up.
+    }
+  },
+
+  requestConfirm: (options) =>
+    new Promise<boolean>((resolve) => {
+      // Resolve any dialog already open (treated as cancelled) before showing.
+      const pending = get().confirmRequest
+      if (pending) pending.resolve(false)
+      set({ confirmRequest: { ...options, resolve } })
+    }),
+
+  resolveConfirm: (confirmed) => {
+    const req = get().confirmRequest
+    if (req) req.resolve(confirmed)
+    set({ confirmRequest: null })
+  },
+
+  maybeWarnWorkspacePermissionRules: async () => {
+    try {
+      const status = await window.piDesktop.permissionRules.workspaceStatus()
+      if (!status.hasWorkspaceRules || status.acknowledged || !status.workspacePath) return
+
+      if (status.hasAllowRules && !status.trusted) {
+        // The repo defines allow rules that would let Pi skip permission prompts.
+        // They stay inert until the user explicitly trusts this workspace.
+        const trust = await get().requestConfirm({
+          title: t('store.confirm.trustWorkspaceTitle'),
+          message: t('store.confirm.trustWorkspaceMessage'),
+          confirmLabel: t('permissionRules.trustWorkspaceButton'),
+          cancelLabel: t('store.confirm.keepUntrustedLabel'),
+        })
+        if (trust) {
+          await window.piDesktop.permissionRules.setWorkspaceTrust(true)
+        }
+      } else {
+        await get().requestConfirm({
+          title: t('store.confirm.workspaceRulesNoticeTitle'),
+          message: t('store.confirm.workspaceRulesNoticeMessage'),
+          confirmLabel: t('store.confirm.okLabel'),
+          cancelLabel: t('common.dismiss'),
+        })
+      }
+
+      // Acknowledge so the prompt does not fire on every Pi start. Fetch fresh
+      // settings rather than trusting the possibly-stale store snapshot, so a
+      // concurrent settings save elsewhere can't be clobbered by an ack list
+      // built from data that predates it.
+      const current = await window.piDesktop.settings.getAll()
+      const acked = current.permissionRulesAckWorkspaces ?? []
+      if (!acked.includes(status.workspacePath)) {
+        const updated = await window.piDesktop.settings.save({
+          permissionRulesAckWorkspaces: [...acked, status.workspacePath],
+        })
+        set({ settings: updated })
+      }
+    } catch {
+      // Non-fatal: the warning tries again on the next Pi start.
+    }
+  },
+
+  // ─── Workspaces ──────────────────────────────────────────────────────
+
+  reorderProjectTab: (sourceId, targetId, placement) => {
+    const state = get()
+    const order = projectTabs(state.workspaces, state.projectTabOrder).map((workspace) => workspace.id)
+    const next = moveProjectTab(order, sourceId, targetId, placement)
+    if (next.every((id, index) => id === order[index])) return
+    set({ projectTabOrder: next })
+    rememberProjectTabOrder(next)
+  },
+
+  loadWorkspaces: async () => {
+    try {
+      const workspaces = await window.piDesktop.workspace.list()
+      const active = await window.piDesktop.workspace.getActive()
+      set({ workspaces, activeWorkspace: active })
+    } catch {
+      // Silent failure
+    }
+  },
+
+  createWorkspace: async (name, path) => {
+    // Main activates an existing workspace on a duplicate path — inside the
+    // create call, with none of the switch teardown. Route the duplicate
+    // through activateWorkspace instead, so every caller gets the dirty-editor
+    // ask, the chat clear, and the status resync; the already-active duplicate
+    // needs nothing at all.
+    const duplicate = get().workspaces.find((w) => pathsEqual(w.path, path))
+    if (duplicate) {
+      if (duplicate.id !== get().activeWorkspace?.id) {
+        await get().activateWorkspace(duplicate.id)
+      }
+      return
+    }
+    const previousActiveId = get().activeWorkspace?.id ?? null
+    try {
+      await window.piDesktop.workspace.create(name, path)
+      await get().loadWorkspaces()
+      adoptMainSideActivation(get, set, previousActiveId)
+    } catch (err) {
+      get().addMessage({
+        id: generateId(),
+        role: 'system',
+        content: t('store.messages.createWorkspaceError', { detail: err instanceof Error ? err.message : String(err) }),
+        timestamp: Date.now(),
+      })
+    }
+  },
+
+  createWorktreeTab: async () => {
+    if (!(await get().confirmDiscardEditorChanges())) return
+    try {
+      // A new tab starts from the repository's HEAD, never by copying the
+      // source tab's dirty files. That makes opening a tab safe while the old
+      const workspace = await window.piDesktop.workspace.createTab()
+      await get().loadWorkspaces()
+      const switched = await get().activateWorkspace(workspace.id, { skipDirtyConfirm: true })
+      if (switched) {
+        get().setCurrentView('chat')
+        if (workspace.sourceWasDirty) {
+          get().addMessage({
+            id: generateId(),
+            role: 'system',
+            content: t('store.messages.tabFromLastCommit'),
+            timestamp: Date.now(),
+          })
+        }
+      }
+    } catch (err) {
+      const detail = err instanceof Error ? err.message : String(err)
+      const content = /not a git repository/i.test(detail)
+        ? t('store.messages.notGitRepository')
+        : t('store.messages.newIsolatedTabError', { detail })
+      get().addMessage({
+        id: generateId(),
+        role: 'system',
+        content,
+        timestamp: Date.now(),
+      })
+    }
+  },
+
+  createLinkedTaskTab: async (options) => {
+    if (!(await get().confirmDiscardEditorChanges())) return false
+    const workspace = await window.piDesktop.linkedTask.create(options)
+    await get().loadWorkspaces()
+    // Repositories whose checkout had uncommitted changes are marked in the repo bar.
+    if (await get().activateWorkspace(workspace.id, { skipDirtyConfirm: true })) get().setCurrentView('chat')
+    return true
+  },
+
+  addRepoToLinkedTask: async () => {
+    const workspace = get().activeWorkspace
+    if (!workspace?.linkedTask) return
+    const path = await window.piDesktop.system.openDialog({ title: t('repoSets.edit.pickFolderTitle') })
+    if (!path) return
+    try {
+      await window.piDesktop.linkedTask.addRepo(workspace.id, path)
+      await get().loadWorkspaces()
+    } catch (err) {
+      get().addMessage({
+        id: generateId(),
+        role: 'system',
+        content: t('store.messages.addRepositoryError', { detail: err instanceof Error ? err.message : String(err) }),
+        timestamp: Date.now(),
+      })
+    }
+  },
+
+  openFolderAsWorkspace: async (folderPath) => {
+    // No trim: leading/trailing spaces are legal in POSIX folder names, and the
+    // path arrives verbatim from the OS (drop or dialog), never from typing.
+    if (!folderPath) return false
+    try {
+      const kind = await window.piDesktop.system.pathKind(folderPath)
+      if (!kind.exists || !kind.isDirectory) {
+        get().addMessage({
+          id: generateId(),
+          role: 'system',
+          content: t('store.messages.notAFolder', { path: folderPath }),
+          timestamp: Date.now(),
+        })
+        get().setCurrentView('chat')
+        return false
+      }
+      // Re-drop / re-open of the current project: nothing to switch, just make
+      // sure the chat is on screen and Pi is up.
+      const active = get().activeWorkspace
+      if (active && pathsEqual(active.path, folderPath)) {
+        get().setCurrentView('chat')
+        if (get().piStatus !== 'running') await get().startPi()
+        return true
+      }
+      // An already-registered folder must NOT go through createWorkspace:
+      // main's create activates a duplicate path immediately, before
+      // activateWorkspace can ask about unsaved editor changes — declining
+      // then would leave main and the chat pane on different workspaces.
+      // Only a genuinely new path gets created (main leaves the active
+      // workspace alone then, except for the very first workspace, where
+      // there is no prior state for the confirm to protect).
+      let ws = get().workspaces.find((w) => pathsEqual(w.path, folderPath))
+      if (!ws) {
+        await get().createWorkspace(workspaceNameFromFolderPath(folderPath), folderPath)
+        ws = get().workspaces.find((w) => pathsEqual(w.path, folderPath))
+        if (!ws) return false
+      }
+      const switched = await get().activateWorkspace(ws.id)
+      if (switched) get().setCurrentView('chat')
+      return switched
+    } catch (err) {
+      get().addMessage({
+        id: generateId(),
+        role: 'system',
+        content: t('store.messages.openFolderError', { detail: err instanceof Error ? err.message : String(err) }),
+        timestamp: Date.now(),
+      })
+      return false
+    }
+  },
+
+  // Instant navigation: committing the project pointer never spawns a
+  // process. A workspace with a live runtime shows that session right away
+  // (the process is already up — only history hydrates); anything else shows
+  // the empty new-session view immediately. Pi starts lazily on first prompt.
+  activateWorkspace: async (workspaceId, options) => {
+    if (get().activeWorkspace?.id === workspaceId) return true
+    if (!options?.skipDirtyConfirm && !(await get().confirmDiscardEditorChanges())) return false
+    try {
+      const workspace = await window.piDesktop.workspace.setActive(workspaceId)
+      // The switch has committed. An unsaved workspace-rules draft belongs to
+      // the workspace being left: drop it before the next workspace shows, or
+      // Settings loads it as that workspace's rules and Save writes it there.
+      get().setPermissionRulesDraft('workspace', null)
+      sessionLoadGeneration += 1
+      get().clearMessages()
+      // Decide from the runtime snapshots the main process already pushed —
+      // one IPC roundtrip total, no serial status probe before first render.
+      // The status broadcast that follows the main-side activation corrects
+      // any snapshot staleness.
+      const live = workspaceHasLivePi(get().sessionRuntimes, workspace.id)
+      set((state) => ({
+        workspaces: state.workspaces.some((item) => item.id === workspace.id)
+          ? state.workspaces.map((item) => item.id === workspace.id ? workspace : item)
+          : [...state.workspaces, workspace],
+        activeWorkspace: workspace,
+        sessionState: null,
+        sessionStats: null,
+        extensionUiRequest: null,
+        previewTarget: null,
+        editorDirty: false,
+        piStatus: live ? 'running' : 'stopped',
+        piPid: null,
+        piError: null,
+        sessionLoading: live || options?.awaitingSession === true,
+      }))
+      void window.piDesktop.ui.flushPendingPrompts(workspace.id)
+      scheduleSessionListRefresh(get)
+      if (!live && options?.awaitingSession !== true) {
+        // Show the conversation a start would continue, if any.
+        void get().openLastSession()
+      } else if (live && options?.awaitingSession !== true) {
+        void get().reloadActiveSession({ refreshList: false })
+        // A turn may already be running here (that is what the sidebar dot
+        // advertised). Arm the mid-turn attach so the next turn boundary
+        // backfills the prefix the stream buffers never saw.
+        const activity = Object.values(get().sessionRuntimes).find((runtime) => runtime.active && runtime.workspaceId === workspaceId)?.activity
+        if (activity === 'working' || activity === 'needs-approval') {
+          set({ isStreaming: true, reattachedMidTurn: true })
+        }
+      }
+      return true
+    } catch (err) {
+      get().addMessage({
+        id: generateId(),
+        role: 'system',
+        content: t('store.messages.switchWorkspaceError', { detail: err instanceof Error ? err.message : String(err) }),
+        timestamp: Date.now(),
+      })
+      return false
+    }
+  },
+
+  removeWorkspace: async (workspaceId) => {
+    const workspace = get().workspaces.find((w) => w.id === workspaceId)
+    const isWorktree = workspace?.kind === 'worktree'
+    const isManagedWorktree = isWorktree && workspace?.managed !== false
+    const linkedTask = workspace?.linkedTask
+    const isTab = isWorktree || !!linkedTask
+    const workspaceLabel = workspace?.name ?? workspaceId
+    const confirmed = await get().requestConfirm({
+      title: isTab ? t('store.confirm.closeTabLabel') : t('store.confirm.removeWorkspaceTitle'),
+      message: linkedTask
+        ? linkedTask.mode === 'isolated'
+          ? t('store.confirm.closeIsolatedLinkedTaskMessage', { name: workspaceLabel })
+          : t('store.confirm.closeInPlaceLinkedTaskMessage', { name: workspaceLabel })
+        : isWorktree
+        ? isManagedWorktree
+          ? t('store.confirm.closeManagedWorktreeMessage', { name: workspaceLabel })
+          : t('store.confirm.closeUnmanagedWorktreeMessage', { name: workspaceLabel })
+        : t('store.confirm.removeWorkspaceMessage', { name: workspaceLabel }),
+      confirmLabel: isTab ? t('store.confirm.closeTabLabel') : t('common.remove'),
+      cancelLabel: t('common.cancel'),
+      danger: true,
+    })
+    if (!confirmed) return
+    // Removing the active workspace closes its preview via the adoption
+    // below — a dirty editor gets the same ask a workspace switch gives it.
+    if (workspaceId === get().activeWorkspace?.id) {
+      if (!(await get().confirmDiscardEditorChanges())) return
+    }
+    const previousActiveId = get().activeWorkspace?.id ?? null
+    try {
+      const result = await window.piDesktop.workspace.remove(workspaceId)
+      await get().loadWorkspaces()
+      get().saveComposerDraft(workspaceId, EMPTY_COMPOSER_DRAFT)
+      adoptMainSideActivation(get, set, previousActiveId)
+      if (result.preservedWorktreePaths) {
+        get().addMessage({
+          id: generateId(),
+          role: 'system',
+          content: t('store.messages.tabClosedWorktreePreserved', { path: result.preservedWorktreePaths.join(', ') }),
+          timestamp: Date.now(),
+        })
+      }
+    } catch (err) {
+      get().addMessage({
+        id: generateId(),
+        role: 'system',
+        content: t('store.messages.removeWorkspaceError', { detail: err instanceof Error ? err.message : String(err) }),
+        timestamp: Date.now(),
+      })
+    }
+  },
+
+  renameWorkspace: async (workspaceId, name) => {
+    try {
+      await window.piDesktop.workspace.rename(workspaceId, name)
+      await get().loadWorkspaces()
+      await get().refreshSessionList()
+    } catch {
+      // Silent failure
+    }
+  },
+
+  changeWorkspaceFolder: async (workspaceId, newPath) => {
+    // Repointing the active workspace restarts its Pi below (the working
+    // directory is bound at spawn — without a restart Pi keeps operating in
+    // the old folder while the UI shows the new one) and strands the open
+    // preview (the file service refuses paths outside the new root). Ask
+    // about the in-flight turn and the editor buffer before touching anything.
+    const isActive = workspaceId === get().activeWorkspace?.id
+    if (isActive && !(await get().confirmSessionChange('changeFolder'))) return
+    if (isActive && !(await get().confirmDiscardEditorChanges())) return
+    const restartNeeded = isActive && get().piStatus === 'running'
+    try {
+      await window.piDesktop.workspace.changePath(workspaceId, newPath)
+      await get().loadWorkspaces()
+      if (isActive) set({ previewTarget: null, editorDirty: false })
+      // Main stopped this workspace's Pi with the repoint; bring the active
+      // one back up in the new folder.
+      if (restartNeeded) await get().restartPi()
+    } catch (err) {
+      get().addMessage({
+        id: generateId(),
+        role: 'system',
+        content: t('store.messages.changeFolderError', { detail: err instanceof Error ? err.message : String(err) }),
+        timestamp: Date.now(),
+      })
+    }
+  },
+
+  // ─── Timeline ────────────────────────────────────────────────────────
+
+  addTimelineEvent: (event) =>
+    set((state) => ({
+      timelineEvents: [...state.timelineEvents, event].slice(-500), // Keep last 500 events
+    })),
+
+  clearTimeline: () => set({ timelineEvents: [] }),
+
+  // ─── Packages ────────────────────────────────────────────────────────
+
+  loadInstalledPackages: async () => {
+    try {
+      const packages = await window.piDesktop.packages.listInstalled()
+      set({ installedPackages: packages })
+    } catch {
+      // Silent failure
+    }
+  },
+
+  installPackage: (spec) =>
+    runPackageMutation(
+      get,
+      set,
+      () => window.piDesktop.packages.install(spec),
+      t('store.messages.installedPackage', { spec }),
+      t('store.messages.installFailed'),
+    ),
+
+  removePackage: (spec) =>
+    runPackageMutation(
+      get,
+      set,
+      () => window.piDesktop.packages.remove(spec),
+      t('store.messages.removedPackage', { spec }),
+      t('store.messages.removePackageFailed'),
+    ),
+
+  // Updates re-check afterwards, even on failure, since an "Update all" can
+  // partly succeed.
+  updatePackage: async (spec) => {
+    await runPackageMutation(
+      get,
+      set,
+      () => window.piDesktop.packages.update(spec),
+      t('store.messages.updatedPackage', { spec }),
+      t('store.messages.updatePackageFailed'),
+    )
+    await get().checkPackageUpdates()
+  },
+
+  updateAllPackages: async () => {
+    await runPackageMutation(
+      get,
+      set,
+      () => window.piDesktop.packages.updateAll(),
+      t('store.messages.updatedAllPackages'),
+      t('store.messages.updatePackageFailed'),
+    )
+    await get().checkPackageUpdates()
+  },
+
+  checkPackageUpdates: async () => {
+    const checkId = ++latestPackageUpdateCheck
+    set({ packageUpdatesChecking: true })
+    try {
+      const updates = await window.piDesktop.packages.checkUpdates()
+      if (checkId === latestPackageUpdateCheck) set({ packageUpdates: updates })
+    } catch {
+      // Silent failure: keep the last known result
+    } finally {
+      if (checkId === latestPackageUpdateCheck) set({ packageUpdatesChecking: false })
+    }
+  },
+
+  // Load the full catalog once; the Catalog tab filters it locally on each
+  // keystroke (no per-keystroke IPC). catalogLoading gates only this one-time load.
+  loadCatalog: async () => {
+    set({ catalogLoading: true })
+    try {
+      const packages = await window.piDesktop.packages.fetchCatalog()
+      set({ catalogPackages: packages })
+    } catch {
+      // Silent failure
+    } finally {
+      set({ catalogLoading: false })
+    }
+  },
+
+  clearPackageNotification: () => set({ packageNotification: null }),
+
+  // ─── Skills ──────────────────────────────────────────────────────────
+
+  loadSkills: async () => {
+    try {
+      const skills = await window.piDesktop.skills.list()
+      set({ installedSkills: skills })
+    } catch {
+      // Silent failure
+    }
+  },
+
+  loadCustomModels: async () => {
+    const isLatest = customModelsLoads.begin()
+    // A newer read wins, and edits begun during this one keep the file they
+    // were made on. Every load starts without unsaved edits.
+    const isWanted = (): boolean => isLatest() && !get().customModelsEdited
+    try {
+      const result = await window.piDesktop.models.read()
+      if (!isWanted()) return
+      if ('error' in result) {
+        set({ customModels: null, customModelsError: result.error, customModelsFile: result.location })
+      } else if (!isSameModelsFile(get(), result.config, result.location)) {
+        set({ customModels: result.config, customModelsError: null, customModelsFile: result.location })
+      }
+    } catch (err) {
+      if (!isWanted()) return
+      set({ customModels: null, customModelsError: err instanceof Error ? err.message : String(err), customModelsFile: null })
+    }
+  },
+
+  saveCustomModels: async (edited) => {
+    const errors = validateModelsConfig(edited)
+    if (errors.length > 0) return { ok: false, errors }
+    // The edits belong to the file the editor shows, so the save names its
+    // engine; main must not pick the engine in use again.
+    const loaded = get().customModelsFile
+    if (!loaded) return { ok: false, errors: [t('store.messages.modelsFileNotLoaded')] }
+    const original = get().customModels ?? { providers: {} }
+    const merged = mergeModelsConfig(original, edited)
+    const result = await window.piDesktop.models.write(merged, loaded.engine)
+    if (!result.success) return { ok: false, errors: [result.error ?? t('store.messages.writeFailed')] }
+    set({ customModelsEdited: false })
+    await get().loadCustomModels()
+    return { ok: true }
+  },
+
+  setCustomModelsEdited: (edited) => {
+    if (get().customModelsEdited !== edited) set({ customModelsEdited: edited })
+  },
+
+  setPreviewTarget: async (target) => {
+    const current = get().previewTarget
+    // Same code file re-selected: FilePreview's load effect keys on `path`, so
+    // it won't re-run and the edit buffer survives — nothing to confirm, and
+    // the dirty flag must stand.
+    const sameCodeFile =
+      target?.kind === 'code' && current?.kind === 'code' && target.path === current.path
+    if (sameCodeFile) {
+      set({ previewTarget: target })
+      return true
+    }
+    if (!(await get().confirmDiscardEditorChanges())) return false
+    // The dirty flag falls with the buffer it described: the component reloads
+    // (or unmounts) from the new target and re-syncs from a clean slate.
+    set({ previewTarget: target, editorDirty: false })
+    return true
+  },
+
+  setEditorDirty: (dirty) => {
+    if (get().editorDirty !== dirty) set({ editorDirty: dirty })
+  },
+
+  confirmDiscardEditorChanges: async () => {
+    if (!get().editorDirty) return true
+    const name = get().previewTarget?.name
+    return get().requestConfirm({
+      title: t('editorGuard.title'),
+      message: name ? t('editorGuard.discardFile', { fileName: name }) : t('editorGuard.discard'),
+      confirmLabel: t('editorGuard.discardButton'),
+      cancelLabel: t('editorGuard.keepEditing'),
+      danger: true,
+    })
+  },
+
+  toggleFileSearch: () => {
+    set((state) => ({ fileSearchOpen: !state.fileSearchOpen }))
+  },
+
+  // ─── Session Tags ────────────────────────────────────────────────────
+
+  loadTags: async () => {
+    try {
+      const [allTags, usedTags, autoTags] = await Promise.all([
+        window.piDesktop.tags.getAll(),
+        window.piDesktop.tags.getAllUsed(),
+        window.piDesktop.tags.autoGetAll(),
+      ])
+      set({ sessionTags: allTags, allUsedTags: usedTags, autoTags })
+    } catch {
+      // Silent failure
+    }
+  },
+
+  addSessionTag: async (sessionId, tag) => {
+    try {
+      const tags = await window.piDesktop.tags.add(sessionId, tag)
+      set((state) => {
+        // A manual tag supersedes the auto-tag (backend drops it too).
+        const { [sessionId]: _dropped, ...autoTags } = state.autoTags
+        return {
+          sessionTags: { ...state.sessionTags, [sessionId]: tags },
+          autoTags,
+        }
+      })
+      // Refresh used tags
+      const usedTags = await window.piDesktop.tags.getAllUsed()
+      set({ allUsedTags: usedTags })
+    } catch {
+      // Silent failure
+    }
+  },
+
+  ensureAutoTags: async (sessions) => {
+    try {
+      const autoTags = await window.piDesktop.tags.autoEnsure(sessions)
+      set({ autoTags })
+    } catch {
+      // Silent failure
+    }
+  },
+
+  removeAutoTag: async (sessionId) => {
+    try {
+      await window.piDesktop.tags.autoRemove(sessionId)
+      set((state) => {
+        const { [sessionId]: _dropped, ...autoTags } = state.autoTags
+        return { autoTags }
+      })
+    } catch {
+      // Silent failure
+    }
+  },
+
+  removeSessionTag: async (sessionId, tag) => {
+    try {
+      const tags = await window.piDesktop.tags.remove(sessionId, tag)
+      set((state) => ({
+        sessionTags: { ...state.sessionTags, [sessionId]: tags },
+      }))
+      const usedTags = await window.piDesktop.tags.getAllUsed()
+      set({ allUsedTags: usedTags })
+    } catch {
+      // Silent failure
+    }
+  },
+
+  getTagsForSession: (sessionId) => {
+    return get().sessionTags[sessionId] ?? []
+  },
+
+  // ─── Archive / Delete ─────────────────────────────────────────────────
+
+  loadArchivedSessions: async () => {
+    try {
+      const archived = await window.piDesktop.session.listArchived()
+      set({ archivedSessions: archived })
+    } catch {
+      // Silent failure — archive registry is best-effort
+    }
+  },
+
+  archiveSession: async (sessionId) => {
+    try {
+      const archived = await window.piDesktop.session.archive(sessionId)
+      set({ archivedSessions: archived })
+    } catch (err) {
+      get().addMessage({
+        id: generateId(),
+        role: 'system',
+        content: t('store.messages.archiveError', { detail: err instanceof Error ? err.message : String(err) }),
+        timestamp: Date.now(),
+      })
+    }
+  },
+
+  unarchiveSession: async (sessionId) => {
+    try {
+      const archived = await window.piDesktop.session.unarchive(sessionId)
+      set({ archivedSessions: archived })
+    } catch (err) {
+      get().addMessage({
+        id: generateId(),
+        role: 'system',
+        content: t('store.messages.unarchiveError', { detail: err instanceof Error ? err.message : String(err) }),
+        timestamp: Date.now(),
+      })
+    }
+  },
+
+  deleteSession: async (session) => {
+    try {
+      const result = await window.piDesktop.session.delete(session.path)
+      if (result.ok) {
+        // Refresh list and prune archive entry locally
+        set((state) => {
+          const next = { ...state.archivedSessions }
+          delete next[session.sessionId]
+          return { archivedSessions: next }
+        })
+
+        await get().refreshSessionList()
+
+        // The deleted session was the one on screen. Main already closed its
+        // runtime and promoted a sibling in the same workspace, so follow that
+        // promotion — creating a session here would spawn a third runtime and
+        // steal activation from the one main just made active. Only a delete
+        // that left nothing running falls back to the empty new-session view.
+        if (get().sessionState?.sessionFile === session.path) {
+          const replacement = result.replacementSessionPath
+          if (replacement) {
+            await get().switchSession(replacement, get().activeWorkspace?.path)
+          } else {
+            get().clearMessages()
+            await get().createNewSession()
+          }
+        }
+      }
+      return result
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err)
+      get().addMessage({
+        id: generateId(),
+        role: 'system',
+        content: t('store.messages.deleteError', { detail: message }),
+        timestamp: Date.now(),
+      })
+      return { ok: false, method: 'unlink' as const, error: message }
+    }
+  },
+
+  toggleShowArchived: () => set((state) => ({ showArchived: !state.showArchived })),
+
+  // ─── Notes ────────────────────────────────────────────────────────────
+
+  loadNotes: async () => {
+    try {
+      const notes = await window.piDesktop.notes.list()
+      set({ notes })
+    } catch {
+      // Silent failure — notes are non-critical
+    }
+  },
+
+  saveNote: async (input) => {
+    const note = await window.piDesktop.notes.create(input)
+    set((state) => ({ notes: [...state.notes, note] }))
+  },
+
+  updateNote: async (id, patch) => {
+    const updated = await window.piDesktop.notes.update(id, patch)
+    set((state) => ({
+      notes: state.notes.map((n) => (n.id === id ? updated : n)),
+    }))
+  },
+
+  deleteNote: async (id) => {
+    await window.piDesktop.notes.remove(id)
+    set((state) => ({ notes: state.notes.filter((n) => n.id !== id) }))
+  },
+
+  insertPrompt: (text, replace = false) =>
+    set((state) => ({
+      // Stay on Home if the user is there; otherwise jump to chat (notes/palette).
+      currentView: state.currentView === 'home' ? 'home' : 'chat',
+      notePickerOpen: false,
+      pendingInsert: { text, nonce: Date.now(), replace },
+    })),
+
+  clearPendingInsert: () => set({ pendingInsert: null }),
+
+  setNotePickerOpen: (open) => set({ notePickerOpen: open }),
+
+  setCommandPalette: (open) => set({ commandPaletteOpen: open }),
+  setTaskLauncherOpen: (open) => set({ taskLauncherOpen: open }),
+  setLinkedTaskDialog: (view) => set({ linkedTaskDialog: view }),
+
+  // The Ctrl/Cmd+Shift+M shortcut. The open state lives in the store (see
+  // modelPickerOpen), so a composer remount keeps the picker open.
+  requestModelSelectorOpen: () => set({ modelPickerOpen: true }),
+
+  startNoteFromText: (text) =>
+    set({ noteDraft: text, notePickerOpen: false, currentView: 'notes' }),
+
+  clearNoteDraft: () => set({ noteDraft: null }),
+
+  // ─── Update check ─────────────────────────────────────────────────────
+
+  checkForUpdates: async () => {
+    try {
+      const info = await window.piDesktop.updates.check()
+      if (info.updateAvailable) set({ updateInfo: info, updateDismissed: false })
+    } catch {
+      // Silent — update check is best-effort
+    }
+  },
+
+  dismissUpdate: () => set({ updateDismissed: true }),
+
+  // ─── Lineage ──────────────────────────────────────────────────────────
+
+  loadLineage: async () => {
+    try {
+      const records = await window.piDesktop.session.getLineage()
+      set({ lineage: buildLineageTree(records) })
+    } catch {
+      set({ lineage: [] })
+    }
+  },
+}))
+
+// Mirror editor-dirty transitions to main, which guards quit, window close,
+// and reload behind a discard confirmation — teardown outruns any
+// renderer-side ask, so the decision must be local to main. A subscription
+// (rather than a call inside setEditorDirty) catches every write path:
+// several actions clear the flag with a direct set() alongside other keys,
+// and a stale main-side cache would make quit nag after an in-app discard.
+useAppStore.subscribe((state, prev) => {
+  if (state.editorDirty === prev.editorDirty) return
+  window.piDesktop.ui.setEditorDirty(
+    state.editorDirty,
+    state.editorDirty ? (state.previewTarget?.name ?? null) : null
+  )
+})
+
+// A composer focus request and an open model picker are only for the chat the
+// user is looking at. Once they leave chat, drop both, so a later return to
+// chat never pulls focus from whatever they opened meanwhile or shows a stale
+// picker. Several actions change the view with a direct set(), so a
+// subscription catches every path.
+useAppStore.subscribe((state) => {
+  if ((state.composerFocusRequested || state.modelPickerOpen) && state.currentView !== 'chat') {
+    useAppStore.setState({ composerFocusRequested: false, modelPickerOpen: false })
+  }
+})
+
+/**
+ * What main reads to pick the engine whose models file it serves (see
+ * activeEngineKind there): the active workspace and session runtime, the
+ * engine that runtime runs, and the engine setting.
+ */
+/**
+ * The store already holds this models file with this content. Every chat
+ * bubble reads customModels for model names, so a reload that finds the same
+ * file keeps the same object and renders nothing again.
+ */
+function isSameModelsFile(state: AppState, config: ModelsConfig, location: ModelsFileInfo): boolean {
+  return state.customModelsError === null
+    && state.customModelsFile?.file === location.file
+    && JSON.stringify(state.customModels) === JSON.stringify(config)
+}
+
+function modelsEngineInputs(state: AppState): readonly unknown[] {
+  return [
+    state.activeWorkspace?.id,
+    state.activeSessionRuntimeId,
+    state.piEngine,
+    state.settings?.piEngine,
+    state.settings?.piExecutablePath,
+  ]
+}
+
+// The custom-models editor shows the models file of the engine in use, and
+// Save writes the file it shows. When that engine may have changed, read the
+// file again so the rows and labels follow it; unsaved edits keep their file.
+useAppStore.subscribe((state, prev) => {
+  if (state.customModelsEdited) return
+  const inputs = modelsEngineInputs(state)
+  const before = modelsEngineInputs(prev)
+  if (inputs.some((input, index) => input !== before[index])) void state.loadCustomModels()
+})
+
+// ─── Event Handlers ──────────────────────────────────────────────────────────
+
+// Zustand set supports both object and callback forms
+type ZustandSet = (partial: Partial<AppState> | ((state: AppState) => Partial<AppState>)) => void
+
+/**
+ * `current` with one streamed delta placed at its offset, or null when the
+ * delta starts past the end of `current`: the view attached in the middle of
+ * the message and missed its start. A delta `current` already holds (a
+ * snapshot covered it) changes nothing; a delta without an offset appends.
+ */
+export function placeStreamedDelta(current: string, delta: string, offset: number | undefined): string | null {
+  if (offset === undefined) return current + delta
+  if (offset > current.length) return null
+  return offset + delta.length <= current.length ? current : current.slice(0, offset) + delta
+}
+
+// Counts committed assistant messages, so a streamed-text snapshot requested
+// for one message is never applied to the next.
+let committedStreamCount = 0
+let streamingTextBackfill: Promise<void> | null = null
+
+/**
+ * Fill the start of a message this view missed: after switching back to a
+ * project whose turn kept running, the deltas resume in the middle of the
+ * message. Main keeps what the message streamed so far; take it, and the
+ * following deltas continue from its end. When it cannot be had, nothing
+ * mid-sentence is shown: the "still working" banner stands in until the turn
+ * ends and the attach backfill loads the full answer.
+ */
+function backfillStreamingText(get: () => AppState & AppActions, set: ZustandSet): void {
+  if (streamingTextBackfill) return
+  const scope = { streamed: committedStreamCount, gen: sessionLoadGeneration, runtimeId: get().activeSessionRuntimeId }
+  streamingTextBackfill = window.piDesktop.session.getStreamingText()
+    .then((snapshot) => {
+      if (!snapshot || scope.streamed !== committedStreamCount || scope.gen !== sessionLoadGeneration ||
+        scope.runtimeId !== get().activeSessionRuntimeId) return
+      set((state) => ({
+        streamingContent: snapshot.content.length >= state.streamingContent.length ? snapshot.content : state.streamingContent,
+        streamingThinking: snapshot.thinking.length >= state.streamingThinking.length ? snapshot.thinking : state.streamingThinking,
+      }))
+    })
+    .catch(() => undefined)
+    .finally(() => { streamingTextBackfill = null })
+}
+
+const STREAMED_DELTA_FIELDS = {
+  text_delta: 'streamingContent',
+  thinking_delta: 'streamingThinking',
+} as const satisfies Record<string, keyof AppState>
+
+function handleMessageUpdate(
+  event: PiMessageUpdateEvent,
+  set: ZustandSet,
+  get: () => AppState & AppActions,
+): void {
+  const { assistantMessageEvent } = event
+  // Start/delta events identify the call by its index in the partial message;
+  // only toolcall_end carries the finalized toolCall directly.
+  const partialContent = assistantMessageEvent.partial?.content
+  const toolCall = assistantMessageEvent.toolCall ?? (
+    Array.isArray(partialContent) && assistantMessageEvent.contentIndex !== undefined
+      ? partialContent[assistantMessageEvent.contentIndex] as Record<string, unknown> | undefined
+      : undefined
+  )
+
+  switch (assistantMessageEvent.type) {
+    case 'text_delta':
+    case 'thinking_delta': {
+      const field = STREAMED_DELTA_FIELDS[assistantMessageEvent.type]
+      let missedStart = false
+      set((state) => {
+        const placed = placeStreamedDelta(state[field], assistantMessageEvent.delta ?? '', assistantMessageEvent.offset)
+        if (placed !== null) return { [field]: placed }
+        missedStart = true
+        return {}
+      })
+      if (missedStart) backfillStreamingText(get, set)
+      break
+    }
+
+    case 'text_end':
+    case 'thinking_end':
+      // Content is finalized in message_end
+      break
+
+    case 'toolcall_start': {
+      if (toolCall) {
+        const callId = String(toolCall.id ?? '')
+        set((state) => {
+          const newMap = new Map(state.streamingToolCalls)
+          newMap.set(callId, {
+            name: String(toolCall.name ?? 'unknown'),
+            args: '',
+            isExecuting: true,
+            startedAt: Date.now(),
+          })
+          return { streamingToolCalls: newMap }
+        })
+      }
+      break
+    }
+
+    case 'toolcall_delta': {
+      if (toolCall?.id) {
+        set((state) => {
+          const newMap = new Map(state.streamingToolCalls)
+          const existing = newMap.get(String(toolCall.id))
+          if (existing) {
+            newMap.set(String(toolCall.id), {
+              ...existing,
+              args: existing.args + (assistantMessageEvent.delta ?? ''),
+            })
+          }
+          return { streamingToolCalls: newMap }
+        })
+      }
+      break
+    }
+
+    case 'toolcall_end': {
+      if (toolCall?.id) {
+        set((state) => {
+          const newMap = new Map(state.streamingToolCalls)
+          const existing = newMap.get(String(toolCall.id))
+          if (existing) {
+            newMap.set(String(toolCall.id), {
+              ...existing,
+              args: JSON.stringify(toolCall.arguments ?? existing.args),
+            })
+          }
+          return { streamingToolCalls: newMap }
+        })
+      }
+      break
+    }
+  }
+}
+
+// Pi and OMP report a plain user stop with exactly these texts; anything else
+// on an aborted turn is a specific reason worth showing (mirrors Pi's own TUI).
+// Not translated: they are compared against the engines' own (English)
+// output, never shown. The "Stopped" mark already tells the user.
+const GENERIC_ABORT_MESSAGES: ReadonlySet<string> = new Set([
+  'Request was aborted', // Pi
+  'Interrupted by user', // OMP
+])
+
+/**
+ * Error text to surface in chat for a finished assistant message, or null.
+ * A provider that rejects before streaming (e.g. HTTP 402) yields an
+ * assistant message with stopReason 'error', empty content, and the provider
+ * error in errorMessage — without this, the chat shows nothing at all.
+ */
+function turnErrorText(message?: Record<string, unknown>): string | null {
+  if (!message || message.role !== 'assistant') return null
+  const errorMessage = typeof message.errorMessage === 'string' ? message.errorMessage : ''
+  if (message.stopReason === 'error') return errorMessage || t('store.messages.unknownError')
+  if (message.stopReason === 'aborted' && errorMessage && !GENERIC_ABORT_MESSAGES.has(errorMessage)) {
+    return errorMessage
+  }
+  return null
+}
+
+function handleTurnComplete(
+  set: ZustandSet,
+  message: Record<string, unknown> | undefined,
+  completeTools: boolean
+): void {
+  committedStreamCount += 1
+  set((state) => {
+    const newMessages = [...state.messages]
+    // Final messages contain the full body, including bytes emitted before a
+    // mid-turn attach. Deltas alone can only reconstruct the suffix we saw.
+    const final = !completeTools && Array.isArray(message?.content) ? parseAgentMessage(message) : null
+    const nativeIds = new Set((Array.isArray(message?.content) ? message.content : [])
+      .filter((block: Record<string, unknown>) => block?.type === 'toolCall')
+      .map((block: Record<string, unknown>) => block.id))
+    const pendingTools = new Map(state.streamingToolCalls)
+    for (const call of final?.toolCalls ?? []) {
+      if (!nativeIds.has(call.id)) continue
+      pendingTools.set(call.id, {
+        ...pendingTools.get(call.id), name: call.name, args: call.arguments,
+        isExecuting: pendingTools.get(call.id)?.isExecuting ?? true,
+      })
+    }
+    const text = final
+      ? { content: final.content, toolCalls: (final.toolCalls ?? []).filter((call) => !nativeIds.has(call.id)) }
+      : splitClaudeCliMarkers(state.streamingContent, state.sessionState?.model?.provider)
+    const thinking = final ? final.thinking : state.streamingThinking
+    // The assistant message ends before its tools execute. Keep their live
+    // state until turn_end so each call is committed only once, with its result.
+    const entries = completeTools ? Array.from(state.streamingToolCalls.entries()) : []
+    // turn_end re-delivers the ended message; only its message_end marks it.
+    const stopped = !completeTools && isStoppedAnswer(message)
+
+    // Commit streaming content as assistant message. A stopped answer is kept
+    // even when nothing streamed, so its "Stopped" notice still shows.
+    if (text.content || thinking || text.toolCalls.length > 0 || entries.length > 0 || stopped) {
+      const toolCalls = [
+        ...entries.map(([id, tc]) => ({
+          id,
+          name: tc.name,
+          arguments: tc.args,
+          result: tc.result,
+          isError: tc.isError,
+          isExecuting: false,
+          durationMs: tc.durationMs,
+        })),
+        ...text.toolCalls,
+      ]
+
+      // Prefer the model/provider Pi records on this specific message (the
+      // authoritative source, robust to mid-turn model switches); fall back to
+      // the currently-selected model when the event omits them.
+      const activeModel = state.sessionState?.model
+      const model = typeof message?.model === 'string' ? message.model : activeModel?.id
+      const provider = typeof message?.provider === 'string' ? message.provider : activeModel?.provider
+      newMessages.push({
+        id: generateId(),
+        role: 'assistant',
+        content: text.content,
+        timestamp: final?.timestamp ?? Date.now(),
+        thinking: thinking || undefined,
+        initiallyShowThinking: Boolean(state.streamingThinking),
+        toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
+        model,
+        provider,
+        stopped: stopped || undefined,
+      })
+
+      for (const [id, tc] of entries) {
+        if (!tc.result) continue
+        newMessages.push({
+          id: `${id}-result`,
+          role: 'toolResult',
+          content: tc.result,
+          timestamp: Date.now(),
+          toolCallId: id,
+          toolName: tc.name,
+        })
+      }
+    }
+
+    return {
+      messages: newMessages.length === state.messages.length ? state.messages : newMessages,
+      streamingContent: '',
+      streamingThinking: '',
+      streamingToolCalls: completeTools ? new Map() : pendingTools,
+    }
+  })
+}
+
+/**
+ * Spawn-tool events feed the subagent rows, except under an OMP that reports
+ * subagents by event: its `task` tool returns at once while the agents run on,
+ * so the tool end would mark them done too early. Null: no change.
+ */
+function subagentTasksAfterTool(
+  state: AppState,
+  toolName: string,
+  event: Omit<SubagentToolEvent, 'source'>
+): SubagentTask[] | null {
+  if (!isSubagentTool(toolName)) return null
+  if (state.piEngine === 'omp' && state.subagentEventsSupported) return null
+  const next = applySubagentToolEvent(state.subagentTasks, {
+    ...event,
+    source: state.piEngine === 'omp' ? 'omp' : 'pi-subagents',
+  })
+  return next === state.subagentTasks ? null : next
+}
+
+function handleToolStart(
+  event: PiToolExecutionStartEvent,
+  set: ZustandSet
+): void {
+  set((state) => {
+    const newMap = new Map(state.streamingToolCalls)
+    newMap.set(event.toolCallId, {
+      name: event.toolName,
+      args: JSON.stringify(event.args),
+      isExecuting: true,
+      startedAt: Date.now(),
+    })
+    const subagentTasks = subagentTasksAfterTool(state, event.toolName, {
+      toolCallId: event.toolCallId,
+      args: event.args,
+      details: undefined,
+      phase: 'start',
+      isError: false,
+    })
+    return subagentTasks ? { streamingToolCalls: newMap, subagentTasks } : { streamingToolCalls: newMap }
+  })
+}
+
+function handleToolUpdate(
+  event: PiToolExecutionUpdateEvent,
+  set: ZustandSet
+): void {
+  const text = event.partialResult.content
+    .filter((c) => c.type === 'text')
+    .map((c) => c.text ?? '')
+    .join('')
+
+  set((state) => {
+    const newMap = new Map(state.streamingToolCalls)
+    const existing = newMap.get(event.toolCallId)
+    newMap.set(event.toolCallId, {
+      ...(existing ?? { name: event.toolName, args: JSON.stringify(event.args), isExecuting: true }),
+      result: text || existing?.result,
+    })
+
+    const subagentTasks = subagentTasksAfterTool(state, event.toolName, {
+      toolCallId: event.toolCallId,
+      args: event.args,
+      details: event.partialResult.details,
+      phase: 'update',
+      isError: false,
+    })
+    return subagentTasks ? { streamingToolCalls: newMap, subagentTasks } : { streamingToolCalls: newMap }
+  })
+}
+
+function handleToolEnd(
+  event: PiToolExecutionEndEvent,
+  set: ZustandSet
+): void {
+  const resultText = event.result.content
+    .filter((c) => c.type === 'text')
+    .map((c) => c.text ?? '')
+    .join('')
+
+  set((state) => {
+    const newMap = new Map(state.streamingToolCalls)
+    const existing = newMap.get(event.toolCallId)
+    if (existing) {
+      newMap.set(event.toolCallId, {
+        ...existing,
+        isExecuting: false,
+        isError: event.isError,
+        result: resultText || existing.result,
+        durationMs: existing.startedAt ? Date.now() - existing.startedAt : existing.durationMs,
+      })
+    }
+
+    const subagentTasks = subagentTasksAfterTool(state, event.toolName, {
+      toolCallId: event.toolCallId,
+      args: undefined,
+      details: event.result.details,
+      phase: 'end',
+      isError: event.isError,
+    })
+
+    return {
+      streamingToolCalls: newMap,
+      ...(subagentTasks ? { subagentTasks } : {}),
+      // A tool that started before a mid-turn return lives only in history.
+      ...(existing ? {} : { messages: settleRunningToolCall(state.messages, event.toolCallId, event.isError) }),
+    }
+  })
+}
+
+function handleQueueUpdate(
+  event: PiQueueUpdateEvent,
+  set: ZustandSet
+): void {
+  set({
+    pendingSteering: event.steering,
+    pendingFollowUp: event.followUp,
+  })
+}
+
+function handleCompaction(
+  event: PiCompactionStartEvent | PiCompactionEndEvent,
+  set: ZustandSet
+): void {
+  if (event.type === 'compaction_start') {
+    set((state) => ({
+      messages: [
+        ...state.messages,
+        {
+          id: generateId(),
+          role: 'system',
+          content: t('store.messages.compactingContext', { reason: (event as PiCompactionStartEvent).reason }),
+          timestamp: Date.now(),
+        },
+      ],
+    }))
+  } else {
+    const endEvent = event as PiCompactionEndEvent
+    if (endEvent.aborted) {
+      set((state) => ({
+        messages: [
+          ...state.messages,
+          {
+            id: generateId(),
+            role: 'system',
+            content: t('store.messages.compactionAborted'),
+            timestamp: Date.now(),
+          },
+        ],
+      }))
+    } else if (endEvent.result) {
+      set((state) => ({
+        messages: [
+          ...state.messages,
+          {
+            id: generateId(),
+            role: 'system',
+            content: t('store.messages.contextCompacted'),
+            timestamp: Date.now(),
+          },
+        ],
+      }))
+    }
+  }
+}
+
+function handleAutoRetry(
+  event: PiAutoRetryStartEvent | PiAutoRetryEndEvent,
+  set: ZustandSet,
+  get: () => AppState & AppActions
+): void {
+  if (event.type === 'auto_retry_start') {
+    set((state) => ({
+      messages: [
+        ...state.messages,
+        {
+          id: generateId(),
+          role: 'system',
+          content: t('store.messages.retrying', { attempt: event.attempt, maxAttempts: event.maxAttempts, detail: event.errorMessage }),
+          timestamp: Date.now(),
+        },
+      ],
+    }))
+  } else {
+    const endEvent = event as PiAutoRetryEndEvent
+    if (!endEvent.success) {
+      set({ isStreaming: false })
+      get().refreshSessionStats()
+    }
+  }
+}
