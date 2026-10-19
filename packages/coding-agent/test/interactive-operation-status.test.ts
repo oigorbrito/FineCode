@@ -69,8 +69,9 @@ describe("interactive operation status", () => {
 	beforeAll(() => initTheme("dark"));
 
 	it.each([
-		{ outcome: "approved", isError: false, text: "Command completed" },
+		{ outcome: "completed", isError: false, text: "Command completed" },
 		{ outcome: "denied", isError: true, text: "Permission denied" },
+		{ outcome: "cancelled", isError: true, text: "Operation aborted" },
 	])("shows an active tool call and its $outcome result", async ({ isError, text }) => {
 		const { component, fakeThis, indicator } = createHarness("bash");
 		try {
