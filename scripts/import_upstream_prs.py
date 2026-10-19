@@ -393,10 +393,19 @@ def main():
     update_count = min(len(pending_updates), max(1, max_checked // 3))
     selected = choose_rotating(pending_updates, update_count)
     selected += choose_rotating(pending_new, max_checked - update_count)
+    print(
+        f"SELECTION run={os.environ.get('GITHUB_RUN_NUMBER', '1')} "
+        f"existing_pool={len(pending_updates)} new_pool={len(pending_new)} "
+        f"selected_existing={min(update_count, len(pending_updates))} "
+        f"selected={[p['number'] for p in selected]}",
+        flush=True,
+    )
     for pr in selected:
         seen += 1
+        print(f"CHECK upstream #{pr['number']}", flush=True)
         try:
             result = import_one(pr)
+            print(f"RESULT upstream #{pr['number']}: {result if result is not None else 'unchanged'}", flush=True)
             if result == "created":
                 created += 1
             elif result == "review_only_created":
