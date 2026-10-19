@@ -9,6 +9,8 @@ import os
 import subprocess
 import urllib.request
 import urllib.error
+from pathlib import Path
+import re
 
 SOURCE = "earendil-works/pi"
 TARGET = os.environ["GITHUB_REPOSITORY"]
@@ -229,7 +231,17 @@ def refresh_conflict_review(local, upstream, branch, saved_sha, expected_tip):
     print(f"REVIEW_ONLY_UPDATED upstream #{number}", flush=True)
     return "review_only_updated"
 
+LAST_IMPORT_DECISION = {}
+
+
+def finish_import(result, reason):
+    LAST_IMPORT_DECISION.clear()
+    LAST_IMPORT_DECISION.update({"result": result, "reason": reason})
+    return result
+
+
 def import_one(pr):
+    LAST_IMPORT_DECISION.clear()
     number = pr["number"]
     branch = f"upstream/pi-pr-{number}"
     local = existing_pr(branch)
@@ -257,31 +269,33 @@ def import_one(pr):
                 "draft": True})
             sync_pr_labels(created_pr["number"], full)
             print(f"RECOVERED upstream #{number}: existing branch {tip}", flush=True)
-            return "created"
+            return finish_import("created", "recovered existing remote branch without rewriting it")
     # Do not disturb a locally closed PR.
     if local and local["state"] != "open":
-        return "existing"
+        return finish_import("existing", "FineCode pull request is closed; left untouched")
     git("reset", "--hard", f"origin/{BASE}")
     git("checkout", "-B", "finecode-upstream-working", f"origin/{BASE}")
     if local:
         import re
         review = re.search(r"finecode-upstream-review-only:([0-9a-f]{40}) tip:([0-9a-f]{40})", local.get("body") or "")
         if review:
-            return refresh_conflict_review(local, full, branch, *review.groups())
+            result = refresh_conflict_review(local, full, branch, *review.groups())
+            reason = "review branch diverged; left untouched" if result == "conflict" else "review-only manifest unchanged or refreshed"
+            return finish_import(result, reason)
         found = re.search(r"finecode-upstream-source:([0-9a-f]{40}) tip:([0-9a-f]{40})", local.get("body") or "")
         if not found:
             if verify_recovered_checkpoint(number, branch, local, full):
-                return "verified"
-            return "review"
+                return finish_import("verified", "legacy checkpoint patch identity verified")
+            return finish_import("review", "legacy checkpoint patch identity could not be verified")
         old_source, expected_tip = found.groups()
         git("fetch", "origin", branch)
         actual_tip = git_sha("FETCH_HEAD")
         if actual_tip != expected_tip:
             print(f"CONFLICT upstream #{number}: FineCode branch diverged; left untouched", flush=True)
-            return "conflict"
+            return finish_import("conflict", "FineCode branch HEAD differs from saved tip checkpoint")
         if old_source == source_sha:
             update_metadata(local, full, metadata(full, old_source, actual_tip))
-            return "existing"
+            return finish_import("existing", "upstream source HEAD matches saved checkpoint")
         # Fetch the exact original PR history, then apply only new upstream commits.
         git("fetch", "--no-tags", "https://github.com/" + SOURCE + ".git",
             f"refs/pull/{number}/head:refs/remotes/pi-upstream/pr-{number}")
@@ -293,15 +307,15 @@ def import_one(pr):
             if equivalent.returncode == 0:
                 update_metadata(local, full, metadata(full, source_sha, actual_tip))
                 print(f"REBASE_EQUIVALENT upstream #{number}: source tree unchanged; branch preserved", flush=True)
-                return "rebase_equivalent"
+                return finish_import("rebase_equivalent", "upstream history rewritten but source trees are identical")
             print(f"REBASE_REVIEW upstream #{number}: upstream history rewritten with changes or unverified tree; preserved FineCode branch", flush=True)
-            return "conflict"
+            return finish_import("conflict", "upstream history rewritten and source trees differ or cannot be verified")
         git("checkout", "-B", "finecode-upstream-working", actual_tip)
         delta = git("diff", "--binary", old_source, source_sha).stdout
         applied = git("apply", "--3way", "--index", "-", ok=False, input_data=delta)
         if applied.returncode:
             print(f"CONFLICT upstream #{number}: incremental patch incompatible", flush=True)
-            return "conflict"
+            return finish_import("conflict", "linear upstream delta could not be applied cleanly")
         changed = git("diff", "--cached", "--quiet", ok=False).returncode != 0
         if changed:
             git("-c", "user.name=github-actions[bot]", "-c",
@@ -312,7 +326,7 @@ def import_one(pr):
         git("push", "origin", f"HEAD:refs/heads/{branch}")
         update_metadata(local, full, metadata(full, source_sha, tip))
         print(f"UPDATED upstream #{number}", flush=True)
-        return "updated"
+        return finish_import("updated", "linear upstream delta applied and branch fast-forward push accepted")
     git("fetch", "--no-tags", "https://github.com/" + SOURCE + ".git",
         f"refs/pull/{number}/head:refs/remotes/pi-upstream/pr-{number}")
     patch = api(f"/repos/{SOURCE}/pulls/{number}",
@@ -320,9 +334,10 @@ def import_one(pr):
     applied = git("apply", "--3way", "--index", "-", ok=False, input_data=patch)
     if applied.returncode:
         print(f"CONFLICT upstream #{number}: initial patch incompatible", flush=True)
-        return stage_conflict_review(full, branch)
+        result = stage_conflict_review(full, branch)
+        return finish_import(result, "initial patch incompatible; created review-only manifest without upstream code")
     if git("diff", "--cached", "--quiet", ok=False).returncode == 0:
-        return "existing"
+        return finish_import("existing", "upstream patch produced no staged content change")
     git("-c", "user.name=github-actions[bot]", "-c",
         "user.email=41898282+github-actions[bot]@users.noreply.github.com",
         "commit", "-m", f"chore(upstream): stage Pi PR #{number} for review")
@@ -335,7 +350,44 @@ def import_one(pr):
         "draft": bool(full.get("draft", False))})
     sync_pr_labels(created_pr["number"], full)
     print(f"CREATED upstream #{number}", flush=True)
-    return "created"
+    return finish_import("created", "initial upstream patch imported into a new FineCode branch")
+
+def choose_rotating(values, count, run_number):
+    if not values or count <= 0:
+        return []
+    offset = ((run_number - 1) * count) % len(values)
+    return values[offset:] + values[:offset]
+
+
+def checkpoint_from_body(body):
+    match = re.search(r"finecode-upstream-source:([0-9a-f]{40}) tip:([0-9a-f]{40})", body or "")
+    if match:
+        return {"source_sha": match.group(1), "finecode_tip": match.group(2)}
+    match = re.search(r"finecode-upstream-review-only:([0-9a-f]{40}) tip:([0-9a-f]{40})", body or "")
+    if match:
+        return {"source_sha": match.group(1), "finecode_tip": match.group(2)}
+    return None
+
+
+def write_manifest(manifest):
+    path = Path(os.environ.get("UPSTREAM_IMPORT_MANIFEST", "upstream-import-manifest.json"))
+    path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
+def capture_after(event, number):
+    try:
+        source_after = api(f"/repos/{SOURCE}/pulls/{number}")
+        event["upstream_head_after"] = (source_after.get("head") or {}).get("sha")
+    except Exception as exc:
+        event["upstream_snapshot_error"] = str(exc)
+    try:
+        mirror_after = existing_pr(f"upstream/pi-pr-{number}")
+        event["finecode_pr"] = (mirror_after or {}).get("number", event["finecode_pr"])
+        event["finecode_head_after"] = ((mirror_after or {}).get("head") or {}).get("sha")
+        event["checkpoint_after"] = checkpoint_from_body((mirror_after or {}).get("body"))
+    except Exception as exc:
+        event["finecode_snapshot_error"] = str(exc)
+
 
 def main():
     git("fetch", "origin", BASE)
@@ -384,19 +436,76 @@ def main():
     pending_new = [p for p in items if p["number"] not in existing_numbers]
     max_checked = max(1, int(os.environ.get("MAX_UPSTREAM_PR_CHECKS", "10")))
 
-    def choose_rotating(values, count):
-        if not values or count <= 0:
-            return []
-        offset = ((int(os.environ.get("GITHUB_RUN_NUMBER", "1")) - 1) * count) % len(values)
-        return (values[offset:] + values[:offset])[:count]
-
+    run_number = int(os.environ.get("GITHUB_RUN_NUMBER", "1"))
     update_count = min(len(pending_updates), max(1, max_checked // 3))
-    selected = choose_rotating(pending_updates, update_count)
-    selected += choose_rotating(pending_new, max_checked - update_count)
+    selected_updates = choose_rotating(pending_updates, update_count, run_number)[:update_count]
+    selected_new = choose_rotating(pending_new, max_checked - update_count, run_number)[:max_checked - update_count]
+    selected = selected_updates + selected_new
+    local_by_upstream = {}
+    for mirror in local:
+        match = re.match(r"upstream/pi-pr-([0-9]+)$", mirror.get("head", {}).get("ref", ""))
+        if match:
+            local_by_upstream[int(match.group(1))] = mirror
+    update_offset = ((run_number - 1) * update_count) % len(pending_updates) if pending_updates else 0
+    new_count = max_checked - update_count
+    new_offset = ((run_number - 1) * new_count) % len(pending_new) if pending_new and new_count > 0 else 0
+    manifest = {
+        "schema_version": 1,
+        "repository": TARGET,
+        "run_id": os.environ.get("GITHUB_RUN_ID"),
+        "run_number": run_number,
+        "main_sha": os.environ.get("GITHUB_SHA"),
+        "max_checks": max_checked,
+        "rotation": {"algorithm": "run_number_offset", "update_count": update_count,
+                     "updates_offset": update_offset,
+                     "updates_inventory_size": len(pending_updates),
+                     "new_count": new_count, "new_offset": new_offset,
+                     "new_inventory_size": len(pending_new)},
+        "eligible_inventory": {
+            "updates": [p["number"] for p in pending_updates],
+            "new": [p["number"] for p in pending_new],
+        },
+        "selected": [],
+    }
+    update_positions = {p["number"]: i for i, p in enumerate(pending_updates)}
+    new_positions = {p["number"]: i for i, p in enumerate(pending_new)}
+    write_manifest(manifest)
     for pr in selected:
         seen += 1
+        mirror_before = local_by_upstream.get(pr["number"])
+        before_checkpoint = checkpoint_from_body((mirror_before or {}).get("body"))
+        event = {
+            "upstream_pr": pr["number"],
+            "finecode_pr": (mirror_before or {}).get("number"),
+            "selection_group": "updates" if pr["number"] in update_positions else "new",
+            "inventory_position": (update_positions if pr["number"] in update_positions else new_positions).get(pr["number"]),
+            "upstream_head_before": before_checkpoint["source_sha"] if before_checkpoint else None,
+            "upstream_head_selected": (pr.get("head") or {}).get("sha"),
+            "finecode_head_before": ((mirror_before or {}).get("head") or {}).get("sha"),
+            "checkpoint_before": before_checkpoint,
+        }
         try:
+            LAST_IMPORT_DECISION.clear()
             result = import_one(pr)
+            event["result"] = result
+            event["classification"] = {
+                "updated": "LINEAR_UPDATE",
+                "rebase_equivalent": "REBASE_EQUIVALENT",
+                "conflict": "BLOCKED_CONFLICT",
+                "existing": "UNCHANGED",
+                "review": "REVIEW_REQUIRED",
+                "created": "CREATED",
+                "review_only_created": "REVIEW_ONLY_CREATED",
+                "review_only_updated": "REVIEW_ONLY_UPDATED",
+                "verified": "CHECKPOINT_VERIFIED",
+            }.get(result, "OTHER")
+            event["reason"] = LAST_IMPORT_DECISION.get("reason") or f"import_one returned {result} without a recorded decision reason"
+            if result == "conflict":
+                event["classification"] = (
+                    "MIRROR_DIVERGED" if "FineCode branch HEAD" in event["reason"] else
+                    "REBASE_CHANGED_TREE" if "upstream history rewritten" in event["reason"] else
+                    "BLOCKED_CONFLICT"
+                )
             if result == "created":
                 created += 1
             elif result == "review_only_created":
@@ -411,19 +520,55 @@ def main():
             elif result == "conflict":
                 conflicts += 1
         except urllib.error.HTTPError as exc:
+            event["result"] = "api_error"
+            event["classification"] = "FAILED"
+            event["reason"] = f"HTTP {exc.code}"
             failures += 1
             detail = exc.read().decode(errors="replace")[:800]
             print(f"API ERROR upstream #{pr['number']}: HTTP {exc.code}: {detail}", flush=True)
             git("reset", "--hard", f"origin/{BASE}", ok=False)
             if exc.code in (403, 429):
                 blocked = True
-                break
         except RuntimeError as exc:
+            event["result"] = "runtime_error"
+            event["classification"] = "FAILED"
+            event["reason"] = str(exc)
             failures += 1
             print(f"FAILED upstream #{pr['number']}: {exc}", flush=True)
             git("reset", "--hard", f"origin/{BASE}", ok=False)
+        except Exception as exc:
+            event["result"] = "unexpected_error"
+            event["classification"] = "FAILED"
+            event["reason"] = f"{type(exc).__name__}: {exc}"
+            failures += 1
+            print(f"FAILED upstream #{pr['number']}: {event['reason']}", flush=True)
+            git("reset", "--hard", f"origin/{BASE}", ok=False)
+        capture_after(event, pr["number"])
+        manifest["selected"].append(event)
+        write_manifest(manifest)
+        if blocked:
+            break
         if created + review_only_created >= MAX_NEW:
             break
+    processed = {item["upstream_pr"] for item in manifest["selected"]}
+    for pr in selected:
+        if pr["number"] in processed:
+            continue
+        reason = "not attempted because API access was rate-limited or forbidden" if blocked else "not attempted because the creation limit was reached"
+        manifest["selected"].append({
+            "upstream_pr": pr["number"],
+            "selection_group": "updates" if pr["number"] in update_positions else "new",
+            "inventory_position": (update_positions if pr["number"] in update_positions else new_positions).get(pr["number"]),
+            "result": "blocked" if blocked else "skipped_limit",
+            "classification": "BLOCKED" if blocked else "SKIPPED_LIMIT",
+            "reason": reason,
+        })
+    manifest["not_processed_after_limit"] = []
+    manifest["summary"] = {"reviewed": seen, "created": created, "review_only_created": review_only_created,
+                           "review_only_updated": review_only_updated, "code_updated": code_updated,
+                           "rebase_equivalent": rebase_equivalent, "conflicts": conflicts,
+                           "failures": failures, "blocked": blocked}
+    write_manifest(manifest)
     print(f"Reviewed {seen}; created {created} code PRs; review-only created {review_only_created}; review-only updated {review_only_updated}; code updated {code_updated}; rebase equivalent {rebase_equivalent}; conflicts {conflicts}; failures {failures}; blocked {blocked}", flush=True)
     if failures or blocked:
         raise SystemExit("Upstream synchronization encountered operational failures; review logs.")
