@@ -1524,6 +1524,28 @@ describe("TuiAltScreen", () => {
 		tui.stop();
 	});
 
+	it("cancels an active selection with Escape without forwarding the key or copying", async () => {
+		const terminal = new RecordingTerminal(20, 4);
+		const tui = new TuiAltScreen(terminal);
+		const focused = new InputOverlay();
+		tui.addChild(new Text("alpha\nbeta\ngamma", 0, 0));
+		tui.addChild(focused);
+		tui.setFocus(focused);
+		tui.start();
+		await terminal.waitForRender();
+
+		terminal.sendInput("\x1b[<0;1;1M");
+		terminal.sendInput("\x1b[<32;4;2M");
+		await terminal.waitForRender();
+		terminal.sendInput("\x1b");
+		await terminal.waitForRender();
+		terminal.sendInput("\x1b[<0;4;2m");
+		await terminal.waitForRender();
+		assert.deepStrictEqual(focused.inputs, []);
+		assert.ok(terminal.events.every((event) => event.type !== "write" || !event.data.includes("\x1b]52;c;")));
+		tui.stop();
+	});
+
 	it("does not append whitespace to double-click word highlighting", async () => {
 		const terminal = new RecordingTerminal(20, 1);
 		const tui = new TuiAltScreen(terminal);
