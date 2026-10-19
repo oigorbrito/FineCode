@@ -8,11 +8,7 @@ export {
 	fineCodeWordmark,
 	supportsFineCodeLogo,
 } from "./brand.ts";
-export {
-	FineCodeOperationalFooter,
-	formatOperationalPath,
-	formatOperationalTokens,
-} from "./operational-footer.ts";
+export { fineCodeFooterPath } from "./operational-footer.ts";
 export {
 	FINECODE_THEME_NAME,
 	finecodeThemeDefinition,

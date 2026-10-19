@@ -40,7 +40,7 @@ import {
 
 export { SYSTEM_THEME_NAME } from "./system-theme.ts";
 
-import { FINECODE_THEME_NAME, finecodeThemeDefinition } from "../finecode/index.ts";
+import { FINECODE_THEME_NAME, finecodeThemeDefinition } from "../finecode/theme.ts";
 export { FINECODE_THEME_NAME };
 
 // ============================================================================
@@ -386,17 +386,11 @@ function getBuiltinThemes(): Record<string, ThemeJson> {
 		const themesDir = getThemesDir();
 		const darkPath = path.join(themesDir, "dark.json");
 		const lightPath = path.join(themesDir, "light.json");
-		const finecodePath = path.join(themesDir, "finecode.json");
-		const builtin: Record<string, ThemeJson> = {
+		BUILTIN_THEMES = {
+			[FINECODE_THEME_NAME]: finecodeThemeDefinition,
 			dark: JSON.parse(stripBom(fs.readFileSync(darkPath, "utf-8"))) as ThemeJson,
 			light: JSON.parse(stripBom(fs.readFileSync(lightPath, "utf-8"))) as ThemeJson,
 		};
-		if (fs.existsSync(finecodePath)) {
-			builtin[FINECODE_THEME_NAME] = JSON.parse(stripBom(fs.readFileSync(finecodePath, "utf-8"))) as ThemeJson;
-		} else {
-			builtin[FINECODE_THEME_NAME] = finecodeThemeDefinition;
-		}
-		BUILTIN_THEMES = builtin;
 	}
 	return BUILTIN_THEMES;
 }

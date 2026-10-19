@@ -2,19 +2,16 @@ import { visibleWidth } from "@earendil-works/pi-tui";
 import { beforeAll, describe, expect, it } from "vitest";
 import type { AgentSession } from "../src/core/agent-session.ts";
 import type { ReadonlyFooterDataProvider } from "../src/core/footer-data-provider.ts";
-import { FooterComponent, formatCwdForFooter } from "../src/modes/interactive/components/footer.ts";
+import { FooterComponent, formatCwdForFooter, formatTokens } from "../src/modes/interactive/components/footer.ts";
 import {
 	FINECODE_BADGE_TEXT,
 	FINECODE_CORAL,
 	FINECODE_YELLOW,
-	FineCodeOperationalFooter,
 	fineCodeBadge,
 	fineCodeLogoLines,
 	fineCodeWordmark,
-	formatOperationalPath,
-	formatOperationalTokens,
 	supportsFineCodeLogo,
-} from "../src/modes/interactive/finecode/index.ts";
+} from "../src/modes/interactive/finecode/brand.ts";
 import {
 	FINECODE_THEME_NAME,
 	getAvailableThemes,
@@ -120,23 +117,23 @@ describe("FineCode TUI-01 Operational Footer", () => {
 	});
 
 	it("normalizes paths consistently across platforms", () => {
-		expect(formatOperationalPath("/home/user", "/home/user")).toBe("~");
-		expect(formatOperationalPath("/home/user/repo", "/home/user")).toBe("~/repo");
-		expect(formatOperationalPath("/home/user/nested/dir", "/home/user")).toBe("~/nested/dir");
+		expect(formatCwdForFooter("/home/user", "/home/user")).toBe("~");
+		expect(formatCwdForFooter("/home/user/repo", "/home/user")).toBe("~/repo");
+		expect(formatCwdForFooter("/home/user/nested/dir", "/home/user")).toBe("~/nested/dir");
 		expect(formatCwdForFooter("/home/user/project", "/home/user")).toBe("~/project");
 	});
 
 	it("formats token counts concisely", () => {
-		expect(formatOperationalTokens(500)).toBe("500");
-		expect(formatOperationalTokens(2500)).toBe("2.5k");
-		expect(formatOperationalTokens(45000)).toBe("45k");
-		expect(formatOperationalTokens(1500000)).toBe("1.5M");
+		expect(formatTokens(500)).toBe("500");
+		expect(formatTokens(2500)).toBe("2.5k");
+		expect(formatTokens(45000)).toBe("45k");
+		expect(formatTokens(1500000)).toBe("1.5M");
 	});
 
 	it("renders operational footer lines with badge and session metadata within target width", () => {
 		const session = createMockSession();
 		const footerData = createMockFooterData();
-		const footer = new FineCodeOperationalFooter(session, footerData);
+		const footer = new FooterComponent(session, footerData);
 
 		const lines = footer.render(100);
 		expect(lines.length).toBeGreaterThanOrEqual(2);
@@ -155,7 +152,7 @@ describe("FineCode TUI-01 Operational Footer", () => {
 		}
 	});
 
-	it("delegates FooterComponent to FineCodeOperationalFooter transparently", () => {
+	it("renders the native FooterComponent with FineCode composition", () => {
 		const session = createMockSession();
 		const footerData = createMockFooterData();
 		const footer = new FooterComponent(session, footerData);
