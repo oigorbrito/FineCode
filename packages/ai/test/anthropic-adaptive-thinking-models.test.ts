@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { getModels, getProviders } from "../src/compat.ts";
+import { getModel, getModels, getProviders } from "../src/compat.ts";
 import type { Api, Model } from "../src/types.ts";
 
 const EXPECTED_CURRENT_ADAPTIVE_THINKING_MODELS = [
@@ -12,6 +12,8 @@ const EXPECTED_CURRENT_ADAPTIVE_THINKING_MODELS = [
 	"fireworks/accounts/fireworks/models/deepseek-v4p1-flash",
 	"fireworks/accounts/fireworks/models/gpt-oss-120b",
 	"fireworks/accounts/fireworks/models/qwen3p8-max",
+	"minimax-cn/MiniMax-M3.1-Flash",
+	"minimax/MiniMax-M3.1-Flash",
 	"opencode/claude-opus-4-8",
 	"opencode/claude-opus-5",
 	"vercel-ai-gateway/anthropic/claude-opus-4.8",
@@ -38,8 +40,19 @@ describe("Anthropic adaptive thinking model metadata", () => {
 					// Regression for #9323: Fireworks uses catalog effort metadata and
 					// verified fallbacks, not a fixed set of adaptive model names.
 					modelId.startsWith("fireworks/") ||
+					modelId.startsWith("minimax/") ||
+					modelId.startsWith("minimax-cn/") ||
 					/(opus[-.](4[-.][678]|5)|sonnet[-.]4[-.]6|sonnet[-.]5|haiku[-.]5[-.]5|fable[-.]5)/.test(modelId),
 			),
 		);
+	});
+
+	// Regression for Pi #11121: M3.1 Flash rejects Anthropic's disabled-thinking mode.
+	it("uses effort-based adaptive thinking for MiniMax M3.1 Flash", () => {
+		for (const provider of ["minimax", "minimax-cn"] as const) {
+			const model = getModel(provider, "MiniMax-M3.1-Flash");
+			expect(model.compat?.forceAdaptiveThinking).toBe(true);
+			expect(model.thinkingLevelMap?.off).toBeNull();
+		}
 	});
 });
