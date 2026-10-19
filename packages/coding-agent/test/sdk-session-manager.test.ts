@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { getModel } from "@earendil-works/pi-ai/compat";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createAgentSession } from "../src/core/sdk.ts";
@@ -41,7 +41,8 @@ describe("createAgentSession session manager defaults", () => {
 		const sessionFile = session.sessionManager.getSessionFile();
 
 		expect(sessionDir).toBe(expectedSessionDir);
-		expect(sessionFile?.startsWith(`${expectedSessionDir}/`)).toBe(true);
+		expect(sessionFile).toBeTruthy();
+		expect(dirname(sessionFile!)).toBe(expectedSessionDir);
 
 		session.dispose();
 	});
@@ -118,9 +119,10 @@ describe("createAgentSession session manager defaults", () => {
 			.map((item) => item.text)
 			.join("");
 
-		expect(output.trim().split("\n")).toEqual([
-			session.sessionId,
-			session.sessionFile,
+		const [shellSessionId, shellSessionFile, shellProvider, shellModel, shellReasoningLevel] = output.trim().split("\n");
+		expect(shellSessionId).toBe(session.sessionId);
+		expect(shellSessionFile?.replaceAll("\\\\", "/")).toBe(session.sessionFile?.replaceAll("\\\\", "/"));
+		expect([shellProvider, shellModel, shellReasoningLevel]).toEqual([
 			model!.provider,
 			model!.id,
 			session.thinkingLevel,
