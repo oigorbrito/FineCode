@@ -171,6 +171,10 @@
       "$ref": "#/$defs/KeybindingValue",
       "description": "Jump to next semantic prompt"
     },
+    "tui.altScreen.selectionCancel": {
+      "$ref": "#/$defs/KeybindingValue",
+      "description": "Cancel an active mouse selection"
+    },
     "tui.altScreen.search": {
       "$ref": "#/$defs/KeybindingValue",
       "description": "Search the primary scroll view"

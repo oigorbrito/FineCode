@@ -12,7 +12,7 @@
 	},
 	"devDependencies": {
 		"@earendil-works/pi-ai": "1.3.0",
-		"finecode": "1.3.0",
+		"finecode": "0.0.3",
 		"@types/node": "22.19.19",
 		"@vitest-evals/core": "0.15.0",
 		"autoevals": "0.3.0",

@@ -275,7 +275,7 @@ Add `--local` or `-l` to `install`, `remove`, `uninstall`, or `config` to use pr
 
 ### Update FineCode or packages
 
-Running `finecode update` without a target updates FineCode itself through its npm installation. FineCode checks `https://registry.npmjs.org/finecode/latest` and does not use the Pi managed installer.
+Running `finecode update` without a target updates FineCode itself through its npm installation. FineCode checks `https://registry.npmjs.org/finecode/latest` and does not use the Pi managed installer. It accepts only valid-version package metadata marked as a FineCode runtime release; missing or unrecognized metadata fails closed before npm runs, including with `--force`.
 
 | Task | Command |
 |---|---|

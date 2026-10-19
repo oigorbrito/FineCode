@@ -28,6 +28,18 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_RUN_ID: ${{ github.run_id }}
+          GITHUB_RUN_NUMBER: ${{ github.run_number }}
+          GITHUB_SHA: ${{ github.sha }}
+          UPSTREAM_IMPORT_MANIFEST: upstream-import-manifest.json
           MAX_NEW_UPSTREAM_PRS: "8"
           MAX_UPSTREAM_PR_CHECKS: "24"
         run: python3 scripts/import_upstream_prs.py
+      - name: Upload upstream import evidence
+        if: always() && hashFiles('upstream-import-manifest.json') != ''
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: upstream-import-manifest-${{ github.run_id }}
+          path: upstream-import-manifest.json
+          if-no-files-found: error
+          retention-days: 90

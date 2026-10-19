@@ -178,6 +178,11 @@ export class ToolExecutionComponent extends Container {
 		this.ui.requestRender();
 	}
 
+	/** Tool call name while its event lifecycle is active; finalized results return undefined. */
+	getActiveToolCallName(): string | undefined {
+		return this.executionStarted && (!this.result || this.isPartial) ? this.toolName : undefined;
+	}
+
 	setArgsComplete(): void {
 		this.argsComplete = true;
 		this.updateDisplay();
