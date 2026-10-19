@@ -1524,7 +1524,7 @@ describe("TuiAltScreen", () => {
 		tui.stop();
 	});
 
-	it("cancels an active selection with Escape without forwarding the key or copying", async () => {
+	it("cancels an active mouse selection with Escape without forwarding the key", async () => {
 		const terminal = new RecordingTerminal(20, 4);
 		const tui = new TuiAltScreen(terminal);
 		const focused = new InputOverlay();
@@ -1533,7 +1533,6 @@ describe("TuiAltScreen", () => {
 		tui.setFocus(focused);
 		tui.start();
 		await terminal.waitForRender();
-
 		terminal.sendInput("\x1b[<0;1;1M");
 		terminal.sendInput("\x1b[<32;4;2M");
 		await terminal.waitForRender();
