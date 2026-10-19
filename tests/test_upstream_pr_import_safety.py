@@ -110,6 +110,8 @@ class ImporterSafetyTests(unittest.TestCase):
             calls.append(args)
             if args[:2] == ("merge-base", "--is-ancestor"):
                 return SimpleNamespace(returncode=1, stdout=b"")
+            if args[:2] == ("diff", "--quiet"):
+                return SimpleNamespace(returncode=1, stdout=b"")
             return SimpleNamespace(returncode=0, stdout=b"")
 
         with patch.object(importer, "TARGET", "example/FineCode"), \
@@ -123,6 +125,66 @@ class ImporterSafetyTests(unittest.TestCase):
         self.assertEqual(result, "conflict")
         self.assertFalse(any(c[0] == "push" for c in calls))
         update.assert_not_called()
+
+
+    def test_tree_identical_rebase_advances_checkpoint_without_push(self):
+        old_source, new_source, tip = "a" * 40, "b" * 40, "c" * 40
+        local = {"number": 280, "state": "open",
+                 "body": f"<!-- finecode-upstream-source:{old_source} tip:{tip} -->",
+                 "labels": []}
+        full = {"number": 42, "head": {"sha": new_source},
+                "html_url": "https://github.com/earendil-works/pi/pull/42",
+                "title": "Rebased without code change", "state": "open"}
+        calls, updated = [], []
+
+        def fake_git(*args, **kwargs):
+            calls.append(args)
+            if args[:2] == ("merge-base", "--is-ancestor"):
+                return SimpleNamespace(returncode=1, stdout=b"")
+            if args[:2] == ("diff", "--quiet"):
+                return SimpleNamespace(returncode=0, stdout=b"")
+            return SimpleNamespace(returncode=0, stdout=b"")
+
+        with patch.object(importer, "TARGET", "example/FineCode"), \
+             patch.object(importer, "existing_pr", return_value=local), \
+             patch.object(importer, "api", return_value=full), \
+             patch.object(importer, "git", side_effect=fake_git), \
+             patch.object(importer, "git_sha", return_value=tip), \
+             patch.object(importer, "sync_pr_labels"), \
+             patch.object(importer, "update_metadata", side_effect=lambda *args: updated.append(args)):
+            result = importer.import_one({"number": 42})
+        self.assertEqual(result, "rebase_equivalent")
+        self.assertEqual(len(updated), 1)
+        self.assertIn(new_source, updated[0][2])
+        self.assertFalse(any(c[0] in ("push", "commit", "apply") for c in calls))
+
+    def test_unverifiable_rebase_fails_closed_without_changing_checkpoint(self):
+        old_source, new_source, tip = "a" * 40, "b" * 40, "c" * 40
+        local = {"number": 280, "state": "open",
+                 "body": f"<!-- finecode-upstream-source:{old_source} tip:{tip} -->",
+                 "labels": []}
+        full = {"number": 42, "head": {"sha": new_source},
+                "html_url": "https://github.com/earendil-works/pi/pull/42",
+                "title": "Unverifiable rebase", "state": "open"}
+        calls = []
+        def fake_git(*args, **kwargs):
+            calls.append(args)
+            if args[:2] == ("merge-base", "--is-ancestor"):
+                return SimpleNamespace(returncode=1, stdout=b"")
+            if args[:2] == ("diff", "--quiet"):
+                return SimpleNamespace(returncode=128, stdout=b"")
+            return SimpleNamespace(returncode=0, stdout=b"")
+        with patch.object(importer, "TARGET", "example/FineCode"), \
+             patch.object(importer, "existing_pr", return_value=local), \
+             patch.object(importer, "api", return_value=full), \
+             patch.object(importer, "git", side_effect=fake_git), \
+             patch.object(importer, "git_sha", return_value=tip), \
+             patch.object(importer, "sync_pr_labels"), \
+             patch.object(importer, "update_metadata") as update:
+            result = importer.import_one({"number": 42})
+        self.assertEqual(result, "conflict")
+        update.assert_not_called()
+        self.assertFalse(any(c[0] in ("push", "commit", "apply") for c in calls))
 
 
 if __name__ == "__main__":
