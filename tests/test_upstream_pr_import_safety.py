@@ -66,9 +66,38 @@ class ImporterSafetyTests(unittest.TestCase):
              patch.dict(os.environ, {"MAX_UPSTREAM_PR_CHECKS": "24", "GITHUB_RUN_NUMBER": "1"}), \
              redirect_stdout(output):
             importer.main()
+        self.assertIn("SELECTION run=1 existing_pool=2 new_pool=0", output.getvalue())
+        self.assertIn("selected=[11, 12]", output.getvalue())
+        self.assertIn("CHECK upstream #11", output.getvalue())
+        self.assertIn("RESULT upstream #11: updated", output.getvalue())
+        self.assertIn("RESULT upstream #12: rebase_equivalent", output.getvalue())
         self.assertIn("code updated 1", output.getvalue())
         self.assertIn("rebase equivalent 1", output.getvalue())
         self.assertIn("failures 0", output.getvalue())
+
+    def test_selection_records_unchanged_mirror_without_writes(self):
+        proposals = [{"number": 185}]
+        def api(path, method="GET", data=None, accept="application/vnd.github+json"):
+            if "pulls?state=open&sort=updated" in path:
+                return proposals if path.endswith("&page=1") else []
+            if "pulls?state=open&per_page=100" in path:
+                return [{"number": 185, "head": {"ref": "upstream/pi-pr-185"}}]
+            raise AssertionError(path)
+
+        output = io.StringIO()
+        with patch.object(importer, "TARGET", "example/FineCode"), \
+             patch.object(importer, "api", side_effect=api), \
+             patch.object(importer, "git", return_value=SimpleNamespace(stdout=b"", returncode=0)), \
+             patch.object(importer, "ensure_pr_labels"), \
+             patch.object(importer, "import_one", return_value="existing") as imported, \
+             patch.dict(os.environ, {"MAX_UPSTREAM_PR_CHECKS": "24", "GITHUB_RUN_NUMBER": "31"}), \
+             redirect_stdout(output):
+            importer.main()
+        imported.assert_called_once_with(proposals[0])
+        self.assertIn("selected=[185]", output.getvalue())
+        self.assertIn("CHECK upstream #185", output.getvalue())
+        self.assertIn("RESULT upstream #185: existing", output.getvalue())
+        self.assertIn("code updated 0", output.getvalue())
 
     def test_checkpoint_and_no_force_push_in_source(self):
         code = module_path.read_text(encoding="utf-8")
