@@ -3,6 +3,7 @@ import os
 from pathlib import Path
 from types import SimpleNamespace
 import unittest
+import tempfile
 from unittest.mock import patch
 
 os.environ.setdefault("GITHUB_REPOSITORY", "example/FineCode")
@@ -29,12 +30,21 @@ class ReviewDraftTests(unittest.TestCase):
             if path.endswith("/pulls") and method == "POST":
                 return {"number": 777}
             return {}
-        with patch.object(importer, "git", fake_git), \
-             patch.object(importer, "git_sha", return_value="c" * 40), \
-             patch.object(importer, "api", fake_api), \
-             patch.object(importer, "sync_pr_labels"), \
-             patch.object(importer, "TARGET", "example/FineCode"):
-            result = importer.stage_conflict_review(UPSTREAM, "upstream/pi-pr-42")
+        original_cwd = os.getcwd()
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                os.chdir(tmp)
+                with patch.object(importer, "git", fake_git), \
+                     patch.object(importer, "git_sha", return_value="c" * 40), \
+                     patch.object(importer, "api", fake_api), \
+                     patch.object(importer, "sync_pr_labels"), \
+                     patch.object(importer, "TARGET", "example/FineCode"):
+                    result = importer.stage_conflict_review(UPSTREAM, "upstream/pi-pr-42")
+                manifest = Path("upstream-review/pi-pr-42.md")
+                self.assertTrue(manifest.is_file())
+                self.assertIn("No upstream code has been applied", manifest.read_text())
+        finally:
+            os.chdir(original_cwd)
         self.assertEqual(result, "created")
         created = next(data for path, method, data in requests
                        if method == "POST" and path.endswith("/pulls"))
