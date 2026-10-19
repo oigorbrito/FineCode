@@ -86,10 +86,10 @@ class ReviewDraftTests(unittest.TestCase):
                 return SimpleNamespace(returncode=1, stdout=b"")
             return SimpleNamespace(returncode=0, stdout=b"")
         def fake_api(path, method="GET", data=None, accept=None):
+            if path.endswith("/pulls/42") and accept == "application/vnd.github.v3.patch":
+                return b"diff --git a/a b/a"
             if path.endswith("/pulls/42") and method == "GET":
                 return UPSTREAM
-            if method == "GET" and accept == "application/vnd.github.v3.patch":
-                return b"diff --git a/a b/a"
             raise AssertionError((path, method, accept))
         with patch.object(importer, "existing_pr", return_value=None), \
              patch.object(importer, "api", side_effect=fake_api), \
