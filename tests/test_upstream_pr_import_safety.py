@@ -1,4 +1,6 @@
 import importlib.util
+import io
+from contextlib import redirect_stdout
 import os
 from pathlib import Path
 from types import SimpleNamespace
@@ -43,6 +45,30 @@ class ImporterSafetyTests(unittest.TestCase):
         self.assertTrue(any("state=open&per_page=100&page=2" in x for x in calls))
         self.assertTrue(any('pulls/101' in x for x in calls))
         self.assertNotEqual(processed, [])
+
+    def test_summary_distinguishes_incremental_code_from_equivalent_rebase(self):
+        proposals = [{"number": 11}, {"number": 12}]
+        def api(path, method="GET", data=None, accept="application/vnd.github+json"):
+            if "pulls?state=open&sort=updated" in path:
+                return proposals if "page=1" in path else []
+            if "pulls?state=open&per_page=100" in path:
+                return [{"number": 201, "head": {"ref": "upstream/pi-pr-11"}},
+                        {"number": 202, "head": {"ref": "upstream/pi-pr-12"}}]
+            raise AssertionError(path)
+
+        results = {11: "updated", 12: "rebase_equivalent"}
+        output = io.StringIO()
+        with patch.object(importer, "TARGET", "example/FineCode"), \
+             patch.object(importer, "api", side_effect=api), \
+             patch.object(importer, "git", return_value=SimpleNamespace(stdout=b"", returncode=0)), \
+             patch.object(importer, "ensure_pr_labels"), \
+             patch.object(importer, "import_one", side_effect=lambda p: results[p["number"]]), \
+             patch.dict(os.environ, {"MAX_UPSTREAM_PR_CHECKS": "24", "GITHUB_RUN_NUMBER": "1"}), \
+             redirect_stdout(output):
+            importer.main()
+        self.assertIn("code updated 1", output.getvalue())
+        self.assertIn("rebase equivalent 1", output.getvalue())
+        self.assertIn("failures 0", output.getvalue())
 
     def test_checkpoint_and_no_force_push_in_source(self):
         code = module_path.read_text(encoding="utf-8")
