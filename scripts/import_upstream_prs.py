@@ -286,7 +286,15 @@ def import_one(pr):
         git("fetch", "--no-tags", "https://github.com/" + SOURCE + ".git",
             f"refs/pull/{number}/head:refs/remotes/pi-upstream/pr-{number}")
         if git("merge-base", "--is-ancestor", old_source, source_sha, ok=False).returncode:
-            print(f"REBASE_REVIEW upstream #{number}: upstream history rewritten; preserved FineCode branch; manual adaptation required", flush=True)
+            # A rewritten commit graph can be harmless when the resulting source
+            # tree is identical. Only advance the checkpoint if Git verifies
+            # tree equivalence; any content change or missing object fails closed.
+            equivalent = git("diff", "--quiet", old_source, source_sha, ok=False)
+            if equivalent.returncode == 0:
+                update_metadata(local, full, metadata(full, source_sha, actual_tip))
+                print(f"REBASE_EQUIVALENT upstream #{number}: source tree unchanged; branch preserved", flush=True)
+                return "rebase_equivalent"
+            print(f"REBASE_REVIEW upstream #{number}: upstream history rewritten with changes or unverified tree; preserved FineCode branch", flush=True)
             return "conflict"
         git("checkout", "-B", "finecode-upstream-working", actual_tip)
         delta = git("diff", "--binary", old_source, source_sha).stdout
