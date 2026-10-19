@@ -50,7 +50,7 @@ class ImporterSafetyTests(unittest.TestCase):
         proposals = [{"number": 11}, {"number": 12}]
         def api(path, method="GET", data=None, accept="application/vnd.github+json"):
             if "pulls?state=open&sort=updated" in path:
-                return proposals if "page=1" in path else []
+                return proposals if path.endswith("&page=1") else []
             if "pulls?state=open&per_page=100" in path:
                 return [{"number": 201, "head": {"ref": "upstream/pi-pr-11"}},
                         {"number": 202, "head": {"ref": "upstream/pi-pr-12"}}]
@@ -63,7 +63,7 @@ class ImporterSafetyTests(unittest.TestCase):
              patch.object(importer, "git", return_value=SimpleNamespace(stdout=b"", returncode=0)), \
              patch.object(importer, "ensure_pr_labels"), \
              patch.object(importer, "import_one", side_effect=lambda p: results[p["number"]]), \
-             patch.dict(os.environ, {"MAX_UPSTREAM_PR_CHECKS": "6", "GITHUB_RUN_NUMBER": "1"}), \
+             patch.dict(os.environ, {"MAX_UPSTREAM_PR_CHECKS": "24", "GITHUB_RUN_NUMBER": "1"}), \
              redirect_stdout(output):
             importer.main()
         self.assertIn("code updated 1", output.getvalue())
