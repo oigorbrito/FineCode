@@ -1,30 +1,15 @@
-import { foregroundAnsi, isAppleTerminalSession, rgbColor } from "@earendil-works/pi-tui";
-import { APP_NAME } from "../../../config.ts";
-import { theme } from "../theme/theme.ts";
+import { fineCodeLogoLines, fineCodeWordmark, supportsFineCodeLogo } from "../finecode/brand.ts";
 
-const CORAL = rgbColor(228, 138, 122);
-const YELLOW = rgbColor(234, 182, 93);
-const RESET = "\x1b[0m";
-
-/** FineCode wordmark in the existing startup-logo slot; colors adapt to the terminal color mode. */
-function fineCodeWordmark(): string {
-	const mode = theme.getColorMode();
-	return `${foregroundAnsi(CORAL, mode)}<FC> Fine${RESET}${foregroundAnsi(YELLOW, mode)}Code${RESET}`;
-}
+export { fineCodeLogoLines, fineCodeWordmark, supportsFineCodeLogo };
 
 export function piLogoLines(): [string, string] {
-	return [fineCodeWordmark(), ""];
+	return fineCodeLogoLines();
 }
 
-/**
- * Whether to enable the legacy clickable logo animation. Apple Terminal misaligns its half-block art, so
- * the animation is disabled there.
- */
 export function supportsPiLogo(): boolean {
-	return APP_NAME === "pi" && !isAppleTerminalSession();
+	return supportsFineCodeLogo();
 }
 
-/** Text fallback for FineCode's startup wordmark. */
 export function piWordmark(): string {
 	return fineCodeWordmark();
 }
