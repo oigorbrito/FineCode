@@ -45,7 +45,7 @@ class ReviewDraftTests(unittest.TestCase):
                 self.assertIn("No upstream code has been applied", manifest.read_text())
         finally:
             os.chdir(original_cwd)
-        self.assertEqual(result, "created")
+        self.assertEqual(result, "review_only_created")
         created = next(data for path, method, data in requests
                        if method == "POST" and path.endswith("/pulls"))
         self.assertTrue(created["draft"])
@@ -80,7 +80,7 @@ class ReviewDraftTests(unittest.TestCase):
                 self.assertIn(new, Path("upstream-review/pi-pr-42.md").read_text())
         finally:
             os.chdir(original_cwd)
-        self.assertEqual(result, "updated")
+        self.assertEqual(result, "review_only_updated")
         self.assertEqual(len(patches), 1)
         self.assertIn(new, patches[0]["body"])
         self.assertTrue(any(cmd[0] == "push" for cmd in calls))
@@ -112,9 +112,9 @@ class ReviewDraftTests(unittest.TestCase):
         with patch.object(importer, "existing_pr", return_value=None), \
              patch.object(importer, "api", side_effect=fake_api), \
              patch.object(importer, "git", side_effect=fake_git), \
-             patch.object(importer, "stage_conflict_review", return_value="created") as stage:
+             patch.object(importer, "stage_conflict_review", return_value="review_only_created") as stage:
             result = importer.import_one({"number": 42})
-        self.assertEqual(result, "created")
+        self.assertEqual(result, "review_only_created")
         stage.assert_called_once_with(UPSTREAM, "upstream/pi-pr-42")
         self.assertTrue(any(cmd[:3] == ("apply", "--3way", "--index") for cmd in calls))
         self.assertFalse(any(cmd[0] == "push" for cmd in calls))
