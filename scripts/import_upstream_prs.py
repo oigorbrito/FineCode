@@ -374,6 +374,25 @@ def write_manifest(manifest):
     path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
+def classify_decision(result, reason):
+    if result == "conflict":
+        if "FineCode branch HEAD" in reason or "review branch diverged" in reason:
+            return "MIRROR_DIVERGED"
+        if "upstream history rewritten" in reason:
+            return "REBASE_CHANGED_TREE"
+        return "BLOCKED_CONFLICT"
+    return {
+        "updated": "LINEAR_UPDATE",
+        "rebase_equivalent": "REBASE_EQUIVALENT",
+        "existing": "UNCHANGED",
+        "review": "REVIEW_REQUIRED",
+        "created": "CREATED",
+        "review_only_created": "REVIEW_ONLY_CREATED",
+        "review_only_updated": "REVIEW_ONLY_UPDATED",
+        "verified": "CHECKPOINT_VERIFIED",
+    }.get(result, "OTHER")
+
+
 def capture_after(event, number):
     try:
         source_after = api(f"/repos/{SOURCE}/pulls/{number}")
@@ -488,24 +507,8 @@ def main():
             LAST_IMPORT_DECISION.clear()
             result = import_one(pr)
             event["result"] = result
-            event["classification"] = {
-                "updated": "LINEAR_UPDATE",
-                "rebase_equivalent": "REBASE_EQUIVALENT",
-                "conflict": "BLOCKED_CONFLICT",
-                "existing": "UNCHANGED",
-                "review": "REVIEW_REQUIRED",
-                "created": "CREATED",
-                "review_only_created": "REVIEW_ONLY_CREATED",
-                "review_only_updated": "REVIEW_ONLY_UPDATED",
-                "verified": "CHECKPOINT_VERIFIED",
-            }.get(result, "OTHER")
             event["reason"] = LAST_IMPORT_DECISION.get("reason", f"import_one returned {result}")
-            if result == "conflict":
-                event["classification"] = (
-                    "MIRROR_DIVERGED" if "FineCode branch HEAD" in event["reason"] else
-                    "REBASE_CHANGED_TREE" if "upstream history rewritten" in event["reason"] else
-                    "BLOCKED_CONFLICT"
-                )
+            event["classification"] = classify_decision(result, event["reason"])
             if result == "created":
                 created += 1
             elif result == "review_only_created":

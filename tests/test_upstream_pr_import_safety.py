@@ -1,6 +1,7 @@
 import importlib.util
 import io
 import json
+import tempfile
 from contextlib import redirect_stdout
 import os
 from pathlib import Path
@@ -25,12 +26,23 @@ class ImporterSafetyTests(unittest.TestCase):
         self.assertEqual(importer.choose_rotating(changed, 3, 4)[:3], [10, 0, 1])
         self.assertEqual(importer.choose_rotating(inventory, 0, 4), [])
 
+    def test_decision_classification_distinguishes_mirror_divergence(self):
+        self.assertEqual(importer.classify_decision("conflict", "review branch diverged; left untouched"), "MIRROR_DIVERGED")
+        self.assertEqual(importer.classify_decision("conflict", "upstream history rewritten and trees differ"), "REBASE_CHANGED_TREE")
+        self.assertEqual(importer.classify_decision("conflict", "linear delta could not be applied"), "BLOCKED_CONFLICT")
+
     def test_checkpoint_parser_and_manifest_writer(self):
         source, tip = "a" * 40, "b" * 40
         self.assertEqual(importer.checkpoint_from_body(
             f"<!-- finecode-upstream-source:{source} tip:{tip} -->"),
             {"source_sha": source, "finecode_tip": tip})
         self.assertIsNone(importer.checkpoint_from_body("no checkpoint"))
+        manifest = {"schema_version": 1, "selected": []}
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "manifest.json"
+            with patch.dict(os.environ, {"UPSTREAM_IMPORT_MANIFEST": str(path)}):
+                importer.write_manifest(manifest)
+            self.assertEqual(json.loads(path.read_text(encoding="utf-8")), manifest)
 
     def test_import_scan_paginates_existing_mirrors(self):
         upstream = {"number": 99, "head": {"ref": "feature"}}
@@ -70,6 +82,7 @@ class ImporterSafetyTests(unittest.TestCase):
         self.assertEqual(final_manifest["run_number"], 1)
         self.assertEqual(len(final_manifest["eligible_inventory"]["updates"]), 101)
         self.assertEqual(len(final_manifest["selected"]), 8)
+        self.assertEqual(len({event["upstream_pr"] for event in final_manifest["selected"]}), 8)
         self.assertEqual(final_manifest["selected"][0]["inventory_position"], 0)
         self.assertEqual(final_manifest["selected"][0]["classification"], "UNCHANGED")
         self.assertEqual(final_manifest["selected"][0]["finecode_head_before"], None)
