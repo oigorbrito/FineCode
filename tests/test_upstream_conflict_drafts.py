@@ -66,12 +66,20 @@ class ReviewDraftTests(unittest.TestCase):
             if method == "PATCH":
                 patches.append(data)
             return {}
-        with patch.object(importer, "git", fake_git), \
-             patch.object(importer, "git_sha", side_effect=[tip, "d" * 40]), \
-             patch.object(importer, "api", fake_api), \
-             patch.object(importer, "TARGET", "example/FineCode"):
-            result = importer.refresh_conflict_review(
-                {"number": 777}, upstream, "upstream/pi-pr-42", old, tip)
+        original_cwd = os.getcwd()
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                os.chdir(tmp)
+                Path("upstream-review").mkdir()
+                with patch.object(importer, "git", fake_git), \
+                     patch.object(importer, "git_sha", side_effect=[tip, "d" * 40]), \
+                     patch.object(importer, "api", fake_api), \
+                     patch.object(importer, "TARGET", "example/FineCode"):
+                    result = importer.refresh_conflict_review(
+                        {"number": 777}, upstream, "upstream/pi-pr-42", old, tip)
+                self.assertIn(new, Path("upstream-review/pi-pr-42.md").read_text())
+        finally:
+            os.chdir(original_cwd)
         self.assertEqual(result, "updated")
         self.assertEqual(len(patches), 1)
         self.assertIn(new, patches[0]["body"])
