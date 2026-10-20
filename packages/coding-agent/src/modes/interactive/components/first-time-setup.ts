@@ -2,9 +2,9 @@ import { Container, getKeybindings, Spacer, Text } from "@earendil-works/pi-tui"
 import { APP_NAME, PACKAGE_NAME } from "../../../config.ts";
 import { SYSTEM_THEME_NAME } from "../theme/system-theme.ts";
 import { theme } from "../theme/theme.ts";
+import { piWordmark } from "./distribution-logo.ts";
 import { DynamicBorder } from "./dynamic-border.ts";
 import { keyHint, rawKeyHint } from "./keybinding-hints.ts";
-import { piWordmark } from "./pi-logo.ts";
 
 export interface FirstTimeSetupResult {
 	theme: string;
