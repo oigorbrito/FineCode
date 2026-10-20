@@ -41,7 +41,7 @@ class CanonicalTreeAuditTests(unittest.TestCase):
         path = raw_name.decode("utf-8", "surrogateescape")
         rows = audit.compare({}, {path: ("100644", "blob", "a")}, "main", "canonical")
         self.assertEqual(rows[0]["path_bytes_hex"], raw_name.hex())
-        self.assertEqual(rows[0]["path"], "unusual-\xff.txt")
+        self.assertEqual(rows[0]["path"], "unusual-\\xff.txt")
         with tempfile.TemporaryDirectory() as d:
             file = Path(d) / "report.csv"
             audit.export(file, rows)
