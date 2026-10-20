@@ -6,10 +6,11 @@
 - Branch: `feat/full-upstream-tree-migration`.
 - Baseline da revisão: `b35a2acfd6272ea67ec935024e137624edf79c1c`.
 - Snapshot Pi: `e86b054753b544600693384d3db4e3281ba86b60`.
-- Commit desta sessão: `60d4b6c8115855fedc465c4c53f8de474c4efa28` — `fix: apply upstream executable modes`.
-- Gate técnico do worktree: aprovado. Entrega Git completa: **pendente de autorização sobre alterações herdadas**.
+- Primeiro commit: `60d4b6c8115855fedc465c4c53f8de474c4efa28` — `fix: apply upstream executable modes`; preservado sem alterações.
+- A autorização explícita para incluir as alterações herdadas e correlatas foi concedida no Bloco 326.
+- Gate técnico do worktree: aprovado. O relatório foi atualizado durante a consolidação; a suíte integral descrita abaixo precede a reconciliação adicional da identidade Pi na logo TUI e os commits finais.
 
-O commit contém somente os 22 modos executáveis corrigidos nesta sessão, sem alteração de blobs. As alterações funcionais, os testes novos, este relatório e a reconciliação canônica ainda estão no worktree. A suíte abaixo valida esse worktree, não somente o conteúdo do HEAD. Não houve push, criação de PR, merge ou publicação.
+A lista completa de SHAs, reconciliação da `main`, validações finais e resultado da PR estão registrados em [block326-delivery.md](block326-delivery.md). Nenhuma edição feita nesta sessão alterou os blobs dos 22 arquivos de modo executável.
 
 ## Inventário canônico
 
@@ -96,5 +97,5 @@ Outros gates: build exit 0; check completo exit 0, sem fixes finais ou diagnóst
 - Os **25 caminhos inicialmente não rastreados** continuam presentes. Os seis exemplos excluídos continuam ausentes.
 - Evidências locais em `%TEMP%/finecode-block325/`: `canonical-before.tsv`, deltas baseline/Pi/local, logs/exit JSONs, `gate-summary.json`, `preservation.json`, `owned-paths.json` e snapshot Git inicial. Logs temporários não foram adicionados ao repositório.
 - Nenhuma mudança não relacionada foi staged ou commitada. O índice ficou vazio após o commit exclusivo de modos.
-- **Pendência de entrega:** o AGENTS permite commitar somente arquivos alterados nesta sessão. A importação e estabilização herdadas contêm arquivos de sessões anteriores. Foi solicitada autorização explícita para incluir somente essas alterações correlatas; até recebê-la, não é correto abrir uma PR parcial como se contivesse a migração validada.
-- Após autorização: organizar os commits restantes por importação, estabilidade, identidade/governança e evidências, revisar os paths staged, push sem force e abrir PR **draft** para `main`. Não fazer merge.
+- A autorização do Bloco 326 permitiu consolidar as alterações correlatas nos commits funcionais registrados no relatório de entrega.
+- A integração com `origin/main` é documentada no relatório do Bloco 326. A decisão evita force push e não fecha nem faz merge da PR.
