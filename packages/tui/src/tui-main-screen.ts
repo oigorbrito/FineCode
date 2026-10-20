@@ -8,10 +8,6 @@ import { visibleWidth } from "./utils.ts";
 const KITTY_SEQUENCE_PREFIX = "\x1b_G";
 const MAX_RENDER_WRITE_CHARS = 1024 * 1024;
 
-function getTuiLogPrefix(): string {
-	return process.env.AI_AGENT === "finecode" ? "finecode-tui" : "pi-tui";
-}
-
 /**
  * Streams terminal output in 1 MiB chunks so a full render never forms one string large enough to exceed V8's limit.
  *
@@ -326,7 +322,7 @@ export class TuiMainScreen extends TuiBase implements TUI {
 		const redrawLogDirectory = process.env.PI_TUI_DEBUG_REDRAW === "1" ? this.logDirectory : undefined;
 		const logRedraw = (reason: string): void => {
 			if (redrawLogDirectory === undefined) return;
-			const logPath = path.join(redrawLogDirectory, `${getTuiLogPrefix()}-debug.log`);
+			const logPath = path.join(redrawLogDirectory, "pi-tui-debug.log");
 			const msg = `[${new Date().toISOString()}] fullRender: ${reason} (prev=${this.previousLines.length}, new=${newLines.length}, height=${height})\n`;
 			fs.mkdirSync(path.dirname(logPath), { recursive: true });
 			fs.appendFileSync(logPath, msg);
@@ -521,7 +517,7 @@ export class TuiMainScreen extends TuiBase implements TUI {
 			output.append("\x1b[2K"); // Clear current line
 			if (!isImage && visibleWidth(line) > width) {
 				// Log all lines to crash file for debugging
-				const crashLogPath = path.join(this.logDirectory ?? os.tmpdir(), `${getTuiLogPrefix()}-crash.log`);
+				const crashLogPath = path.join(this.logDirectory ?? os.tmpdir(), "pi-tui-crash.log");
 				const crashData = [
 					`Crash at ${new Date().toISOString()}`,
 					`Terminal width: ${width}`,
