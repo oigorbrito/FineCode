@@ -1,5 +1,5 @@
 /**
- * TUI config selector for `finecode config` command
+ * TUI config selector for `pi config` command
  */
 
 import { ProcessTerminal, type TUI, TuiMainScreen } from "@earendil-works/pi-tui";

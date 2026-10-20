@@ -9,6 +9,7 @@ import { SettingsManager } from "../src/core/settings-manager.ts";
 describe("shouldRunFirstTimeSetup", () => {
 	const originalPiExperimental = process.env.PI_EXPERIMENTAL;
 	const originalAgentDir = process.env[ENV_AGENT_DIR];
+	const originalLegacyAgentDir = process.env.PI_CODING_AGENT_DIR;
 	let tempDir: string;
 	let settingsPath: string;
 
@@ -17,6 +18,7 @@ describe("shouldRunFirstTimeSetup", () => {
 		settingsPath = join(tempDir, "settings.json");
 		process.env.PI_EXPERIMENTAL = "1";
 		delete process.env[ENV_AGENT_DIR];
+		delete process.env.PI_CODING_AGENT_DIR;
 	});
 
 	afterEach(() => {
@@ -26,6 +28,8 @@ describe("shouldRunFirstTimeSetup", () => {
 		} else {
 			process.env.PI_EXPERIMENTAL = originalPiExperimental;
 		}
+		if (originalLegacyAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+		else process.env.PI_CODING_AGENT_DIR = originalLegacyAgentDir;
 		if (originalAgentDir === undefined) {
 			delete process.env[ENV_AGENT_DIR];
 		} else {
@@ -33,8 +37,8 @@ describe("shouldRunFirstTimeSetup", () => {
 		}
 	});
 
-	it("does not show the Pi-specific first-time setup in the FineCode distribution", () => {
-		expect(shouldRunFirstTimeSetup(settingsPath)).toBe(false);
+	it("returns true when experimental, default agent dir, and no settings.json", () => {
+		expect(shouldRunFirstTimeSetup(settingsPath)).toBe(true);
 	});
 
 	it("returns false when experimental features are disabled", () => {
@@ -46,6 +50,11 @@ describe("shouldRunFirstTimeSetup", () => {
 	it("returns false when a custom agent dir is set", () => {
 		process.env[ENV_AGENT_DIR] = tempDir;
 
+		expect(shouldRunFirstTimeSetup(settingsPath)).toBe(false);
+	});
+
+	it("returns false when the legacy Pi agent-directory override is set", () => {
+		process.env.PI_CODING_AGENT_DIR = tempDir;
 		expect(shouldRunFirstTimeSetup(settingsPath)).toBe(false);
 	});
 

@@ -6,7 +6,7 @@ import * as path from "node:path";
 import { DEFAULT_RADIUS_GATEWAY } from "@earendil-works/pi-ai/providers/radius-config";
 import { type Container, type EditorComponent, hyperlink, type TUI } from "@earendil-works/pi-tui";
 import { getAuthCredential } from "../../cli/auth-command.ts";
-import { APP_NAME, getShareViewerUrl } from "../../config.ts";
+import { APP_NAME, getShareViewerUrl, PACKAGE_NAME } from "../../config.ts";
 import type { AgentSession } from "../../core/agent-session.ts";
 import { exportSessionToJsonl } from "../../core/session-export.ts";
 import { BorderedLoader } from "./components/bordered-loader.ts";
@@ -55,7 +55,7 @@ export function exportSessionForShare(filePath: string, session: AgentSession): 
 
 /** Share the current session through Radius, falling back to a private gist. */
 export async function shareSession(context: SessionShareContext): Promise<void> {
-	const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "finecode-share-"));
+	const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), `${APP_NAME}-share-`));
 	const jsonlFile = path.join(tempDir, "session.jsonl");
 	const htmlFile = path.join(tempDir, "session.html");
 
@@ -77,6 +77,7 @@ export async function shareSession(context: SessionShareContext): Promise<void> 
 
 		try {
 			const authResult = spawnSync("gh", ["auth", "status"], { encoding: "utf-8" });
+			if (authResult.error) throw authResult.error;
 			if (authResult.status !== 0) {
 				context.showError("GitHub CLI is not logged in. Run 'gh auth login' first.");
 				return;
@@ -125,7 +126,7 @@ async function tryShareViaRadius(tmpFile: string, context: SessionShareContext):
 		const body = fs.readFileSync(tmpFile);
 		const url = new URL("/v1/artifacts", DEFAULT_RADIUS_GATEWAY);
 		url.searchParams.set("visibility", "organization");
-		url.searchParams.set("title", APP_NAME === "finecode" ? "FineCode session" : "Pi session");
+		url.searchParams.set("title", `${PACKAGE_NAME === "finecode" ? "FineCode" : "Pi"} session`);
 		const response = await fetch(url, {
 			method: "POST",
 			headers: {
@@ -178,7 +179,7 @@ async function shareViaGist(tmpFile: string, context: SessionShareContext): Prom
 	};
 
 	try {
-		const result = await new Promise<{ stdout: string; stderr: string; code: number | null }>((resolve) => {
+		const result = await new Promise<{ stdout: string; stderr: string; code: number | null }>((resolve, reject) => {
 			proc = spawn("gh", ["gist", "create", "--public=false", tmpFile]);
 			let stdout = "";
 			let stderr = "";
@@ -188,6 +189,7 @@ async function shareViaGist(tmpFile: string, context: SessionShareContext): Prom
 			proc.stderr?.on("data", (data) => {
 				stderr += data.toString();
 			});
+			proc.on("error", reject);
 			proc.on("close", (code) => resolve({ stdout, stderr, code }));
 		});
 

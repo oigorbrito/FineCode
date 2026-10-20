@@ -1247,7 +1247,7 @@ describe("InteractiveMode.showLoadedResources", () => {
 	});
 
 	test("shows context paths relative to cwd while preserving full external paths", () => {
-		const home = homedir();
+		const home = process.env.HOME || process.env.USERPROFILE || homedir();
 		const cwd = path.join(home, "Development", "pi-mono");
 		const fakeThis = createShowLoadedResourcesThis({
 			quietStartup: false,
@@ -1285,7 +1285,7 @@ describe("InteractiveMode.showLoadedResources", () => {
 	});
 
 	test("shows full context paths when expanded", () => {
-		const home = homedir();
+		const home = process.env.HOME || process.env.USERPROFILE || homedir();
 		const cwd = path.join(home, "Development", "pi-mono");
 		const fakeThis = createShowLoadedResourcesThis({
 			quietStartup: false,

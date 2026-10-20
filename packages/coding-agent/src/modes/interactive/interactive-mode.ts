@@ -145,6 +145,7 @@ import { CustomEditor } from "./components/custom-editor.ts";
 import { CustomEntryComponent } from "./components/custom-entry.ts";
 import { CustomMessageComponent } from "./components/custom-message.ts";
 import { DynamicBorder } from "./components/dynamic-border.ts";
+import { EarendilAnnouncementComponent } from "./components/earendil-announcement.ts";
 import { playArmin3d, playPiLogo3d } from "./components/easter-egg-3d.lazy.ts";
 import { ExtensionEditorComponent } from "./components/extension-editor.ts";
 import { ExtensionInputComponent } from "./components/extension-input.ts";
@@ -368,6 +369,7 @@ type LoginProviderCompletionOption = {
 	subscription?: boolean;
 };
 
+const APP_DISPLAY_NAME = PACKAGE_NAME === "finecode" ? "FineCode" : APP_NAME === "pi" ? "Pi" : APP_NAME;
 const RADIUS_LOGIN_INTRO =
 	"Radius is an upstream service from Earendil Works, originally built for Pi; FineCode uses it as a gateway for model access and bug reports.";
 
@@ -1011,7 +1013,7 @@ export class InteractiveMode {
 			const showDetails = this.shouldShowStartupDetails();
 			// Built on demand so the header follows theme changes. The logo's first line carries the version,
 			// its second line the first line of key hints. Terminals that cannot render the logo get a
-			// "FineCode vX" line instead, with the key hints below it.
+			// "FineCode vX" / "Pi vX" instead, with the key hints below it.
 			const showLogo = supportsPiLogo();
 			const withLogo = (hints: string) => {
 				if (!showLogo) return `${piWordmark()} ${theme.fg("dim", `v${this.version}`)}\n${hints}`;
@@ -1063,7 +1065,7 @@ export class InteractiveMode {
 			const onboarding = () =>
 				theme.fg(
 					"dim",
-					`FineCode can explain its own features and look up its docs. Ask it how to use or extend FineCode.`,
+					`${APP_DISPLAY_NAME} can explain its own features and look up its docs. Ask it how to use or extend ${APP_DISPLAY_NAME}.`,
 				);
 			const header = new BuiltInHeader(
 				() => `${withLogo(compactInstructions())}\n${compactOnboarding()}\n\n${onboarding()}`,
@@ -1323,7 +1325,7 @@ export class InteractiveMode {
 		}
 
 		if (extendedKeysFormat === "xterm") {
-			return "tmux extended-keys-format is xterm. FineCode works best with csi-u. Add `set -g extended-keys-format csi-u` to ~/.tmux.conf and restart tmux.";
+			return `tmux extended-keys-format is xterm. ${APP_DISPLAY_NAME} works best with csi-u. Add \`set -g extended-keys-format csi-u\` to ~/.tmux.conf and restart tmux.`;
 		}
 
 		return undefined;
@@ -1391,15 +1393,17 @@ export class InteractiveMode {
 	// =========================================================================
 
 	private formatDisplayPath(p: string): string {
-		const home = os.homedir();
-		let result = p;
+		const normalizedPath = p.replaceAll("\\", "/");
+		const home = os.homedir().replaceAll("\\", "/");
+		const comparisonPath = process.platform === "win32" ? normalizedPath.toLowerCase() : normalizedPath;
+		const comparisonHome = process.platform === "win32" ? home.toLowerCase() : home;
 
-		// Replace home directory with ~
-		if (result.startsWith(home)) {
-			result = `~${result.slice(home.length)}`;
+		// Replace the home directory with ~, independent of Windows path separator/case differences.
+		if (home && (comparisonPath === comparisonHome || comparisonPath.startsWith(`${comparisonHome}/`))) {
+			return `~${normalizedPath.slice(home.length)}`;
 		}
 
-		return result;
+		return p;
 	}
 
 	private formatExtensionDisplayPath(path: string): string {
@@ -2167,7 +2171,7 @@ export class InteractiveMode {
 	private crashReportInstructions(): string {
 		const resume = this.session.sessionFile
 			? `run \`${APP_NAME} -r\` to resume the session, then`
-			: `start ${APP_NAME} and`;
+			: `start ${APP_DISPLAY_NAME} and`;
 		return `To report this crash: ${resume} run /bug. The crash details are attached automatically.`;
 	}
 
@@ -3180,7 +3184,7 @@ export class InteractiveMode {
 			if (image) {
 				const tmpDir = os.tmpdir();
 				const ext = extensionForImageMimeType(image.mimeType) ?? "png";
-				const fileName = `finecode-clipboard-${crypto.randomUUID()}.${ext}`;
+				const fileName = `pi-clipboard-${crypto.randomUUID()}.${ext}`;
 				const filePath = path.join(tmpDir, fileName);
 				fs.writeFileSync(filePath, Buffer.from(image.bytes));
 
@@ -3332,6 +3336,11 @@ export class InteractiveMode {
 			}
 			if (text === "/arminsayshi") {
 				this.handleArminSaysHi();
+				this.editor.setText("");
+				return;
+			}
+			if (PACKAGE_NAME !== "finecode" && text === "/dementedelves") {
+				this.handleDementedDelves();
 				this.editor.setText("");
 				return;
 			}
@@ -4365,7 +4374,7 @@ export class InteractiveMode {
 	 * paste / Kitty / modifyOtherKeys sequences.
 	 */
 	private uncaughtCrash(error: Error): never {
-		// A dead terminal is not a FineCode crash. Do not try to restore it or record it.
+		// A dead terminal is not a pi crash. Do not try to restore it or record it.
 		if (isDeadTerminalError(error)) {
 			this.emergencyTerminalExit();
 		}
@@ -4437,7 +4446,7 @@ export class InteractiveMode {
 
 		// Restore the terminal before the process dies on any uncaught throw.
 		// Without this, an unhandled exception from extension code (or anywhere
-		// in FineCode) leaves the terminal in raw mode with no cursor.
+		// in pi) leaves the terminal in raw mode with no cursor.
 		const uncaughtExceptionHandler = (error: Error) => this.uncaughtCrash(error);
 		process.prependListener("uncaughtException", uncaughtExceptionHandler);
 		this.signalCleanupHandlers.push(() => process.off("uncaughtException", uncaughtExceptionHandler));
@@ -6349,10 +6358,7 @@ export class InteractiveMode {
 					prompt: (prompt) => this.showAuthPrompt(dialog, prompt, providerId),
 					notify: (event) => this.notifyAuthDialog(dialog, event),
 				},
-				{
-					getDeviceId: () => this.settingsManager.getOrCreateDeviceId(),
-					agentName: APP_NAME === "finecode" ? "FineCode" : "Pi",
-				},
+				{ getDeviceId: () => this.settingsManager.getOrCreateDeviceId(), agentName: APP_DISPLAY_NAME },
 			);
 		} finally {
 			this.programStatus.setBlocked("login", undefined);
@@ -6999,6 +7005,12 @@ export class InteractiveMode {
 		if (playArmin3d(this.renderer)) return;
 		this.chatContainer.addChild(new Spacer(1));
 		this.chatContainer.addChild(new ArminComponent(this.ui));
+		this.ui.requestRender();
+	}
+
+	private handleDementedDelves(): void {
+		this.chatContainer.addChild(new Spacer(1));
+		this.chatContainer.addChild(new EarendilAnnouncementComponent());
 		this.ui.requestRender();
 	}
 

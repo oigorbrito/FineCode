@@ -286,8 +286,7 @@ export const SettingsSchema = Type.Object(
 		),
 		enableInstallTelemetry: Type.Optional(
 			Type.Boolean({
-				description:
-					"Enable anonymous install/update reporting where supported and selected provider attribution headers.",
+				description: "Send an anonymous version and update ping after changelog-detected updates.",
 				default: SETTINGS_DEFAULTS.enableInstallTelemetry,
 			}),
 		),
@@ -393,9 +392,7 @@ export const SettingsSchema = Type.Object(
 			}),
 		),
 		httpProxy: Type.Optional(
-			Type.String({
-				description: "Proxy URL applied as HTTP_PROXY and HTTPS_PROXY for agent-managed HTTP clients.",
-			}),
+			Type.String({ description: "Proxy URL applied as HTTP_PROXY and HTTPS_PROXY for Pi-managed HTTP clients." }),
 		),
 		httpIdleTimeoutMs: Type.Optional(
 			timeoutSetting({

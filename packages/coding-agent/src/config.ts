@@ -341,10 +341,10 @@ export function getSelfUpdateUnavailableInstruction(
 ): string {
 	const method = detectInstallMethod();
 	const target = normalizeSelfUpdatePackageTarget(updatePackageTarget);
+	if (method === "bun-binary" && PACKAGE_NAME === "finecode") {
+		return `Update this ${APP_NAME} binary using the distribution channel from which it was installed.`;
+	}
 	if (method === "bun-binary") {
-		if (PACKAGE_NAME === "finecode") {
-			return `Update this ${APP_NAME} binary using the distribution channel from which it was installed.`;
-		}
 		return `Download from: https://github.com/earendil-works/pi/releases/latest`;
 	}
 	const command = getSelfUpdateCommandForMethod(method, packageName, target, npmCommand);
@@ -463,6 +463,26 @@ export function getChangelogPath(): string {
 	return resolve(join(getPackageDir(), "CHANGELOG.md"));
 }
 
+/**
+ * Get path to built-in interactive assets directory.
+ * - For Bun binary: assets/ next to executable
+ * - For Node.js (dist/): dist/modes/interactive/assets/
+ * - For source (src/): src/modes/interactive/assets/
+ */
+export function getInteractiveAssetsDir(): string {
+	if (isBunBinary) {
+		return join(getPackageDir(), "assets");
+	}
+	const packageDir = getPackageDir();
+	const srcOrDist = existsSync(join(packageDir, "src")) ? "src" : "dist";
+	return join(packageDir, srcOrDist, "modes", "interactive", "assets");
+}
+
+/** Get path to a bundled interactive asset */
+export function getBundledInteractiveAssetPath(name: string): string {
+	return join(getInteractiveAssetsDir(), name);
+}
+
 let quickJSWasmPath: string | undefined;
 
 /** Called by the Bun entry with the path of the QuickJS wasm file embedded in the compiled executable. */
@@ -512,7 +532,7 @@ export function getCodemodeWorkerSpecifier(): string | URL | undefined {
 export type InstallChange = { kind: "updated"; version: string } | { kind: "removed" };
 
 /**
- * Detect that the package this process runs from changed on disk, for example after `finecode update`
+ * Detect that the package this process runs from changed on disk, for example after `pi update`
  * in another terminal. Code loaded on demand can then be missing or from another version.
  *
  * Checks the package.json read at startup. Resolving it again would walk up past a deleted install

@@ -7,13 +7,13 @@ import type { SessionHeader } from "../src/core/session-manager.ts";
 import { SessionManager } from "../src/core/session-manager.ts";
 import { initTheme } from "../src/modes/interactive/theme/theme.ts";
 
-function createSessionFile(path: string): void {
+function createSessionFile(path: string, cwd: string): void {
 	const header: SessionHeader = {
 		type: "session",
 		id: "test-session",
 		version: 3,
 		timestamp: new Date(0).toISOString(),
-		cwd: "/tmp",
+		cwd,
 	};
 	writeFileSync(path, `${JSON.stringify(header)}\n`, "utf8");
 
@@ -48,7 +48,8 @@ describe("SessionInfo.modified", () => {
 
 	it("uses last user/assistant message timestamp instead of file mtime", async () => {
 		const filePath = join(tmpdir(), `pi-session-${Date.now()}-modified.jsonl`);
-		createSessionFile(filePath);
+		const cwd = process.cwd();
+		createSessionFile(filePath, cwd);
 
 		const before = await stat(filePath);
 		// Ensure the file mtime can differ from our message timestamp even on coarse filesystems.
@@ -74,7 +75,7 @@ describe("SessionInfo.modified", () => {
 			timestamp: msgTime,
 		});
 
-		const sessions = await SessionManager.list("/tmp", dirname(filePath));
+		const sessions = await SessionManager.list(cwd, dirname(filePath));
 		const s = sessions.find((x) => x.path === filePath);
 		expect(s).toBeDefined();
 		expect(s!.modified.getTime()).toBe(msgTime);

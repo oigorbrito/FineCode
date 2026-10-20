@@ -15,7 +15,7 @@ writeFileSync(
 		content: readFileSync(filePath, "utf-8"),
 		entries: readdirSync(directory),
 		directoryMode: statSync(directory).mode & 0o777,
-		arguments: process.argv.slice(3, -1),
+		arguments: process.argv.slice(3, -1).filter((value) => value !== "--fail" && value !== "--empty"),
 	}),
 	"utf-8",
 );

@@ -1,12 +1,12 @@
 import type { SettingsManager } from "./settings-manager.ts";
 
-export function shouldReportPiInstallTelemetry(packageName: string): boolean {
-	return packageName !== "finecode";
-}
-
 function isTruthyEnvFlag(value: string | undefined): boolean {
 	if (!value) return false;
 	return value === "1" || value.toLowerCase() === "true" || value.toLowerCase() === "yes";
+}
+
+export function shouldReportPiInstallTelemetry(packageName: string): boolean {
+	return packageName !== "finecode";
 }
 
 export function isInstallTelemetryEnabled(

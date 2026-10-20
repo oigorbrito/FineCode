@@ -1,9 +1,10 @@
 import { Container, getKeybindings, Spacer, Text } from "@earendil-works/pi-tui";
-import { APP_NAME } from "../../../config.ts";
+import { APP_NAME, PACKAGE_NAME } from "../../../config.ts";
 import { SYSTEM_THEME_NAME } from "../theme/system-theme.ts";
 import { theme } from "../theme/theme.ts";
 import { DynamicBorder } from "./dynamic-border.ts";
 import { keyHint, rawKeyHint } from "./keybinding-hints.ts";
+import { piWordmark } from "./pi-logo.ts";
 
 export interface FirstTimeSetupResult {
 	theme: string;
@@ -54,10 +55,21 @@ export class FirstTimeSetupComponent extends Container {
 		this.clear();
 		this.addChild(new DynamicBorder());
 		this.addChild(new Spacer(1));
-		this.addChild(new Text(theme.fg("accent", SETUP_LOGO_LINES.join("\n")), 1, 0));
+		this.addChild(
+			new Text(PACKAGE_NAME === "finecode" ? piWordmark() : theme.fg("accent", SETUP_LOGO_LINES.join("\n")), 1, 0),
+		);
 		this.addChild(new Spacer(1));
 		this.addChild(
-			new Text(theme.fg("accent", theme.bold(`Welcome to ${APP_NAME}, the minimal coding agent.`)), 1, 0),
+			new Text(
+				theme.fg(
+					"accent",
+					theme.bold(
+						`Welcome to ${PACKAGE_NAME === "finecode" ? "FineCode" : APP_NAME}, the minimal coding agent.`,
+					),
+				),
+				1,
+				0,
+			),
 		);
 		this.addChild(new Spacer(1));
 
@@ -74,7 +86,7 @@ export class FirstTimeSetupComponent extends Container {
 				new Text(
 					theme.fg(
 						"muted",
-						"Opting in stores a tracking identifier in settings.json and enables anonymous\nusage analytics. This helps us to better debug, reproduce, and resolve issues\nand bugs within Pi. You can observe what is shared using /privacy and make\nchanges anytime in settings.json.",
+						`Opting in stores a tracking identifier in settings.json and enables anonymous\nusage analytics. This helps us to better debug, reproduce, and resolve issues\nand bugs within ${PACKAGE_NAME === "finecode" ? "FineCode" : "Pi"}. You can observe what is shared using /privacy and make\nchanges anytime in settings.json.`,
 					),
 					1,
 					0,

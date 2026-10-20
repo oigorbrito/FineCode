@@ -1038,7 +1038,7 @@ export interface AgentSettledEvent {
 
 export type UIPromptKind = "select" | "confirm" | "input" | "editor" | "custom";
 
-/** Fired when the agent starts waiting on a blocking user-facing extension UI prompt. */
+/** Fired when Pi starts waiting on a blocking user-facing extension UI prompt. */
 export interface UIPromptStartEvent {
 	type: "ui_prompt_start";
 	reason: "ui_prompt";
@@ -1046,7 +1046,7 @@ export interface UIPromptStartEvent {
 	title?: string;
 }
 
-/** Fired when the agent is no longer waiting on a blocking user-facing extension UI prompt. */
+/** Fired when Pi is no longer waiting on a blocking user-facing extension UI prompt. */
 export interface UIPromptEndEvent {
 	type: "ui_prompt_end";
 	reason: "ui_prompt";
@@ -2065,7 +2065,7 @@ export type InlineExtension =
 			replaceable?: boolean;
 			/**
 			 * Supply the code of the `builtin:<name>` extension instead of loading as an inline extension.
-			 * `builtin:<name>` is an extension resource like a file: it loads by default, `finecode config` lists
+			 * `builtin:<name>` is an extension resource like a file: it loads by default, `pi config` lists
 			 * it, `-builtin:<name>` in the `extensions` setting and `--no-extensions` disable it, and
 			 * `-e builtin:<name>` loads it explicitly. It is hidden from the startup Extensions list and
 			 * loads after project trust is resolved, so it cannot handle `project_trust`. The CLI's built-in

@@ -149,6 +149,14 @@ describe("coding-agent documentation", () => {
 
 		const reachable = new Set<string>();
 		const pending = roots.filter((path) => isFile(resolve(docsRoot, path)));
+		const localizedIndexes = globSync("*/index.md", { cwd: docsRoot }).map((path) => path.replaceAll("\\", "/"));
+		for (const indexPath of localizedIndexes) {
+			const locale = dirname(indexPath).replaceAll("\\", "/");
+			for (const root of roots) {
+				const localizedPath = `${locale}/${root}`;
+				if (isFile(resolve(docsRoot, localizedPath))) pending.push(localizedPath);
+			}
+		}
 		const brokenLinks: string[] = [];
 		while (pending.length > 0) {
 			const source = pending.shift();

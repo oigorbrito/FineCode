@@ -9,7 +9,6 @@ import {
 	getSelfUpdateCommand,
 	getSelfUpdateUnavailableInstruction,
 	getUpdateInstruction,
-	PACKAGE_NAME,
 } from "../src/config.ts";
 
 const execPathDescriptor = Object.getOwnPropertyDescriptor(process, "execPath");
@@ -53,25 +52,22 @@ afterEach(() => {
 
 function createNpmPrefixInstall(template = "pi-prefix-"): { prefix: string; packageDir: string } {
 	const prefix = mkdtempSync(join(tmpdir(), template));
-	const root = process.platform === "win32" ? join(prefix, "node_modules") : join(prefix, "lib", "node_modules");
+	const root = join(prefix, "lib", "node_modules");
 	const scopeDir = join(root, "@earendil-works");
 	const packageDir = join(scopeDir, "pi-coding-agent");
+	const binDir = join(prefix, "bin");
 	mkdirSync(packageDir, { recursive: true });
+	mkdirSync(binDir, { recursive: true });
+	const npmPath = join(binDir, process.platform === "win32" ? "npm.cmd" : "npm");
+	if (process.platform === "win32") {
+		writeFileSync(npmPath, `@echo off\r\nif "%~1"=="root" echo ${root}\r\nif "%~3"=="root" echo ${root}\r\n`);
+	} else {
+		const escapedRoot = root.replaceAll("'", "'\\''");
+		writeFileSync(npmPath, `#!/bin/sh\nprintf '%s\\n' '${escapedRoot}'\n`);
+		chmodSync(npmPath, 0o755);
+	}
 	tempDir = prefix;
-	process.env.PI_PACKAGE_DIR = packageDir;
-	setExecPath(join(packageDir, "dist", "cli.js"));
-	return { prefix, packageDir };
-}
-
-function createFineCodeNpmPrefixInstall(): { prefix: string; packageDir: string } {
-	const prefix = mkdtempSync(join(tmpdir(), "finecode-prefix-"));
-	const packageDir = join(
-		prefix,
-		...(process.platform === "win32" ? ["node_modules"] : ["lib", "node_modules"]),
-		"finecode",
-	);
-	mkdirSync(packageDir, { recursive: true });
-	tempDir = prefix;
+	process.env.PATH = `${binDir}${delimiter}${originalPath ?? ""}`;
 	process.env.PI_PACKAGE_DIR = packageDir;
 	setExecPath(join(packageDir, "dist", "cli.js"));
 	return { prefix, packageDir };
@@ -200,10 +196,7 @@ describe("detectInstallMethod", () => {
 	test("self-updates npm installs from custom prefixes", () => {
 		const { prefix } = createNpmPrefixInstall();
 
-		const command = getSelfUpdateCommand(
-			"@earendil-works/pi-coding-agent",
-			process.platform === "win32" ? ["npm", "--prefix", prefix] : undefined,
-		);
+		const command = getSelfUpdateCommand("@earendil-works/pi-coding-agent");
 
 		expect(detectInstallMethod()).toBe("npm");
 		expect(command).toEqual({
@@ -221,33 +214,13 @@ describe("detectInstallMethod", () => {
 		});
 	});
 
-	test("self-updates the canonical FineCode package from an npm prefix", () => {
-		const { prefix } = createFineCodeNpmPrefixInstall();
-
-		const command = getSelfUpdateCommand(
-			PACKAGE_NAME,
-			process.platform === "win32" ? ["npm", "--prefix", prefix] : undefined,
-		);
-
-		expect(PACKAGE_NAME).toBe("finecode");
-		expect(command).toEqual({
-			command: "npm",
-			args: ["--prefix", prefix, "install", "-g", "--ignore-scripts", "--min-release-age=0", "finecode"],
-			display: `npm --prefix ${prefix} install -g --ignore-scripts --min-release-age=0 finecode`,
-		});
-	});
-
 	test("self-updates exact npm versions without uninstalling the current package", () => {
 		const { prefix } = createNpmPrefixInstall();
 
-		const command = getSelfUpdateCommand(
-			"@earendil-works/pi-coding-agent",
-			process.platform === "win32" ? ["npm", "--prefix", prefix] : undefined,
-			{
-				packageName: "@earendil-works/pi-coding-agent",
-				installSpec: "@earendil-works/pi-coding-agent@1.2.3",
-			},
-		);
+		const command = getSelfUpdateCommand("@earendil-works/pi-coding-agent", undefined, {
+			packageName: "@earendil-works/pi-coding-agent",
+			installSpec: "@earendil-works/pi-coding-agent@1.2.3",
+		});
 
 		expect(command).toEqual({
 			command: "npm",
@@ -267,11 +240,7 @@ describe("detectInstallMethod", () => {
 	test("self-updates renamed packages from the current install prefix", () => {
 		const { prefix } = createNpmPrefixInstall();
 
-		const command = getSelfUpdateCommand(
-			"@mariozechner/pi-coding-agent",
-			process.platform === "win32" ? ["npm", "--prefix", prefix] : undefined,
-			"@new-scope/pi",
-		);
+		const command = getSelfUpdateCommand("@mariozechner/pi-coding-agent", undefined, "@new-scope/pi");
 
 		expect(command).toEqual({
 			command: "npm",
@@ -313,20 +282,25 @@ describe("detectInstallMethod", () => {
 	});
 
 	test("self-update treats empty npmCommand as unset", () => {
-		createNpmPrefixInstall();
+		const { prefix } = createNpmPrefixInstall();
 
-		expect(getSelfUpdateCommand("@earendil-works/pi-coding-agent", [])).toEqual(
-			getSelfUpdateCommand("@earendil-works/pi-coding-agent"),
-		);
+		const command = getSelfUpdateCommand("@earendil-works/pi-coding-agent", []);
+
+		expect(command?.args).toEqual([
+			"--prefix",
+			prefix,
+			"install",
+			"-g",
+			"--ignore-scripts",
+			"--min-release-age=0",
+			"@earendil-works/pi-coding-agent",
+		]);
 	});
 
 	test("quotes npm self-update display paths", () => {
 		const { prefix } = createNpmPrefixInstall("pi prefix ");
 
-		const command = getSelfUpdateCommand(
-			"@earendil-works/pi-coding-agent",
-			process.platform === "win32" ? ["npm", "--prefix", prefix] : undefined,
-		);
+		const command = getSelfUpdateCommand("@earendil-works/pi-coding-agent");
 
 		expect(command?.display).toBe(
 			`npm --prefix "${prefix}" install -g --ignore-scripts --min-release-age=0 @earendil-works/pi-coding-agent`,

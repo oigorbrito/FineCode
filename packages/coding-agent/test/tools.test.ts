@@ -445,12 +445,13 @@ describe("Coding Agent Tools", () => {
 			writeFileSync(testFile, "hello\n");
 			chmodSync(testFile, 0o444);
 
+			const accessErrorCode = process.platform === "win32" ? "EPERM" : "EACCES";
 			await expect(
 				editTool.execute("test-call-14", {
 					path: testFile,
 					edits: [{ oldText: "hello", newText: "world" }],
 				}),
-			).rejects.toThrow(`Could not edit file: ${testFile}. Error code: EACCES.`);
+			).rejects.toThrow(`Could not edit file: ${testFile}. Error code: ${accessErrorCode}.`);
 		});
 
 		it("should include the original error message for unknown edit access errors", async () => {
@@ -479,15 +480,21 @@ describe("Coding Agent Tools", () => {
 			expect(result).toEqual({ error: `Could not edit file: ${missingFile}. Error code: ENOENT.` });
 		});
 
-		it("should include EACCES in diff preview for unreadable files", async () => {
-			const unreadableFile = join(testDir, "unreadable-preview.txt");
-			writeFileSync(unreadableFile, "hello\n");
-			chmodSync(unreadableFile, 0o222);
+		it.skipIf(process.platform === "win32")(
+			"should include EACCES in diff preview for unreadable files",
+			async () => {
+				const unreadableFile = join(testDir, "unreadable-preview.txt");
+				writeFileSync(unreadableFile, "hello\n");
+				chmodSync(unreadableFile, 0o222);
 
-			const result = await computeEditsDiff(unreadableFile, [{ oldText: "hello", newText: "world" }], testDir);
+				const result = await computeEditsDiff(unreadableFile, [{ oldText: "hello", newText: "world" }], testDir);
 
-			expect(result).toEqual({ error: `Could not edit file: ${unreadableFile}. Error code: EACCES.` });
-		});
+				const accessErrorCode = process.platform === "win32" ? "EPERM" : "EACCES";
+				expect(result).toEqual({
+					error: `Could not edit file: ${unreadableFile}. Error code: ${accessErrorCode}.`,
+				});
+			},
+		);
 	});
 
 	describe("bash tool", () => {
@@ -916,8 +923,9 @@ describe("Coding Agent Tools", () => {
 			chmodSync(payload, 0o755);
 			writeFileSync(testFile, "target\n");
 
+			const pattern = `--pre=${payload.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`;
 			const result = await grepTool.execute("test-call-grep-injection", {
-				pattern: `--pre=${payload}`,
+				pattern,
 				path: testDir,
 			});
 
@@ -1095,7 +1103,7 @@ describe("tool cwd resolution", () => {
 		const tool = createBashToolDefinition("/", { exposeSessionEnvironment: false });
 		const result = await tool.execute(
 			"test-bash-ctx-cwd",
-			{ command: "pwd" },
+			{ command: 'node -e "process.stdout.write(process.cwd())"' },
 			undefined,
 			undefined,
 			fakeCtx(testDir),

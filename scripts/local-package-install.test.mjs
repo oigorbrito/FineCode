@@ -7,8 +7,8 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { parse } from "yaml";
 import { installConsumer, smokeTestNpmConsumer, wireConsumer } from "./local-package-install.mjs";
-import { execNpmSync } from "./npm-command.mjs";
 import { produceArtifactSet } from "./package-artifacts.mjs";
+import { execNpmSync } from "./npm-command.mjs";
 
 function writePackage(directory, manifest, files) {
 	mkdirSync(directory, { recursive: true });

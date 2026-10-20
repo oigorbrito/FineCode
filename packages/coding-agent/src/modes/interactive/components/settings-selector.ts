@@ -12,7 +12,7 @@ import {
 	Text,
 	type WheelScrollLines,
 } from "@earendil-works/pi-tui";
-import { PACKAGE_NAME } from "../../../config.ts";
+import { APP_NAME, PACKAGE_NAME } from "../../../config.ts";
 import { formatHttpIdleTimeoutMs, HTTP_IDLE_TIMEOUT_CHOICES } from "../../../core/http-dispatcher.ts";
 import { SETTINGS_DEFAULTS } from "../../../core/settings-defaults.ts";
 import {
@@ -824,7 +824,7 @@ export class SettingsSelectorComponent extends Container {
 		items.splice(skillCommandsIndex + 1, 0, {
 			id: "show-hardware-cursor",
 			label: "Show hardware cursor",
-			description: "Use the terminal cursor instead of the agent's drawn cursor",
+			description: `Use the terminal cursor instead of ${PACKAGE_NAME === "finecode" ? "FineCode" : APP_NAME === "pi" ? "Pi" : APP_NAME}'s drawn cursor`,
 			currentValue: config.showHardwareCursor ? "true" : "false",
 			values: ["true", "false"],
 		});
