@@ -698,6 +698,11 @@ export function resolvePiBinary(
     if (omp) return finalize(deps, omp, 'omp', true, rejectedOverride, pathEnv)
   }
 
+  if (engine === 'pi') {
+    const fallback = deps.isWindows ? PI_FALLBACK_BINARY_WINDOWS : PI_FALLBACK_BINARY_POSIX
+    return finalize(deps, fallback, 'fallback', false, rejectedOverride, pathEnv)
+  }
+
   const fallback = deps.isWindows ? FINECODE_FALLBACK_BINARY_WINDOWS : FINECODE_FALLBACK_BINARY
   return finalize(deps, fallback, 'finecode', false, rejectedOverride, pathEnv)
 }

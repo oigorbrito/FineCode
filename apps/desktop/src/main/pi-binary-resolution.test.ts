@@ -4,6 +4,8 @@ import { join, posix, sep } from 'node:path'
 import {
   PI_CLI_REL,
   FINECODE_CLI_REL,
+  FINECODE_FALLBACK_BINARY,
+  FINECODE_FALLBACK_BINARY_WINDOWS,
   PI_FALLBACK_BINARY_POSIX,
   PI_FALLBACK_BINARY_WINDOWS,
   SHELL_PATH_END,
@@ -349,16 +351,17 @@ test('resolvePiBinary auto-detects OMP when Pi is not installed', () => {
   assert.equal(resolution.found, true)
 })
 
-test('resolvePiBinary refuses an auto-detected omp that cannot run', () => {
+test('resolvePiBinary rejects an unusable auto-detected omp and uses the FineCode default', () => {
   // A data file, a stale symlink or an unrelated script named `omp` all fail
   // to answer. Accepting one would report found and hide the install guidance
   // behind a spawn timeout minutes later.
   const deps = fakeDeps({ env: { HOME: POSIX_HOME, PATH: '/opt/omp' }, files: ['/opt/omp/omp'] })
   const resolution = resolvePiBinary(deps, null)
-  assert.equal(resolution.script, PI_FALLBACK_BINARY_POSIX)
-  assert.equal(resolution.source, 'fallback')
+  assert.equal(resolution.script, FINECODE_FALLBACK_BINARY)
+  assert.equal(resolution.source, 'finecode')
   assert.equal(resolution.found, false)
-  assert.match(describePiResolutionFailure(resolution), /npm install -g @earendil-works\/pi-coding-agent/)
+  assert.match(describePiResolutionFailure(resolution), /npm install -g finecode/)
+  assert.doesNotMatch(describePiResolutionFailure(resolution), /install Pi with/i)
 })
 
 test('resolvePiBinary refuses an auto-detected omp whose output carries no version', () => {
@@ -394,6 +397,33 @@ test('resolvePiBinary does not probe when the engine or the override is explicit
   assert.equal(resolvePiBinary(fakeDeps(init), null, 'omp').script, '/opt/omp/omp')
   assert.equal(resolvePiBinary(fakeDeps(init), 'omp').script, '/opt/omp/omp')
   assert.equal(captureLog.filter((call) => call.args.includes('--version')).length, 0)
+})
+
+test('resolvePiBinary keeps the explicit Pi fallback and install guidance', () => {
+  const deps = fakeDeps({ env: { HOME: POSIX_HOME, PATH: '/nowhere' } })
+  const resolution = resolvePiBinary(deps, null, 'pi')
+  assert.equal(resolution.script, PI_FALLBACK_BINARY_POSIX)
+  assert.equal(resolution.source, 'fallback')
+  assert.equal(resolution.found, false)
+  assert.equal(resolution.rejectedOverride, null)
+  assert.match(describePiResolutionFailure(resolution), /npm install -g @earendil-works\/pi-coding-agent/)
+
+  const invalidOverride = resolvePiBinary(deps, '/missing/pi', 'pi')
+  assert.equal(invalidOverride.script, PI_FALLBACK_BINARY_POSIX)
+  assert.equal(invalidOverride.source, 'fallback')
+  assert.equal(invalidOverride.found, false)
+  assert.equal(invalidOverride.rejectedOverride, '/missing/pi')
+  assert.match(describePiResolutionFailure(invalidOverride), /\/missing\/pi/)
+  assert.match(describePiResolutionFailure(invalidOverride), /@earendil-works\/pi-coding-agent/)
+
+  const windowsResolution = resolvePiBinary(
+    fakeDeps({ isWindows: true, env: { USERPROFILE: WINDOWS_HOME, PATH: '' } }),
+    null,
+    'pi'
+  )
+  assert.equal(windowsResolution.script, PI_FALLBACK_BINARY_WINDOWS)
+  assert.equal(windowsResolution.source, 'fallback')
+  assert.equal(windowsResolution.found, false)
 })
 
 test('resolvePiBinary can resolve each engine independently for the chooser', () => {
@@ -561,15 +591,16 @@ test('resolvePiBinary falls back to a common install location', () => {
 test('resolvePiBinary reports not-found instead of pretending the fallback exists', () => {
   const deps = fakeDeps({ env: { HOME: POSIX_HOME, PATH: '/nowhere' } })
   const resolution = resolvePiBinary(deps, null)
-  assert.equal(resolution.script, PI_FALLBACK_BINARY_POSIX)
-  assert.equal(resolution.source, 'fallback')
+  assert.equal(resolution.script, FINECODE_FALLBACK_BINARY)
+  assert.equal(resolution.source, 'finecode')
   assert.equal(resolution.found, false)
 })
 
-test('resolvePiBinary falls back to the .cmd name on Windows', () => {
+test('resolvePiBinary falls back to the FineCode .cmd name on Windows', () => {
   const deps = fakeDeps({ isWindows: true, env: { USERPROFILE: WINDOWS_HOME, PATH: '' } })
   const resolution = resolvePiBinary(deps, null)
-  assert.equal(resolution.script, PI_FALLBACK_BINARY_WINDOWS)
+  assert.equal(resolution.script, FINECODE_FALLBACK_BINARY_WINDOWS)
+  assert.equal(resolution.source, 'finecode')
   assert.equal(resolution.found, false)
 })
 
@@ -660,7 +691,8 @@ test('resolvePiBinary never takes Pi from a relative PATH entry', () => {
   const deps = fakeDeps({ env: { HOME: POSIX_HOME, PATH: 'bin' }, files: [join('bin', 'pi')] })
   const resolution = resolvePiBinary(deps, null)
   assert.equal(resolution.found, false)
-  assert.equal(resolution.script, PI_FALLBACK_BINARY_POSIX)
+  assert.equal(resolution.source, 'finecode')
+  assert.equal(resolution.script, FINECODE_FALLBACK_BINARY)
 })
 
 // ─── Failure messaging ───────────────────────────────────────────────────────
@@ -678,6 +710,7 @@ test('describePiResolutionFailure calls out a configured path that does not exis
 test('describePiResolutionFailure gives install guidance when nothing was configured', () => {
   const deps = fakeDeps({ env: { HOME: POSIX_HOME, PATH: '/nowhere' } })
   const message = describePiResolutionFailure(resolvePiBinary(deps, null))
-  assert.match(message, /npm install -g @earendil-works\/pi-coding-agent/)
+  assert.match(message, /npm install -g finecode/)
   assert.match(message, /Settings/)
+  assert.doesNotMatch(message, /@earendil-works\/pi-coding-agent/)
 })
