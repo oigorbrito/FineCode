@@ -89,6 +89,22 @@ describe("Anthropic forceAdaptiveThinking compat override", () => {
 		expect(payload.output_config).toEqual({ effort: "xhigh" });
 	});
 
+	it("sends adaptive effort for MiniMax-compatible models", async () => {
+		const model = { ...makeCustomModel({ forceAdaptiveThinking: true }), provider: "minimax", id: "MiniMax-M3.1-Flash" };
+		const payload = await capturePayload(model, { reasoning: "high" });
+		expect(payload.thinking).toEqual({ type: "adaptive", display: "summarized" });
+		expect(payload.output_config).toEqual({ effort: "high" });
+	});
+
+	it("does not send disabled thinking to MiniMax adaptive models, preserving other providers", async () => {
+		for (const provider of ["minimax", "minimax-cn"]) {
+			const model = { ...makeCustomModel({ forceAdaptiveThinking: true }), provider, id: "MiniMax-M3.1-Flash" };
+			const payload = await capturePayload(model);
+			expect(payload.thinking).toBeUndefined();
+			expect(payload.output_config).toBeUndefined();
+		}
+	});
+
 	it("allows built-in adaptive models to opt out with compat.forceAdaptiveThinking false", async () => {
 		const model: Model<"anthropic-messages"> = {
 			...getModel("anthropic", "claude-opus-4-8"),
