@@ -136,6 +136,16 @@ describe("xAI Responses provider", () => {
 		expect(getSupportedThinkingLevels(XAI_MODELS["grok-4.3"])).toEqual(["off", "low", "medium", "high", "xhigh"]);
 	});
 
+	// Protect optional catalog xhigh support without assuming every catalog snapshot exposes it.
+	it("preserves xhigh when Grok 4.5 catalog explicitly declares the level", () => {
+		const model = {
+			...XAI_MODELS["grok-4.5"],
+			thinkingLevelMap: { ...XAI_MODELS["grok-4.5"].thinkingLevelMap, xhigh: "xhigh" as const },
+		};
+		expect(getSupportedThinkingLevels(model)).toContain("xhigh");
+		expect(clampThinkingLevel(model, "xhigh")).toBe("xhigh");
+	});
+
 	// PR #475: accepted effort values must not imply an unsupported reasoning depth.
 	it.each([
 		["grok-4.5", "high"],
