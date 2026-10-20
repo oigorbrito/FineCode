@@ -1,16 +1,14 @@
 import { backgroundAnsi, foregroundAnsi, isAppleTerminalSession, rgbColor } from "@earendil-works/pi-tui";
 import { PACKAGE_NAME } from "../../../config.ts";
+import { fineCodeLogoLines, fineCodeWordmark, supportsFineCodeLogo } from "../finecode/brand.ts";
 import { theme } from "../theme/theme.ts";
+
+export { fineCodeLogoLines, fineCodeWordmark, supportsFineCodeLogo };
 
 const CORAL = rgbColor(228, 138, 122);
 const BLUE = rgbColor(79, 142, 179);
 const YELLOW = rgbColor(234, 182, 93);
 const RESET = "\x1b[0m";
-
-function fineCodeWordmark(): string {
-	const mode = theme.getColorMode();
-	return `${foregroundAnsi(CORAL, mode)}<FC> Fine${RESET}${foregroundAnsi(YELLOW, mode)}Code${RESET}`;
-}
 
 /**
  * The pi logo: 4 cells wide and 2 lines tall. Each cell shows two square pixels with half blocks:
@@ -23,7 +21,7 @@ function fineCodeWordmark(): string {
  * The brand colors stay fixed across themes; they follow the terminal's color mode.
  */
 export function piLogoLines(): [string, string] {
-	if (PACKAGE_NAME === "finecode") return [fineCodeWordmark(), ""];
+	if (PACKAGE_NAME === "finecode") return fineCodeLogoLines();
 	const mode = theme.getColorMode();
 	const fg = (color: typeof CORAL) => foregroundAnsi(color, mode);
 	// The fourth cell of the top line is empty, so it is padded to the same width as the bottom line.

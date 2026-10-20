@@ -2368,6 +2368,23 @@ export class InteractiveMode {
 		);
 	}
 
+	private updateWorkingToolStatus(): void {
+		const indicator = this.activeStatusIndicator;
+		if (indicator?.kind !== "working") return;
+
+		const activeToolNames = Array.from(this.pendingTools.values(), (component) =>
+			component.getActiveToolCallName(),
+		).filter((name): name is string => name !== undefined);
+		const activeToolLabel =
+			activeToolNames.length === 0
+				? undefined
+				: `${activeToolNames.slice(0, 2).join(", ")}${activeToolNames.length > 2 ? ` +${activeToolNames.length - 2}` : ""}`;
+		const message = activeToolLabel
+			? `Call: ${activeToolLabel} · ${keyText("app.interrupt")} cancel`
+			: (this.workingMessage ?? this.defaultWorkingMessage);
+		indicator.setMessage(message);
+	}
+
 	private setWorkingVisible(visible: boolean): void {
 		this.workingVisible = visible;
 		if (!visible) {
@@ -3595,6 +3612,7 @@ export class InteractiveMode {
 							});
 						}
 						this.pendingTools.clear();
+						this.updateWorkingToolStatus();
 						this.maybeSuggestBugReport(this.streamingMessage);
 					} else {
 						// Args are now complete - trigger diff computation for edit tools
@@ -3638,6 +3656,7 @@ export class InteractiveMode {
 					this.pendingTools.set(event.toolCallId, component);
 				}
 				component.markExecutionStarted();
+				this.updateWorkingToolStatus();
 				this.ui.requestRender();
 				break;
 			}
@@ -3657,6 +3676,7 @@ export class InteractiveMode {
 				if (component) {
 					component.updateResult({ ...event.result, isError: event.isError, durationMs: event.durationMs });
 					this.pendingTools.delete(event.toolCallId);
+					this.updateWorkingToolStatus();
 					this.ui.requestRender();
 				}
 				break;

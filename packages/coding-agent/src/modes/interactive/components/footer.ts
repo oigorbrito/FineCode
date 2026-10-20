@@ -5,6 +5,7 @@ import { areExperimentalFeaturesEnabled } from "../../../core/experimental.ts";
 import type { ContextUsage } from "../../../core/extensions/types.ts";
 import type { ReadonlyFooterDataProvider } from "../../../core/footer-data-provider.ts";
 import { addUsageToTotals, createUsageTotals, type UsageTotals } from "../../../core/usage-totals.ts";
+import { fineCodeFooterPath } from "../finecode/operational-footer.ts";
 import { theme } from "../theme/theme.ts";
 
 /**
@@ -41,7 +42,7 @@ export function formatCwdForFooter(cwd: string, home: string | undefined): strin
 		(relativeToHome !== ".." && !relativeToHome.startsWith(`..${sep}`) && !isAbsolute(relativeToHome));
 
 	if (!isInsideHome) return cwd;
-	return relativeToHome === "" ? "~" : `~/${relativeToHome.replace(/\\/g, "/")}`;
+	return relativeToHome === "" ? "~" : `~/${relativeToHome.split(sep).join("/")}`;
 }
 
 interface SessionStats {
@@ -283,7 +284,7 @@ export class FooterComponent implements Component {
 		const remainder = statsLine.slice(statsLeft.length); // padding + rightSide
 		const dimRemainder = theme.fg("dim", remainder);
 
-		const pwdLine = truncateToWidth(theme.fg("dim", pwd), width, theme.fg("dim", "..."));
+		const pwdLine = truncateToWidth(fineCodeFooterPath(pwd), width, theme.fg("dim", "..."));
 		const lines = [pwdLine, dimStatsLeft + dimRemainder];
 
 		// Add extension statuses on a single line, sorted by key alphabetically
