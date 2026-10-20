@@ -16,7 +16,9 @@ A lista completa de SHAs, reconciliação da `main`, validações finais e resul
 
 [block324-upstream-classification.tsv](block324-upstream-classification.tsv) continua sendo a única matriz dos 438 caminhos; não foi criado outro inventário. Suas categorias anteriores foram convertidas para o vocabulário final, com delta revisado, evidência, hashes baseline/Pi/local, hash local anterior ao Bloco 325 e modos Git.
 
-| Classificação | Caminhos |
+A tabela abaixo registra o fechamento histórico do Bloco 325. O Bloco 326 atualizou os hashes e duas categorias por integração adicional; a matriz canônica final contém 270 `UPSTREAM_APPLIED`, 38 `SEMANTICALLY_INTEGRATED`, 114 `FINECODE_PRESERVED` e 16 `INTENTIONALLY_EXCLUDED`, sem pendentes.
+
+| Classificação no Bloco 325 | Caminhos |
 |---|---:|
 | `UPSTREAM_APPLIED` | 272 |
 | `SEMANTICALLY_INTEGRATED` | 36 |

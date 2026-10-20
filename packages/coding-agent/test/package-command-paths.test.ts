@@ -965,7 +965,7 @@ else {
 		}
 	});
 
-	it("does not show Pi pnpm update guidance for FineCode", async () => {
+	it("reports FineCode pnpm failures without Pi update guidance", async () => {
 		const globalRoot = join(tempDir, "pnpm", "global", "v11");
 		const selfPackageDir = join(globalRoot, "node_modules", "@earendil-works", "pi-coding-agent");
 		const fakeBinDir = join(tempDir, "bin");
@@ -1000,8 +1000,17 @@ else {
 			const stdout = logSpy.mock.calls.map(([message]) => String(message)).join("\n");
 			const stderr = errorSpy.mock.calls.map(([message]) => String(message)).join("\n");
 			expect(stdout).not.toContain("Updated finecode");
-			expect(stderr).toContain("finecode cannot self-update this installation.");
-			expect(stderr).toContain("not managed by a global pnpm install");
+			if (process.platform === "win32") {
+				expect(stderr).toContain("finecode cannot self-update this installation.");
+				expect(stderr).toContain("not managed by a global pnpm install");
+			} else {
+				expect(stderr).toContain(
+					`pnpm install -g --ignore-scripts --config.minimumReleaseAge=0 ${PACKAGE_NAME}@${getNewerPatchVersion()} exited with code 23`,
+				);
+				expect(stderr).toContain("pnpm store prune");
+				expect(stderr).toContain("retry `finecode update --self`");
+				expect(stderr).not.toContain("finecode cannot self-update this installation.");
+			}
 			expect(stderr).not.toContain("pi update --self");
 		} finally {
 			logSpy.mockRestore();
