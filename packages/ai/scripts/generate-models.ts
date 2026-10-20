@@ -1116,6 +1116,12 @@ function applyThinkingLevelMetadata(model: Model<any>): void {
 	if (model.provider === "xai" && model.api === "openai-responses" && model.thinkingLevelMap === undefined) {
 		mergeThinkingLevelMap(model, { off: null, minimal: null });
 	}
+	// https://docs.x.ai/developers/model-capabilities/text/reasoning
+	// Grok 4.5 accepts xhigh but treats it as high; do not advertise extra depth
+	// even when models.dev includes xhigh in its effort options.
+	if (model.provider === "xai" && model.api === "openai-responses" && model.id === "grok-4.5") {
+		mergeThinkingLevelMap(model, { xhigh: null });
+	}
 	if (supportsOpenAiXhigh(model.id)) {
 		mergeThinkingLevelMap(model, { xhigh: "xhigh" });
 	}
