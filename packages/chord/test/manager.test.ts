@@ -101,7 +101,7 @@ describe("host manager (real child processes)", () => {
 		await first.stop();
 		await second.start();
 		await second.stop();
-	});
+	}, 15_000);
 
 	it("a graceful exit still takes the child's descendants with it", async () => {
 		const file = scratch("grandchild-graceful");

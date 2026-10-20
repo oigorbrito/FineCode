@@ -130,10 +130,11 @@ describe("xAI Responses provider", () => {
 		for (const model of Object.values(XAI_MODELS)) {
 			expect(model.api, model.id).toBe("openai-responses");
 		}
-		expect(getSupportedThinkingLevels(XAI_MODELS["grok-4.5"])).toEqual(["low", "medium", "high"]);
+		// https://docs.x.ai/developers/models/grok-4.5 now documents xhigh, as does grok-4.3.
+		expect(getSupportedThinkingLevels(XAI_MODELS["grok-4.5"])).toEqual(["low", "medium", "high", "xhigh"]);
 		expect(getSupportedThinkingLevels(XAI_MODELS["grok-4.6"])).toEqual(["low", "medium", "high", "xhigh"]);
 		expect(getSupportedThinkingLevels(XAI_MODELS["grok-4.7"])).toEqual(["low", "medium", "high", "xhigh"]);
-		expect(getSupportedThinkingLevels(XAI_MODELS["grok-4.3"])).toEqual(["off", "low", "medium", "high"]);
+		expect(getSupportedThinkingLevels(XAI_MODELS["grok-4.3"])).toEqual(["off", "low", "medium", "high", "xhigh"]);
 	});
 
 	it("includes Grok 4.7 capabilities and long-context pricing", () => {
@@ -214,28 +215,31 @@ describe("xAI Responses provider", () => {
 		expect(captured.body).not.toHaveProperty("reasoning");
 	});
 
-	it("uses /responses for Grok 4.7 with xhigh effort and encrypted reasoning", async () => {
-		const captured = await captureRequest(
-			XAI_MODELS["grok-4.7"],
-			{
-				systemPrompt: "You are a careful coding assistant.",
-				messages: [{ role: "user", content: "hello", timestamp: 1 }],
-			},
-			{
-				apiKey: "xai-test-token",
-				reasoningEffort: "xhigh",
-			},
-		);
+	it.each(["grok-4.3", "grok-4.5", "grok-4.6", "grok-4.7"] as const)(
+		"uses /responses for %s with xhigh effort and encrypted reasoning",
+		async (modelId) => {
+			const captured = await captureRequest(
+				XAI_MODELS[modelId],
+				{
+					systemPrompt: "You are a careful coding assistant.",
+					messages: [{ role: "user", content: "hello", timestamp: 1 }],
+				},
+				{
+					apiKey: "xai-test-token",
+					reasoningEffort: "xhigh",
+				},
+			);
 
-		expect(captured.url).toBe("https://api.x.ai/v1/responses");
-		expect(captured.body).toMatchObject({
-			model: "grok-4.7",
-			store: false,
-			stream: true,
-			reasoning: { effort: "xhigh" },
-			include: ["reasoning.encrypted_content"],
-		});
-	});
+			expect(captured.url).toBe("https://api.x.ai/v1/responses");
+			expect(captured.body).toMatchObject({
+				model: modelId,
+				store: false,
+				stream: true,
+				reasoning: { effort: "xhigh" },
+				include: ["reasoning.encrypted_content"],
+			});
+		},
+	);
 
 	it("uses /responses for Grok 4.3", async () => {
 		const captured = await captureRequest(
