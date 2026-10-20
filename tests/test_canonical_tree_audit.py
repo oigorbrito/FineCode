@@ -37,11 +37,11 @@ class CanonicalTreeAuditTests(unittest.TestCase):
         self.assertTrue(all(r["semantic_decision"] == "not_reviewed" for r in rows.values()))
 
     def test_exports_non_utf8_git_names_with_exact_byte_identity(self):
-        raw_name = b"unusual-\\xff.txt"
+        raw_name = bytes.fromhex("756e757375616c2dff2e747874")
         path = raw_name.decode("utf-8", "surrogateescape")
         rows = audit.compare({}, {path: ("100644", "blob", "a")}, "main", "canonical")
         self.assertEqual(rows[0]["path_bytes_hex"], raw_name.hex())
-        self.assertEqual(rows[0]["path"], "unusual-\\\\xff.txt")
+        self.assertEqual(rows[0]["path"], "unusual-\xff.txt")
         with tempfile.TemporaryDirectory() as d:
             file = Path(d) / "report.csv"
             audit.export(file, rows)
