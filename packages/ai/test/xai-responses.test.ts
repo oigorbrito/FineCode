@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { stream as streamOpenAICompletions } from "../src/api/openai-completions.ts";
 import type { OpenAIResponsesOptions } from "../src/api/openai-responses.ts";
 import { stream as streamOpenAIResponses } from "../src/api/openai-responses.ts";
-import { getSupportedThinkingLevels } from "../src/models.ts";
+import { clampThinkingLevel, getSupportedThinkingLevels } from "../src/models.ts";
 import { XAI_MODELS } from "../src/providers/xai.models.ts";
 import { xaiProvider } from "../src/providers/xai.ts";
 import type { Context, Model } from "../src/types.ts";
@@ -130,11 +130,19 @@ describe("xAI Responses provider", () => {
 		for (const model of Object.values(XAI_MODELS)) {
 			expect(model.api, model.id).toBe("openai-responses");
 		}
-		// https://docs.x.ai/developers/models/grok-4.5 now documents xhigh, as does grok-4.3.
-		expect(getSupportedThinkingLevels(XAI_MODELS["grok-4.5"])).toEqual(["low", "medium", "high", "xhigh"]);
+		expect(getSupportedThinkingLevels(XAI_MODELS["grok-4.5"])).toEqual(["low", "medium", "high"]);
 		expect(getSupportedThinkingLevels(XAI_MODELS["grok-4.6"])).toEqual(["low", "medium", "high", "xhigh"]);
 		expect(getSupportedThinkingLevels(XAI_MODELS["grok-4.7"])).toEqual(["low", "medium", "high", "xhigh"]);
 		expect(getSupportedThinkingLevels(XAI_MODELS["grok-4.3"])).toEqual(["off", "low", "medium", "high", "xhigh"]);
+	});
+
+	// PR #475: accepted effort values must not imply an unsupported reasoning depth.
+	it.each([
+		["grok-4.5", "high"],
+		["grok-4.6", "xhigh"],
+		["grok-4.7", "xhigh"],
+	] as const)("clamps xhigh to the supported depth for %s", (modelId, expected) => {
+		expect(clampThinkingLevel(XAI_MODELS[modelId], "xhigh")).toBe(expected);
 	});
 
 	it("includes Grok 4.7 capabilities and long-context pricing", () => {
@@ -215,7 +223,7 @@ describe("xAI Responses provider", () => {
 		expect(captured.body).not.toHaveProperty("reasoning");
 	});
 
-	it.each(["grok-4.3", "grok-4.5", "grok-4.6", "grok-4.7"] as const)(
+	it.each(["grok-4.6", "grok-4.7"] as const)(
 		"uses /responses for %s with xhigh effort and encrypted reasoning",
 		async (modelId) => {
 			const captured = await captureRequest(

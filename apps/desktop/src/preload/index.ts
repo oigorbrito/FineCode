@@ -1,0 +1,805 @@
+import { contextBridge, ipcRenderer, webUtils } from 'electron'
+import type {
+  AgentEngineKind,
+  PiRpcEvent,
+  PiStartOptions,
+  PiStatus,
+  SessionListItem,
+  SessionDeleteResult,
+  ArchivedSessionsMap,
+  AppSettings,
+  AgentDetectionOptions,
+  AgentInstallationsResult,
+  Workspace,
+  WorkspaceTabOptions,
+  WorkspaceRemoveResult,
+  InstalledPackage,
+  InstalledSkill,
+  CatalogPackage,
+  PackageUpdate,
+  FileTreeNode,
+  FileSearchResult,
+  FileChangeEvent,
+  GitFileStatus,
+  TerminalExitEvent,
+  TerminalDataEvent,
+  TerminalStartOptions,
+  TerminalStartResult,
+  Note,
+  NoteInput,
+  NoteUpdate,
+  UpdateCheckResult,
+  SessionLineageRecord,
+  ModelsConfig,
+  ModelsReadResult,
+  CouncilDetectResult,
+  CouncilRunRequest,
+  CouncilRunResult,
+  CouncilArbiterRequest,
+  CouncilArbiterResult,
+  CouncilProgressEvent,
+  VoiceStatus,
+  TypeSafeStatus,
+  TypeSafeSaveKeyResult,
+  VoiceInstallRequest,
+  VoiceProgressEvent,
+  AttachmentReadResult,
+  OpenDialogOptions,
+  OpenAttachmentDialogOptions,
+  PathKindResult,
+  PromptImage,
+  ActivityStatsResult,
+  DiagnosticsReport,
+  ThemesListResult,
+  ThemeImportResult,
+  ThemeExportResult,
+  ThemeGalleryResult,
+  ThemeGalleryImageResult,
+  PermissionRule,
+  PermissionRulesScope,
+  PermissionRulesGetResult,
+  PermissionRulesSetResult,
+  PermissionRulesImportResult,
+  PermissionRulesExportResult,
+  PermissionRulesWorkspaceStatus,
+  PermissionRulesRemoveResult,
+  PendingPromptCounts,
+  WorkspaceActivityMap,
+  WorkflowRunSummary,
+  WorkflowRunDetail,
+  WorkflowControlAction,
+  WorkflowControlResult,
+  SessionRuntimeInfo,
+  StreamingTextSnapshot,
+  SessionRuntimeCloseResult,
+  SessionLaunchTaskOptions,
+  WorkspaceActivationIntent,
+  LinkedRepoStatus,
+  LinkedShipRequest,
+  LinkedShipResult,
+  LinkedTaskOptions,
+  RepoFolderInfo,
+  RepoSet,
+  RepoSetDraft,
+  GitBranchSwitchResult,
+  GitConveyorStatus,
+  GitCommitMessageRequest,
+  GitCommitMessageSuggestion,
+  GitConveyorCommitOptions,
+  GitConveyorPullRequestOptions,
+  GitConveyorPullRequestResult,
+  I18nEnvironment,
+} from '../shared/ipc-contracts'
+import type { ThemeFile } from '../shared/theme/theme-file'
+import type { SubagentListResult, SubagentTranscriptRef, SubagentTranscriptResult } from '../shared/subagent-task'
+import { IPC_CHANNELS } from '../shared/ipc-contracts'
+
+// ─── Type Definitions for the Exposed API ────────────────────────────────────
+
+interface PiDesktopAPI {
+  // Pi process lifecycle
+  pi: {
+    start(options?: PiStartOptions): Promise<PiStatus>
+    stop(): Promise<PiStatus>
+    restart(options?: PiStartOptions): Promise<PiStatus>
+    getStatus(): Promise<PiStatus>
+    detectInstallations(options?: AgentDetectionOptions): Promise<AgentInstallationsResult>
+  }
+
+  // Pi commands
+  commands: {
+    prompt(message: string, options?: { images?: PromptImage[]; streamingBehavior?: string }): Promise<unknown>
+    steer(message: string, images?: PromptImage[]): Promise<unknown>
+    followUp(message: string): Promise<unknown>
+    abort(): Promise<unknown>
+    bash(command: string): Promise<unknown>
+    abortBash(): Promise<unknown>
+  }
+
+  // Session management
+  session: {
+    createNew(): Promise<SessionRuntimeInfo>
+    launchTask(options: SessionLaunchTaskOptions): Promise<SessionRuntimeInfo>
+    closeRuntime(runtimeId: string): Promise<SessionRuntimeCloseResult | null>
+    switch(sessionPath: string, cwd?: string): Promise<SessionRuntimeInfo>
+    listRuntimes(): Promise<SessionRuntimeInfo[]>
+    fork(entryId?: string): Promise<unknown>
+    clone(): Promise<unknown>
+    list(cwd?: string): Promise<SessionListItem[]>
+    listAll(cwd?: string): Promise<SessionListItem[]>
+    /** The session any start would continue for a registered project; null means a new session. */
+    resumeTarget(cwd: string): Promise<string | null>
+    getState(): Promise<unknown>
+    getMessages(): Promise<unknown>
+    getStats(): Promise<unknown>
+    setName(name: string): Promise<unknown>
+    exportHtml(outputPath?: string): Promise<unknown>
+    getForkMessages(): Promise<unknown>
+    /** What the active session's current assistant message has streamed so far; null without a running Pi. */
+    getStreamingText(): Promise<StreamingTextSnapshot | null>
+    delete(sessionPath: string): Promise<SessionDeleteResult>
+    archive(sessionId: string): Promise<ArchivedSessionsMap>
+    unarchive(sessionId: string): Promise<ArchivedSessionsMap>
+    listArchived(): Promise<ArchivedSessionsMap>
+    getLineage(): Promise<SessionLineageRecord[]>
+    compact(customInstructions?: string): Promise<unknown>
+  }
+
+  // Model management
+  model: {
+    set(provider: string, modelId: string): Promise<unknown>
+    cycle(): Promise<unknown>
+    listAvailable(): Promise<unknown>
+  }
+
+  // Thinking
+  thinking: {
+    setLevel(level: string): Promise<unknown>
+    cycleLevel(): Promise<unknown>
+  }
+
+  // Settings
+  settings: {
+    getAll(): Promise<AppSettings>
+    save(settings: Partial<AppSettings>): Promise<AppSettings>
+  }
+
+  // Interface language
+  i18n: {
+    getEnvironment(): Promise<I18nEnvironment>
+  }
+
+  // Permission rules
+  permissionRules: {
+    get(scope: PermissionRulesScope): Promise<PermissionRulesGetResult>
+    set(scope: PermissionRulesScope, rules: PermissionRule[]): Promise<PermissionRulesSetResult>
+    importFromFile(): Promise<PermissionRulesImportResult>
+    exportToFile(rules: PermissionRule[]): Promise<PermissionRulesExportResult>
+    workspaceStatus(): Promise<PermissionRulesWorkspaceStatus>
+    removeWorkspace(): Promise<PermissionRulesRemoveResult>
+    setWorkspaceTrust(trusted: boolean): Promise<PermissionRulesWorkspaceStatus>
+  }
+
+  // Themes (user-created theme storage)
+  themes: {
+    list(): Promise<ThemesListResult>
+    save(file: ThemeFile, existingId?: string): Promise<{ id: string }>
+    delete(id: string): Promise<void>
+    installFromUrl(url: string): Promise<ThemeImportResult>
+    export(file: ThemeFile): Promise<ThemeExportResult>
+    import(): Promise<ThemeImportResult>
+    gallery(): Promise<ThemeGalleryResult>
+    galleryImage(url: string): Promise<ThemeGalleryImageResult>
+    /** Native window background, as a computed `rgb()`/`rgba()` color. */
+    setWindowBackground(color: string): Promise<void>
+  }
+
+  // Workspace management
+  workspace: {
+    list(): Promise<Workspace[]>
+    create(name: string, path: string): Promise<Workspace>
+    createTab(options?: WorkspaceTabOptions): Promise<Workspace>
+    remove(workspaceId: string): Promise<WorkspaceRemoveResult>
+    rename(workspaceId: string, name: string): Promise<void>
+    changePath(workspaceId: string, newPath: string): Promise<void>
+    pathExists(): Promise<boolean>
+    setActive(workspaceId: string): Promise<Workspace>
+    getActive(): Promise<Workspace | null>
+    startPi(workspaceId: string, options?: PiStartOptions): Promise<PiStatus>
+    stopPi(workspaceId: string): Promise<PiStatus>
+    /** Snapshot of the per-workspace activity map (reload recovery). */
+    getActivity(): Promise<WorkspaceActivityMap>
+    /**
+     * Consume the activation intent from a notification clicked while no
+     * window existed (macOS closed-window case). Null when there is none.
+     */
+    takePendingActivation(): Promise<WorkspaceActivationIntent | null>
+  }
+
+  // Saved groups of git repositories for linked tasks
+  repoSets: {
+    list(): Promise<RepoSet[]>
+    save(draft: RepoSetDraft): Promise<RepoSet>
+    delete(id: string): Promise<void>
+    /** Resolve a picked folder to the top of its git checkout; rejects a non-repository. */
+    inspectFolder(path: string): Promise<RepoFolderInfo>
+  }
+
+  // One task across the repositories of a set (a repo set tab)
+  linkedTask: {
+    create(options: LinkedTaskOptions): Promise<Workspace>
+    addRepo(workspaceId: string, path: string): Promise<Workspace>
+    /** Show this repository in the diff, file, and git panels. */
+    focusRepo(workspaceId: string, name: string): Promise<void>
+    status(workspaceId: string): Promise<LinkedRepoStatus[]>
+    ship(workspaceId: string, request: LinkedShipRequest): Promise<LinkedShipResult>
+  }
+
+  // Package management
+  packages: {
+    listInstalled(): Promise<InstalledPackage[]>
+    install(spec: string): Promise<{ success: boolean; output: string }>
+    remove(spec: string): Promise<{ success: boolean; output: string }>
+    update(spec: string): Promise<{ success: boolean; output: string }>
+    updateAll(): Promise<{ success: boolean; output: string }>
+    checkUpdates(): Promise<PackageUpdate[]>
+    fetchCatalog(query?: string): Promise<CatalogPackage[]>
+  }
+
+  // Custom models config: the active engine's models file
+  models: {
+    read(): Promise<ModelsReadResult>
+    /** Writes the models file of `engine`: the one the editor read, whatever runs now. */
+    write(config: ModelsConfig, engine: AgentEngineKind): Promise<{ success: boolean; error?: string }>
+  }
+
+  council: {
+    detect(): Promise<CouncilDetectResult>
+    runConsultants(payload: CouncilRunRequest): Promise<CouncilRunResult>
+    arbiter(payload: CouncilArbiterRequest): Promise<CouncilArbiterResult>
+    onProgress(callback: (event: CouncilProgressEvent) => void): () => void
+  }
+
+  // Voice dictation: on-device speech-to-text models
+  voice: {
+    status(): Promise<VoiceStatus>
+    install(request: VoiceInstallRequest): Promise<VoiceStatus>
+    cancel(): Promise<void>
+    remove(modelId: string): Promise<VoiceStatus>
+    select(request: { modelId: string | null; precision: VoiceInstallRequest['precision'] }): Promise<VoiceStatus>
+    onProgress(callback: (event: VoiceProgressEvent) => void): () => void
+    /** The system-wide dictation key was pressed. */
+    onShortcut(callback: () => void): () => void
+  }
+
+  // TypeSafe (Jev): saved API key and the agent skill. The key goes in once
+  // and never comes back out.
+  typesafe: {
+    status(): Promise<TypeSafeStatus>
+    saveKey(key: string): Promise<TypeSafeSaveKeyResult>
+    clearKey(): Promise<TypeSafeStatus>
+    installSkill(): Promise<TypeSafeStatus>
+    removeSkill(): Promise<TypeSafeStatus>
+  }
+
+  // Skills, Commands, MCP, Tags
+  skills: {
+    list(): Promise<InstalledSkill[]>
+  }
+  piCommands: {
+    list(): Promise<unknown[]>
+  }
+  mcpServers: {
+    list(): Promise<unknown[]>
+  }
+  tags: {
+    get(sessionId: string): Promise<string[]>
+    set(sessionId: string, tags: string[]): Promise<string[]>
+    add(sessionId: string, tag: string): Promise<string[]>
+    remove(sessionId: string, tag: string): Promise<string[]>
+    getAll(): Promise<Record<string, string[]>>
+    getAllUsed(): Promise<string[]>
+    autoGetAll(): Promise<Record<string, string>>
+    autoEnsure(sessions: Array<{ sessionId: string; path: string }>): Promise<Record<string, string>>
+    autoRemove(sessionId: string): Promise<void>
+  }
+
+  // Git issue-to-PR conveyor. All mutating actions require explicit renderer clicks.
+  git: {
+    status(): Promise<GitConveyorStatus>
+    /** Suggest an English subject for the pending commit diff; never throws for model failures. */
+    generateCommitMessage(request: GitCommitMessageRequest): Promise<GitCommitMessageSuggestion>
+    localBranches(): Promise<string[]>
+    switchBranch(workspaceId: string, branch: string): Promise<GitBranchSwitchResult>
+    createBranch(workspaceId: string, name: string): Promise<GitBranchSwitchResult>
+    commit(options: GitConveyorCommitOptions): Promise<GitConveyorStatus>
+    push(): Promise<GitConveyorStatus>
+    createPullRequest(options: GitConveyorPullRequestOptions): Promise<GitConveyorPullRequestResult>
+  }
+
+  // Notes (reusable prompts / commands)
+  notes: {
+    list(): Promise<Note[]>
+    create(input: NoteInput): Promise<Note>
+    update(id: string, patch: NoteUpdate): Promise<Note>
+    remove(id: string): Promise<void>
+  }
+
+  // File operations
+  files: {
+    getTree(maxDepth?: number): Promise<FileTreeNode>
+    search(query: string): Promise<FileSearchResult[]>
+    searchContent(query: string): Promise<FileSearchResult[]>
+    read(path: string): Promise<string>
+    readAttachment(path: string): Promise<AttachmentReadResult>
+    write(path: string, content: string): Promise<{ ok: boolean }>
+    getDiff(filePath?: string): Promise<string>
+    getStagedDiff(filePath?: string): Promise<string>
+    discardDiff(workspaceId: string, patches: string[]): Promise<void>
+    /**
+     * Declare whether a live files panel consumes file-change events. The
+     * main process attaches the workspace watcher only while demanded.
+     */
+    setWatchDemand(demanded: boolean): Promise<{ watching: boolean }>
+    getGitStatus(): Promise<Record<string, GitFileStatus>>
+    getGitBranch(): Promise<string | null>
+    /** The workspace's directory inside its repository ('' at the root); diff paths start at the root. */
+    getGitPrefix(): Promise<string>
+  }
+
+  // System
+  system: {
+    openDialog(options?: OpenDialogOptions): Promise<string | null>
+    /** Pick one or more files to attach; every picked path is approved for readAttachment. */
+    openAttachmentDialog(options?: OpenAttachmentDialogOptions): Promise<string[]>
+    getPath(name: string): Promise<string>
+    /** Absolute path for a File from a drag-drop (Electron webUtils). */
+    getPathForFile(file: File): string
+    /** Whether a path exists and is a directory (folder open). */
+    pathKind(path: string): Promise<PathKindResult>
+    openExternal(url: string): Promise<void>
+    getVersion(): Promise<string>
+    /**
+     * Host OS platform from the preload process polyfill. Sync — sandboxed
+     * renderer pages have no Node `process`, so path helpers read this for
+     * win32 case-folding.
+     */
+    platform: NodeJS.Platform
+  }
+
+  // Activity stats
+  activity: {
+    getStats(): Promise<ActivityStatsResult>
+  }
+
+  // Dynamic workflow run monitoring
+  workflows: {
+    list(): Promise<WorkflowRunSummary[]>
+    getRun(workspaceId: string, runId: string): Promise<WorkflowRunDetail>
+    /**
+     * Dispatch stop/resume to the run's owning workspace Pi process. Never
+     * fakes a local status change; the persisted run flips on the next poll.
+     */
+    control(workspaceId: string, runId: string, action: WorkflowControlAction): Promise<WorkflowControlResult>
+    setPersistAgentSessions(enabled: boolean): Promise<void>
+  }
+
+  // Subagent panel: OMP subagent list and per-subagent transcripts
+  subagents: {
+    /** Both calls answer only while `runtimeId` is the active session runtime. */
+    list(runtimeId: string): Promise<SubagentListResult>
+    getTranscript(runtimeId: string, ref: SubagentTranscriptRef, cursor: number): Promise<SubagentTranscriptResult>
+  }
+
+  // Diagnostics report
+  diagnostics: {
+    get(): Promise<DiagnosticsReport>
+  }
+
+  // Update check (GitHub releases)
+  updates: {
+    check(): Promise<UpdateCheckResult>
+  }
+
+  terminal: {
+    start(workspaceId: string, options?: TerminalStartOptions): Promise<TerminalStartResult>
+    input(workspaceId: string, data: string): Promise<void>
+    resize(workspaceId: string, cols: number, rows: number): Promise<void>
+    stop(workspaceId: string): Promise<void>
+    onData(callback: (event: TerminalDataEvent) => void): () => void
+    onExit(callback: (event: TerminalExitEvent) => void): () => void
+  }
+
+  // Extension UI responses
+  ui: {
+    respondSelect(id: string, value: string): void
+    respondConfirm(id: string, confirmed: boolean): void
+    respondInput(id: string, value: string): void
+    respondEditor(id: string, value: string): void
+    /**
+     * Ask main to (re-)deliver the workspace's held blocking prompt.
+     * No-op unless the workspace is active when the flush executes.
+     */
+    flushPendingPrompts(workspaceId: string): Promise<void>
+    getPendingPrompts(): Promise<PendingPromptCounts>
+    /**
+     * Mirror the editor pane's unsaved-changes state to main, which guards
+     * quit, window close, and reload behind a discard confirmation.
+     */
+    setEditorDirty(dirty: boolean, fileName: string | null): void
+  }
+
+  // Event subscription
+  onEvent(callback: (event: PiRpcEvent) => void): () => void
+  onPendingPrompts(callback: (counts: PendingPromptCounts) => void): () => void
+  onWorkspaceActivity(callback: (map: WorkspaceActivityMap) => void): () => void
+  onSessionRuntime(callback: (runtime: SessionRuntimeInfo) => void): () => void
+  onActivateWorkspace(callback: (payload: WorkspaceActivationIntent) => void): () => void
+  onFileChange(callback: (event: FileChangeEvent) => void): () => void
+  onMenuAction(callback: (action: string) => void): () => void
+}
+
+// ─── Implementation ──────────────────────────────────────────────────────────
+
+const api: PiDesktopAPI = {
+  pi: {
+    start: (options?: PiStartOptions) => ipcRenderer.invoke(IPC_CHANNELS.PI_START, options),
+    stop: () => ipcRenderer.invoke(IPC_CHANNELS.PI_STOP),
+    restart: (options?: PiStartOptions) => ipcRenderer.invoke(IPC_CHANNELS.PI_RESTART, options),
+    getStatus: () => ipcRenderer.invoke(IPC_CHANNELS.PI_STATUS),
+    detectInstallations: (options) => ipcRenderer.invoke(IPC_CHANNELS.PI_DETECT_INSTALLATIONS, options),
+  },
+
+  commands: {
+    prompt: (message, options) => ipcRenderer.invoke(IPC_CHANNELS.PI_PROMPT, message, options),
+    steer: (message, images) => ipcRenderer.invoke(IPC_CHANNELS.PI_STEER, message, images),
+    followUp: (message) => ipcRenderer.invoke(IPC_CHANNELS.PI_FOLLOW_UP, message),
+    abort: () => ipcRenderer.invoke(IPC_CHANNELS.PI_ABORT),
+    bash: (command) => ipcRenderer.invoke(IPC_CHANNELS.PI_BASH, command),
+    abortBash: () => ipcRenderer.invoke(IPC_CHANNELS.PI_ABORT_BASH),
+  },
+
+  session: {
+    createNew: () => ipcRenderer.invoke(IPC_CHANNELS.SESSION_NEW),
+    launchTask: (options) => ipcRenderer.invoke(IPC_CHANNELS.SESSION_LAUNCH_TASK, options),
+    closeRuntime: (runtimeId) => ipcRenderer.invoke(IPC_CHANNELS.SESSION_CLOSE_RUNTIME, runtimeId),
+    switch: (sessionPath, cwd) => ipcRenderer.invoke(IPC_CHANNELS.SESSION_SWITCH, sessionPath, cwd),
+    listRuntimes: () => ipcRenderer.invoke(IPC_CHANNELS.SESSION_LIST_RUNTIMES),
+    fork: (entryId) => ipcRenderer.invoke(IPC_CHANNELS.SESSION_FORK, entryId),
+    clone: () => ipcRenderer.invoke(IPC_CHANNELS.SESSION_CLONE),
+    list: (cwd) => ipcRenderer.invoke(IPC_CHANNELS.SESSION_LIST, cwd),
+    listAll: (cwd) => ipcRenderer.invoke(IPC_CHANNELS.SESSION_LIST_ALL, cwd),
+    resumeTarget: (cwd) => ipcRenderer.invoke(IPC_CHANNELS.SESSION_RESUME_TARGET, cwd),
+    getState: () => ipcRenderer.invoke(IPC_CHANNELS.SESSION_GET_STATE),
+    getMessages: () => ipcRenderer.invoke(IPC_CHANNELS.SESSION_GET_MESSAGES),
+    getStats: () => ipcRenderer.invoke(IPC_CHANNELS.SESSION_GET_STATS),
+    setName: (name) => ipcRenderer.invoke(IPC_CHANNELS.SESSION_SET_NAME, name),
+    exportHtml: (outputPath) => ipcRenderer.invoke(IPC_CHANNELS.SESSION_EXPORT_HTML, outputPath),
+    getForkMessages: () => ipcRenderer.invoke(IPC_CHANNELS.SESSION_GET_FORK_MESSAGES),
+    getStreamingText: () => ipcRenderer.invoke(IPC_CHANNELS.SESSION_GET_STREAMING_TEXT),
+    getLineage: () => ipcRenderer.invoke(IPC_CHANNELS.SESSION_GET_LINEAGE),
+    compact: (customInstructions) => ipcRenderer.invoke(IPC_CHANNELS.SESSION_COMPACT, customInstructions),
+    delete: (sessionPath) => ipcRenderer.invoke(IPC_CHANNELS.SESSION_DELETE, sessionPath),
+    archive: (sessionId) => ipcRenderer.invoke(IPC_CHANNELS.SESSION_ARCHIVE, sessionId),
+    unarchive: (sessionId) => ipcRenderer.invoke(IPC_CHANNELS.SESSION_UNARCHIVE, sessionId),
+    listArchived: () => ipcRenderer.invoke(IPC_CHANNELS.SESSION_LIST_ARCHIVED),
+  },
+
+  model: {
+    set: (provider, modelId) => ipcRenderer.invoke(IPC_CHANNELS.MODEL_SET, provider, modelId),
+    cycle: () => ipcRenderer.invoke(IPC_CHANNELS.MODEL_CYCLE),
+    listAvailable: () => ipcRenderer.invoke(IPC_CHANNELS.MODEL_LIST_AVAILABLE),
+  },
+
+  thinking: {
+    setLevel: (level) => ipcRenderer.invoke(IPC_CHANNELS.THINKING_SET_LEVEL, level),
+    cycleLevel: () => ipcRenderer.invoke(IPC_CHANNELS.THINKING_CYCLE_LEVEL),
+  },
+
+  settings: {
+    getAll: () => ipcRenderer.invoke(IPC_CHANNELS.SETTINGS_GET_ALL),
+    save: (settings) => ipcRenderer.invoke(IPC_CHANNELS.SETTINGS_SAVE, settings),
+  },
+
+  i18n: {
+    getEnvironment: () => ipcRenderer.invoke(IPC_CHANNELS.I18N_GET_ENVIRONMENT),
+  },
+
+  permissionRules: {
+    get: (scope) => ipcRenderer.invoke(IPC_CHANNELS.PERMISSION_RULES_GET, scope),
+    set: (scope, rules) => ipcRenderer.invoke(IPC_CHANNELS.PERMISSION_RULES_SET, scope, rules),
+    importFromFile: () => ipcRenderer.invoke(IPC_CHANNELS.PERMISSION_RULES_IMPORT),
+    exportToFile: (rules) => ipcRenderer.invoke(IPC_CHANNELS.PERMISSION_RULES_EXPORT, rules),
+    workspaceStatus: () => ipcRenderer.invoke(IPC_CHANNELS.PERMISSION_RULES_WORKSPACE_STATUS),
+    removeWorkspace: () => ipcRenderer.invoke(IPC_CHANNELS.PERMISSION_RULES_REMOVE_WORKSPACE),
+    setWorkspaceTrust: (trusted) => ipcRenderer.invoke(IPC_CHANNELS.PERMISSION_RULES_SET_WORKSPACE_TRUST, trusted),
+  },
+
+  themes: {
+    list: () => ipcRenderer.invoke(IPC_CHANNELS.THEMES_LIST),
+    save: (file, existingId) => ipcRenderer.invoke(IPC_CHANNELS.THEMES_SAVE, file, existingId),
+    delete: (id) => ipcRenderer.invoke(IPC_CHANNELS.THEMES_DELETE, id),
+    installFromUrl: (url) => ipcRenderer.invoke(IPC_CHANNELS.THEMES_INSTALL_URL, url),
+    export: (file) => ipcRenderer.invoke(IPC_CHANNELS.THEMES_EXPORT, file),
+    import: () => ipcRenderer.invoke(IPC_CHANNELS.THEMES_IMPORT),
+    gallery: () => ipcRenderer.invoke(IPC_CHANNELS.THEMES_GALLERY_LIST),
+    galleryImage: (url) => ipcRenderer.invoke(IPC_CHANNELS.THEMES_GALLERY_IMAGE, url),
+    setWindowBackground: (color) => ipcRenderer.invoke(IPC_CHANNELS.THEMES_SET_WINDOW_BACKGROUND, color),
+  },
+
+  workspace: {
+    list: () => ipcRenderer.invoke(IPC_CHANNELS.WORKSPACE_LIST),
+    create: (name, path) => ipcRenderer.invoke(IPC_CHANNELS.WORKSPACE_CREATE, name, path),
+    remove: (workspaceId) => ipcRenderer.invoke(IPC_CHANNELS.WORKSPACE_REMOVE, workspaceId),
+    rename: (workspaceId, name) => ipcRenderer.invoke(IPC_CHANNELS.WORKSPACE_RENAME, workspaceId, name),
+    changePath: (workspaceId, newPath) => ipcRenderer.invoke(IPC_CHANNELS.WORKSPACE_CHANGE_PATH, workspaceId, newPath),
+    pathExists: () => ipcRenderer.invoke(IPC_CHANNELS.WORKSPACE_PATH_EXISTS),
+    setActive: (workspaceId) => ipcRenderer.invoke(IPC_CHANNELS.WORKSPACE_SET_ACTIVE, workspaceId),
+    getActive: () => ipcRenderer.invoke(IPC_CHANNELS.WORKSPACE_GET_ACTIVE),
+    startPi: (workspaceId, options) => ipcRenderer.invoke(IPC_CHANNELS.WORKSPACE_START_PI, workspaceId, options),
+    stopPi: (workspaceId) => ipcRenderer.invoke(IPC_CHANNELS.WORKSPACE_STOP_PI, workspaceId),
+    createTab: (options) => ipcRenderer.invoke(IPC_CHANNELS.WORKSPACE_CREATE_TAB, options),
+    getActivity: () => ipcRenderer.invoke(IPC_CHANNELS.WORKSPACE_ACTIVITY_GET),
+    takePendingActivation: () => ipcRenderer.invoke(IPC_CHANNELS.WORKSPACE_TAKE_PENDING_ACTIVATION),
+  },
+
+  repoSets: {
+    list: () => ipcRenderer.invoke(IPC_CHANNELS.REPO_SET_LIST),
+    save: (draft) => ipcRenderer.invoke(IPC_CHANNELS.REPO_SET_SAVE, draft),
+    delete: (id) => ipcRenderer.invoke(IPC_CHANNELS.REPO_SET_DELETE, id),
+    inspectFolder: (path) => ipcRenderer.invoke(IPC_CHANNELS.REPO_SET_INSPECT_FOLDER, path),
+  },
+
+  linkedTask: {
+    create: (options) => ipcRenderer.invoke(IPC_CHANNELS.LINKED_TASK_CREATE, options),
+    addRepo: (workspaceId, path) => ipcRenderer.invoke(IPC_CHANNELS.LINKED_TASK_ADD_REPO, workspaceId, path),
+    focusRepo: (workspaceId, name) => ipcRenderer.invoke(IPC_CHANNELS.LINKED_TASK_FOCUS_REPO, workspaceId, name),
+    status: (workspaceId) => ipcRenderer.invoke(IPC_CHANNELS.LINKED_TASK_STATUS, workspaceId),
+    ship: (workspaceId, request) => ipcRenderer.invoke(IPC_CHANNELS.LINKED_TASK_SHIP, workspaceId, request),
+  },
+
+  packages: {
+    listInstalled: () => ipcRenderer.invoke(IPC_CHANNELS.PACKAGE_LIST_INSTALLED),
+    install: (spec) => ipcRenderer.invoke(IPC_CHANNELS.PACKAGE_INSTALL, spec),
+    remove: (spec) => ipcRenderer.invoke(IPC_CHANNELS.PACKAGE_REMOVE, spec),
+    update: (spec) => ipcRenderer.invoke(IPC_CHANNELS.PACKAGE_UPDATE, spec),
+    updateAll: () => ipcRenderer.invoke(IPC_CHANNELS.PACKAGE_UPDATE_ALL),
+    checkUpdates: () => ipcRenderer.invoke(IPC_CHANNELS.PACKAGE_CHECK_UPDATES),
+    fetchCatalog: (query) => ipcRenderer.invoke(IPC_CHANNELS.PACKAGE_CATALOG_FETCH, query),
+  },
+
+  models: {
+    read: () => ipcRenderer.invoke(IPC_CHANNELS.MODELS_READ),
+    write: (config, engine) => ipcRenderer.invoke(IPC_CHANNELS.MODELS_WRITE, config, engine),
+  },
+
+  council: {
+    detect: () => ipcRenderer.invoke(IPC_CHANNELS.COUNCIL_DETECT),
+    runConsultants: (payload) => ipcRenderer.invoke(IPC_CHANNELS.COUNCIL_RUN_CONSULTANTS, payload),
+    arbiter: (payload) => ipcRenderer.invoke(IPC_CHANNELS.COUNCIL_ARBITER, payload),
+    onProgress: (callback) => {
+      const handler = (_event: Electron.IpcRendererEvent, data: CouncilProgressEvent) => callback(data)
+      ipcRenderer.on(IPC_CHANNELS.EVENT_COUNCIL_PROGRESS, handler)
+      return () => ipcRenderer.removeListener(IPC_CHANNELS.EVENT_COUNCIL_PROGRESS, handler)
+    },
+  },
+
+  voice: {
+    status: () => ipcRenderer.invoke(IPC_CHANNELS.VOICE_STATUS),
+    install: (request) => ipcRenderer.invoke(IPC_CHANNELS.VOICE_INSTALL, request),
+    cancel: () => ipcRenderer.invoke(IPC_CHANNELS.VOICE_CANCEL),
+    remove: (modelId) => ipcRenderer.invoke(IPC_CHANNELS.VOICE_REMOVE, modelId),
+    select: (request) => ipcRenderer.invoke(IPC_CHANNELS.VOICE_SELECT, request),
+    onProgress: (callback) => {
+      const handler = (_event: Electron.IpcRendererEvent, data: VoiceProgressEvent) => callback(data)
+      ipcRenderer.on(IPC_CHANNELS.EVENT_VOICE_PROGRESS, handler)
+      return () => ipcRenderer.removeListener(IPC_CHANNELS.EVENT_VOICE_PROGRESS, handler)
+    },
+    onShortcut: (callback) => {
+      const handler = () => callback()
+      ipcRenderer.on(IPC_CHANNELS.EVENT_VOICE_SHORTCUT, handler)
+      return () => ipcRenderer.removeListener(IPC_CHANNELS.EVENT_VOICE_SHORTCUT, handler)
+    },
+  },
+
+  typesafe: {
+    status: () => ipcRenderer.invoke(IPC_CHANNELS.TYPESAFE_STATUS),
+    saveKey: (key) => ipcRenderer.invoke(IPC_CHANNELS.TYPESAFE_SAVE_KEY, key),
+    clearKey: () => ipcRenderer.invoke(IPC_CHANNELS.TYPESAFE_CLEAR_KEY),
+    installSkill: () => ipcRenderer.invoke(IPC_CHANNELS.TYPESAFE_INSTALL_SKILL),
+    removeSkill: () => ipcRenderer.invoke(IPC_CHANNELS.TYPESAFE_REMOVE_SKILL),
+  },
+
+  skills: {
+    list: () => ipcRenderer.invoke(IPC_CHANNELS.SKILLS_LIST),
+  },
+  piCommands: {
+    list: () => ipcRenderer.invoke(IPC_CHANNELS.COMMANDS_LIST),
+  },
+  mcpServers: {
+    list: () => ipcRenderer.invoke(IPC_CHANNELS.MCP_SERVERS_LIST),
+  },
+  tags: {
+    get: (sessionId) => ipcRenderer.invoke(IPC_CHANNELS.TAG_GET, sessionId),
+    set: (sessionId, tags) => ipcRenderer.invoke(IPC_CHANNELS.TAG_SET, sessionId, tags),
+    add: (sessionId, tag) => ipcRenderer.invoke(IPC_CHANNELS.TAG_ADD, sessionId, tag),
+    remove: (sessionId, tag) => ipcRenderer.invoke(IPC_CHANNELS.TAG_REMOVE, sessionId, tag),
+    getAll: () => ipcRenderer.invoke(IPC_CHANNELS.TAG_GET_ALL),
+    getAllUsed: () => ipcRenderer.invoke(IPC_CHANNELS.TAG_GET_ALL_USED),
+    autoGetAll: () => ipcRenderer.invoke(IPC_CHANNELS.TAG_AUTO_GET_ALL),
+    autoEnsure: (sessions) => ipcRenderer.invoke(IPC_CHANNELS.TAG_AUTO_ENSURE, sessions),
+    autoRemove: (sessionId) => ipcRenderer.invoke(IPC_CHANNELS.TAG_AUTO_REMOVE, sessionId),
+  },
+
+  git: {
+    status: () => ipcRenderer.invoke(IPC_CHANNELS.GIT_CONVEYOR_STATUS),
+    generateCommitMessage: (request) => ipcRenderer.invoke(IPC_CHANNELS.GIT_COMMIT_MESSAGE_GENERATE, request),
+    localBranches: () => ipcRenderer.invoke(IPC_CHANNELS.GIT_LOCAL_BRANCHES),
+    switchBranch: (workspaceId, branch) => ipcRenderer.invoke(IPC_CHANNELS.GIT_SWITCH_BRANCH, workspaceId, branch),
+    createBranch: (workspaceId, name) => ipcRenderer.invoke(IPC_CHANNELS.GIT_CREATE_BRANCH, workspaceId, name),
+    commit: (options) => ipcRenderer.invoke(IPC_CHANNELS.GIT_CONVEYOR_COMMIT, options),
+    push: () => ipcRenderer.invoke(IPC_CHANNELS.GIT_CONVEYOR_PUSH),
+    createPullRequest: (options) => ipcRenderer.invoke(IPC_CHANNELS.GIT_CONVEYOR_CREATE_PR, options),
+  },
+
+  notes: {
+    list: () => ipcRenderer.invoke(IPC_CHANNELS.NOTES_LIST),
+    create: (input) => ipcRenderer.invoke(IPC_CHANNELS.NOTES_CREATE, input),
+    update: (id, patch) => ipcRenderer.invoke(IPC_CHANNELS.NOTES_UPDATE, id, patch),
+    remove: (id) => ipcRenderer.invoke(IPC_CHANNELS.NOTES_REMOVE, id),
+  },
+
+  files: {
+    getTree: (maxDepth) => ipcRenderer.invoke(IPC_CHANNELS.FILE_TREE, maxDepth),
+    search: (query) => ipcRenderer.invoke(IPC_CHANNELS.FILE_SEARCH, query),
+    searchContent: (query) => ipcRenderer.invoke(IPC_CHANNELS.FILE_SEARCH_CONTENT, query),
+    read: (path) => ipcRenderer.invoke(IPC_CHANNELS.FILE_READ, path),
+    readAttachment: (path) => ipcRenderer.invoke(IPC_CHANNELS.FILE_READ_ATTACHMENT, path),
+    write: (path, content) => ipcRenderer.invoke(IPC_CHANNELS.FILE_WRITE, path, content),
+    getDiff: (filePath) => ipcRenderer.invoke(IPC_CHANNELS.FILE_DIFF, filePath),
+    getStagedDiff: (filePath) => ipcRenderer.invoke(IPC_CHANNELS.FILE_STAGED_DIFF, filePath),
+    discardDiff: (workspaceId, patches) => ipcRenderer.invoke(IPC_CHANNELS.FILE_DISCARD_DIFF, workspaceId, patches),
+    setWatchDemand: (demanded) => ipcRenderer.invoke(IPC_CHANNELS.FILE_WATCH_DEMAND, demanded),
+    getGitStatus: () => ipcRenderer.invoke(IPC_CHANNELS.GIT_STATUS),
+    getGitBranch: () => ipcRenderer.invoke(IPC_CHANNELS.GIT_BRANCH),
+    getGitPrefix: () => ipcRenderer.invoke(IPC_CHANNELS.GIT_PREFIX),
+  },
+
+  system: {
+    openDialog: (options) => ipcRenderer.invoke(IPC_CHANNELS.SYSTEM_OPEN_DIALOG, options),
+    openAttachmentDialog: (options) => ipcRenderer.invoke(IPC_CHANNELS.SYSTEM_OPEN_ATTACHMENT_DIALOG, options),
+    getPath: (name) => ipcRenderer.invoke(IPC_CHANNELS.SYSTEM_GET_PATH, name),
+    getPathForFile: (file) => webUtils.getPathForFile(file),
+    pathKind: (path) => ipcRenderer.invoke(IPC_CHANNELS.SYSTEM_PATH_KIND, path),
+    // Sandboxed preload still has a process polyfill with platform.
+    platform: process.platform,
+    openExternal: (url) => ipcRenderer.invoke(IPC_CHANNELS.SYSTEM_OPEN_EXTERNAL, url),
+    getVersion: () => ipcRenderer.invoke(IPC_CHANNELS.SYSTEM_GET_VERSION),
+  },
+
+  activity: {
+    getStats: () => ipcRenderer.invoke(IPC_CHANNELS.ACTIVITY_GET_STATS),
+  },
+
+  workflows: {
+    list: () => ipcRenderer.invoke(IPC_CHANNELS.WORKFLOW_LIST),
+    getRun: (workspaceId, runId) => ipcRenderer.invoke(IPC_CHANNELS.WORKFLOW_GET_RUN, workspaceId, runId),
+    control: (workspaceId, runId, action) => ipcRenderer.invoke(IPC_CHANNELS.WORKFLOW_CONTROL, workspaceId, runId, action),
+    setPersistAgentSessions: (enabled) => ipcRenderer.invoke(IPC_CHANNELS.WORKFLOW_SET_PERSISTENCE, enabled),
+  },
+
+  subagents: {
+    list: (runtimeId) => ipcRenderer.invoke(IPC_CHANNELS.SUBAGENT_LIST, runtimeId),
+    getTranscript: (runtimeId, ref, cursor) => ipcRenderer.invoke(IPC_CHANNELS.SUBAGENT_GET_TRANSCRIPT, runtimeId, ref, cursor),
+  },
+
+  diagnostics: {
+    get: () => ipcRenderer.invoke(IPC_CHANNELS.DIAGNOSTICS_GET),
+  },
+
+  updates: {
+    check: () => ipcRenderer.invoke(IPC_CHANNELS.UPDATE_CHECK),
+  },
+
+  terminal: {
+    start: (workspaceId, options) => ipcRenderer.invoke(IPC_CHANNELS.TERMINAL_START, workspaceId, options),
+    input: (workspaceId, data) => ipcRenderer.invoke(IPC_CHANNELS.TERMINAL_INPUT, workspaceId, data),
+    resize: (workspaceId, cols, rows) => ipcRenderer.invoke(IPC_CHANNELS.TERMINAL_RESIZE, workspaceId, { cols, rows }),
+    stop: (workspaceId) => ipcRenderer.invoke(IPC_CHANNELS.TERMINAL_STOP, workspaceId),
+    onData: (callback) => {
+      const handler = (_event: Electron.IpcRendererEvent, data: TerminalDataEvent) => callback(data)
+      ipcRenderer.on(IPC_CHANNELS.EVENT_TERMINAL_DATA, handler)
+      return () => ipcRenderer.removeListener(IPC_CHANNELS.EVENT_TERMINAL_DATA, handler)
+    },
+    onExit: (callback) => {
+      const handler = (_event: Electron.IpcRendererEvent, data: TerminalExitEvent) => callback(data)
+      ipcRenderer.on(IPC_CHANNELS.EVENT_TERMINAL_EXIT, handler)
+      return () => ipcRenderer.removeListener(IPC_CHANNELS.EVENT_TERMINAL_EXIT, handler)
+    },
+  },
+
+  ui: {
+    respondSelect: (id, value) => ipcRenderer.invoke(IPC_CHANNELS.UI_SELECT_RESPONSE, id, value),
+    respondConfirm: (id, confirmed) => ipcRenderer.invoke(IPC_CHANNELS.UI_CONFIRM_RESPONSE, id, confirmed),
+    respondInput: (id, value) => ipcRenderer.invoke(IPC_CHANNELS.UI_INPUT_RESPONSE, id, value),
+    respondEditor: (id, value) => ipcRenderer.invoke(IPC_CHANNELS.UI_EDITOR_RESPONSE, id, value),
+    flushPendingPrompts: (workspaceId) => ipcRenderer.invoke(IPC_CHANNELS.UI_PENDING_FLUSH, workspaceId),
+    getPendingPrompts: () => ipcRenderer.invoke(IPC_CHANNELS.UI_PENDING_GET),
+    setEditorDirty: (dirty, fileName) =>
+      ipcRenderer.send(
+        IPC_CHANNELS.UI_EDITOR_DIRTY_SET,
+        dirty === true,
+        typeof fileName === 'string' ? fileName : null
+      ),
+  },
+
+  onEvent: (callback) => {
+    const handler = (_event: Electron.IpcRendererEvent, data: PiRpcEvent) => callback(data)
+    ipcRenderer.on(IPC_CHANNELS.EVENT_PI, handler)
+    return () => {
+      ipcRenderer.removeListener(IPC_CHANNELS.EVENT_PI, handler)
+    }
+  },
+
+  onPendingPrompts: (callback) => {
+    const handler = (_event: Electron.IpcRendererEvent, data: PendingPromptCounts) => callback(data)
+    ipcRenderer.on(IPC_CHANNELS.EVENT_PENDING_PROMPTS, handler)
+    return () => {
+      ipcRenderer.removeListener(IPC_CHANNELS.EVENT_PENDING_PROMPTS, handler)
+    }
+  },
+
+  onWorkspaceActivity: (callback) => {
+    const handler = (_event: Electron.IpcRendererEvent, data: WorkspaceActivityMap) => callback(data)
+    ipcRenderer.on(IPC_CHANNELS.EVENT_WORKSPACE_ACTIVITY, handler)
+    return () => {
+      ipcRenderer.removeListener(IPC_CHANNELS.EVENT_WORKSPACE_ACTIVITY, handler)
+    }
+  },
+
+  onSessionRuntime: (callback) => {
+    const handler = (_event: Electron.IpcRendererEvent, data: SessionRuntimeInfo) => callback(data)
+    ipcRenderer.on(IPC_CHANNELS.EVENT_SESSION_RUNTIME, handler)
+    return () => {
+      ipcRenderer.removeListener(IPC_CHANNELS.EVENT_SESSION_RUNTIME, handler)
+    }
+  },
+
+  onActivateWorkspace: (callback) => {
+    const handler = (_event: Electron.IpcRendererEvent, data: WorkspaceActivationIntent) => callback(data)
+    ipcRenderer.on(IPC_CHANNELS.EVENT_ACTIVATE_WORKSPACE, handler)
+    return () => {
+      ipcRenderer.removeListener(IPC_CHANNELS.EVENT_ACTIVATE_WORKSPACE, handler)
+    }
+  },
+
+  onFileChange: (callback) => {
+    const handler = (_event: Electron.IpcRendererEvent, data: FileChangeEvent) => callback(data)
+    ipcRenderer.on(IPC_CHANNELS.EVENT_FILE_CHANGE, handler)
+    return () => {
+      ipcRenderer.removeListener(IPC_CHANNELS.EVENT_FILE_CHANGE, handler)
+    }
+  },
+
+  onMenuAction: (callback) => {
+    const handlers: Array<() => void> = []
+    const actions = ['menu:new-session', 'menu:close-session', 'menu:new-workspace', 'menu:open-project']
+
+    for (const action of actions) {
+      const handler = () => callback(action)
+      ipcRenderer.on(action, handler)
+      handlers.push(() => ipcRenderer.removeListener(action, handler))
+    }
+
+    return () => {
+      for (const cleanup of handlers) cleanup()
+    }
+  },
+}
+
+// ─── Expose to Renderer ──────────────────────────────────────────────────────
+
+contextBridge.exposeInMainWorld('piDesktop', api)
+
+// Re-export the type for renderer usage
+export type { PiDesktopAPI }

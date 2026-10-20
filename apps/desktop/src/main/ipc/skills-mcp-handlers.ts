@@ -1,0 +1,192 @@
+import { ipcMain } from 'electron'
+import { IPC_CHANNELS, type AgentEngineKind } from '../../shared/ipc-contracts'
+import { readFile } from 'fs/promises'
+import { join } from 'path'
+import { existsSync } from 'fs'
+import type { IpcContext } from './context'
+import { getPiCli } from '../pi-rpc-manager'
+import { AGENT_ENGINE_DEFINITIONS } from '../../shared/agent-engine'
+import { getEngineAgentDir } from '../agent-engine-storage'
+import { listSkills, mergeRpcSkills } from '../skills-discovery'
+import { isPiBuiltInExtensionCommand } from '../../shared/pi-command'
+
+export function registerSkillsMcpHandlers(ctx: IpcContext): void {
+  const { workspaceManager } = ctx
+
+  // ─── Skills ─────────────────────────────────────────────────────────────
+
+  ipcMain.handle(IPC_CHANNELS.SKILLS_LIST, async () => {
+    const ws = workspaceManager.getActiveWorkspace()
+    const cwd = ws?.path ?? process.cwd()
+    const pi = workspaceManager.getActivePiManager()
+    const engine = pi?.getEngineKind() ?? getPiCli().kind ?? 'pi'
+    const skills = await listSkills(cwd, engine)
+    // The disk scan cannot see skills shipped by installed packages/plugins,
+    // but the running engine reports them in its command catalog — merge those
+    // in so the panel matches what the agent can actually invoke.
+    if (pi && pi.getStatus().status === 'running') {
+      mergeRpcSkills(skills, await fetchCommands(pi))
+    }
+    return skills
+  })
+
+  ipcMain.handle(IPC_CHANNELS.COMMANDS_LIST, async () => {
+    const pi = workspaceManager.getActivePiManager()
+    if (!pi || pi.getStatus().status !== 'running') return []
+    return fetchCommands(pi)
+  })
+
+  ipcMain.handle(IPC_CHANNELS.MCP_SERVERS_LIST, async () => {
+    const ws = workspaceManager.getActiveWorkspace()
+    const engine = workspaceManager.getActivePiManager()?.getEngineKind() ?? getPiCli().kind ?? 'pi'
+    return listMcpServers(ws?.path, engine)
+  })
+}
+
+// ─── Command Catalog ─────────────────────────────────────────────────────────
+
+/** Command catalog from the running engine (Pi and OMP name the request differently). */
+async function fetchCommands(pi: {
+  getEngineKind(): 'pi' | 'omp' | 'finecode'
+  sendCommand(command: Record<string, unknown>): Promise<unknown>
+}): Promise<unknown[]> {
+  try {
+    const command = pi.getEngineKind() === 'omp' ? 'get_available_commands' : 'get_commands'
+    const response = (await pi.sendCommand({ type: command })) as {
+      success?: boolean
+      data?: { commands?: unknown[] }
+    } | null
+    if (response?.success && Array.isArray(response.data?.commands)) {
+      return response.data.commands.filter((c) => !isPiBuiltInExtensionCommand(c))
+    }
+    return []
+  } catch {
+    return []
+  }
+}
+
+// ─── MCP Server Discovery ────────────────────────────────────────────────────
+
+interface McpServerInfo {
+  name: string
+  command: string
+  args: string[]
+  env: Record<string, string>
+  source: 'global' | 'project'
+  status: 'configured' | 'unknown'
+}
+
+async function listMcpServers(wsPath: string | undefined, engine: AgentEngineKind): Promise<McpServerInfo[]> {
+  const servers: McpServerInfo[] = []
+  const homeDir = process.env.HOME ?? process.env.USERPROFILE ?? ''
+  const omp = engine === 'omp'
+  const definition = AGENT_ENGINE_DEFINITIONS[engine]
+  const agentDir = getEngineAgentDir(engine)
+  const globalSettingsPaths = omp
+    ? [
+        join(agentDir, 'mcp.json'),
+        join(agentDir, '.mcp.json'),
+        join(homeDir, '.pi', 'agent', 'settings.json'),
+      ]
+    : [
+        join(agentDir, 'settings.json'),
+        ...(definition.storage === 'desktop-data' ? [join(agentDir, 'mcp.json')] : []),
+      ]
+  for (const settingsPath of globalSettingsPaths) {
+    await collectMcpServers(settingsPath, servers, 'global')
+  }
+
+  if (wsPath) {
+    const projectDir = join(wsPath, definition.configDir)
+    const projectSettingsPaths = omp
+      ? [join(projectDir, 'mcp.json'), join(projectDir, '.mcp.json'), join(wsPath, '.pi', 'settings.json')]
+      : [join(projectDir, 'settings.json'), ...(definition.storage === 'desktop-data' ? [join(projectDir, 'mcp.json')] : [])]
+    for (const settingsPath of projectSettingsPaths) {
+      await collectMcpServers(settingsPath, servers, 'project')
+    }
+  }
+
+  if (definition.storage !== 'desktop-data') {
+    const mcpConfigPaths = [
+      join(homeDir, '.config', 'claude', 'claude_desktop_config.json'),
+      join(homeDir, '.cursor', 'mcp.json'),
+      join(homeDir, '.codeium', 'mcp.json'),
+    ]
+    for (const configPath of mcpConfigPaths) {
+      await collectMcpServersFromConfig(configPath, servers)
+    }
+  }
+
+  const unique = new Map<string, McpServerInfo>()
+  for (const server of servers) {
+    const existing = unique.get(server.name)
+    if (!existing || (existing.source === 'global' && server.source === 'project')) {
+      unique.set(server.name, server)
+    }
+  }
+  return [...unique.values()]
+}
+
+async function collectMcpServers(
+  settingsPath: string,
+  servers: McpServerInfo[],
+  source: 'global' | 'project'
+): Promise<void> {
+  try {
+    if (!existsSync(settingsPath)) return
+    const content = await readFile(settingsPath, 'utf-8')
+    const settings = JSON.parse(content)
+
+    // Pi settings may have mcpServers under various keys
+    const mcpServers = settings.mcpServers ?? settings.mcp?.servers ?? {}
+
+    for (const [name, config] of Object.entries(mcpServers)) {
+      if (typeof config === 'object' && config !== null) {
+        const cfg = config as Record<string, unknown>
+        servers.push({
+          name,
+          command: String(cfg.command ?? ''),
+          args: Array.isArray(cfg.args) ? cfg.args.map(String) : [],
+          env: typeof cfg.env === 'object' && cfg.env !== null ? cfg.env as Record<string, string> : {},
+          source,
+          status: 'configured',
+        })
+      }
+    }
+  } catch {
+    // Skip unreadable files
+  }
+}
+
+async function collectMcpServersFromConfig(
+  configPath: string,
+  servers: McpServerInfo[]
+): Promise<void> {
+  try {
+    if (!existsSync(configPath)) return
+    const content = await readFile(configPath, 'utf-8')
+    const config = JSON.parse(content)
+
+    // Claude Desktop format: { mcpServers: { name: { command, args } } }
+    const mcpServers = config.mcpServers ?? {}
+
+    for (const [name, serverConfig] of Object.entries(mcpServers)) {
+      if (typeof serverConfig === 'object' && serverConfig !== null) {
+        const cfg = serverConfig as Record<string, unknown>
+        // Avoid duplicates
+        if (!servers.some((s) => s.name === name)) {
+          servers.push({
+            name,
+            command: String(cfg.command ?? ''),
+            args: Array.isArray(cfg.args) ? cfg.args.map(String) : [],
+            env: typeof cfg.env === 'object' && cfg.env !== null ? cfg.env as Record<string, string> : {},
+            source: 'global',
+            status: 'configured',
+          })
+        }
+      }
+    }
+  } catch {
+    // Skip unreadable files
+  }
+}

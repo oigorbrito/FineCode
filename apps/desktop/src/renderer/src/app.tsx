@@ -1,0 +1,199 @@
+import { useTranslation, Trans } from 'react-i18next'
+import { Sidebar } from './components/sidebar'
+import { ChatPanel } from './components/chat-panel'
+import { StatusBar } from './components/status-bar'
+import { SettingsPanel } from './components/settings-panel'
+import { SessionPanel } from './components/session-panel'
+import { Timeline } from './components/timeline'
+import { PackageBrowser } from './components/package-browser'
+import { DiffViewer } from './components/diff-viewer'
+import { HomeScreen } from './components/home-screen'
+import { NotesPanel } from './components/notes-panel'
+import { SkillsPanel } from './components/skills-panel'
+import { DiagnosticsPanel } from './components/diagnostics-panel'
+import { MissionControl } from './components/mission-control'
+import { TaskLauncher } from './components/task-launcher'
+import { NotePicker } from './components/note-picker'
+import { CommandPalette } from './components/command-palette'
+import { ExtensionUiDialog, AppConfirmDialog } from './components/extension-ui-dialog'
+import { ChatToolRail } from './components/chat-tool-rail'
+import { WorkspaceTabs } from './components/workspace-tabs'
+import { RepoBar } from './components/repo-bar'
+import { LinkedTaskDialog } from './components/linked-task-dialog'
+import { WorkflowNavigator } from './components/workflow-navigator'
+import { useContextMenu, buildDefaultContextMenu } from './components/context-menu'
+import { usePiEvents, useMenuActions, useInitialize } from './hooks'
+import { useFolderDrop } from './hooks/use-folder-drop'
+import { useAppStore } from './store'
+import { handleAppShortcut, handleAppShortcutAfterTarget, handleAppShortcutRelease, releasePushToTalk } from './utils/app-shortcuts'
+import { emitVoiceShortcut } from './voice/voice-shortcut'
+import { useEffect } from 'react'
+import { ArrowUpCircle, FolderOpen, PanelLeft, X } from 'lucide-react'
+
+export function App(): React.JSX.Element {
+  const { t } = useTranslation()
+  usePiEvents()
+  useMenuActions()
+  useInitialize()
+  const { isDraggingFolder } = useFolderDrop()
+
+  const currentView = useAppStore((state) => state.currentView)
+  const sidebarOpen = useAppStore((state) => state.sidebarOpen)
+  const toggleSidebar = useAppStore((state) => state.toggleSidebar)
+  const updateInfo = useAppStore((state) => state.updateInfo)
+  const updateDismissed = useAppStore((state) => state.updateDismissed)
+  const dismissUpdate = useAppStore((state) => state.dismissUpdate)
+  const workflowPanelOpen = useAppStore((state) => state.workflowPanelOpen)
+  const workflowPanelFilter = useAppStore((state) => state.workflowPanelFilter)
+  const workflowPanelWorkspaceId = useAppStore((state) => state.workflowPanelWorkspaceId)
+
+  // Global context menu
+  const { show, ContextMenuComponent } = useContextMenu()
+
+  // Override default right-click globally
+  useEffect(() => {
+    const handleContextMenu = (e: MouseEvent) => {
+      // Allow native context menu in input fields when no text is selected
+      const target = e.target as HTMLElement
+      const isInput = target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable
+
+      if (isInput && !window.getSelection()?.toString()) {
+        return // Let native context menu handle it
+      }
+
+      e.preventDefault()
+
+      // Build context-specific items
+      const items = buildDefaultContextMenu()
+      show(e as unknown as React.MouseEvent, items)
+    }
+
+    document.addEventListener('contextmenu', handleContextMenu)
+    return () => document.removeEventListener('contextmenu', handleContextMenu)
+  }, [show])
+
+  useEffect(() => {
+    document.addEventListener('keydown', handleAppShortcut, true)
+    // Bubble phase: the code editor and the terminal handle their own keys first.
+    document.addEventListener('keydown', handleAppShortcutAfterTarget)
+    document.addEventListener('keyup', handleAppShortcutRelease, true)
+    window.addEventListener('blur', releasePushToTalk)
+    const unsubscribeVoiceShortcut = window.piDesktop.voice.onShortcut(() => emitVoiceShortcut('toggle'))
+    return () => {
+      document.removeEventListener('keydown', handleAppShortcut, true)
+      document.removeEventListener('keydown', handleAppShortcutAfterTarget)
+      document.removeEventListener('keyup', handleAppShortcutRelease, true)
+      window.removeEventListener('blur', releasePushToTalk)
+      unsubscribeVoiceShortcut()
+    }
+  }, [])
+
+  // Home is a full-screen splash (no sidebar/status). Chat keeps chrome; the
+  // empty-chat center prompt is the "minimal" launch surface when not opening Home.
+  const isHome = currentView === 'home'
+  const showChrome = !isHome
+  const showUpdateBanner = !!updateInfo?.updateAvailable && !updateDismissed
+  const globalWorkflowOpen =
+    showChrome && workflowPanelOpen && !workflowPanelFilter && workflowPanelWorkspaceId === null
+
+  return (
+    <div className="relative flex h-screen flex-col bg-app text-primary">
+      {isDraggingFolder && (
+        <div
+          className="pointer-events-none absolute inset-0 z-[100] flex items-center justify-center bg-app/80 backdrop-blur-sm"
+          aria-live="polite"
+        >
+          <div className="flex flex-col items-center gap-3 rounded-2xl border-2 border-dashed border-accent bg-surface/95 px-10 py-8 shadow-xl shadow-black/40">
+            <FolderOpen size={36} className="text-accent" />
+            <div className="text-center">
+              <div className="text-base font-semibold text-primary">
+                {t('app.dropFolder.title')}
+              </div>
+              <div className="mt-1 text-sm text-dim">
+                {t('app.dropFolder.description')}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+      {showUpdateBanner && updateInfo && (
+        <div className="flex shrink-0 items-center justify-center gap-3 bg-accent px-4 py-1.5 text-xs text-white">
+          <ArrowUpCircle size={14} className="shrink-0" />
+          <span>
+            <Trans
+              i18nKey="app.updateBanner.available"
+              values={{ latestVersion: updateInfo.latestVersion, currentVersion: updateInfo.currentVersion }}
+              components={{ strong: <strong /> }}
+            />
+          </span>
+          <button
+            onClick={() => window.piDesktop.system.openExternal(updateInfo.url)}
+            className="rounded bg-white/20 px-2 py-0.5 font-medium hover:bg-white/30 transition-colors"
+          >
+            {t('app.updateBanner.downloadButton')}
+          </button>
+          <button
+            onClick={dismissUpdate}
+            className="rounded p-0.5 text-white/80 hover:bg-white/20 hover:text-white transition-colors"
+            aria-label={t('app.updateBanner.dismissAriaLabel')}
+            title={t('common.dismiss')}
+          >
+            <X size={13} />
+          </button>
+        </div>
+      )}
+      {isHome && !sidebarOpen && (
+        <button
+          type="button"
+          onClick={toggleSidebar}
+          className="absolute left-3 top-3 z-30 animate-fade-in rounded-md border border-border-strong bg-surface/95 p-1.5 text-muted shadow-sm backdrop-blur-sm transition-colors hover:bg-surface-hover hover:text-primary focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-focus"
+          title={t('common.showSidebar')}
+          aria-label={t('common.showSidebar')}
+        >
+          <PanelLeft size={16} />
+        </button>
+      )}
+      <div className="flex flex-1 overflow-hidden">
+        {sidebarOpen && showChrome && <Sidebar />}
+
+        <div className="relative flex min-w-0 flex-1 flex-col overflow-hidden">
+          {showChrome && <WorkspaceTabs />}
+          {showChrome && <RepoBar />}
+          <div className="flex min-h-0 min-w-0 flex-1 overflow-hidden">
+            <main className="flex min-w-0 flex-1 flex-col overflow-hidden">
+              <div className={globalWorkflowOpen ? 'hidden' : 'contents'}>
+                {currentView === 'home' && <HomeScreen />}
+                {currentView === 'mission-control' && <MissionControl />}
+                {/* Kept mounted (just hidden) so chat drafts and scroll state survive
+                    navigating to another view or opening global workflows. */}
+                <div className={currentView === 'chat' ? 'flex min-w-0 flex-1 flex-col overflow-hidden' : 'hidden'}>
+                  <ChatPanel />
+                </div>
+                {currentView === 'settings' && <SettingsPanel />}
+                {currentView === 'sessions' && <SessionPanel />}
+                {currentView === 'timeline' && <Timeline />}
+                {currentView === 'packages' && <PackageBrowser />}
+                {currentView === 'diff' && <DiffViewer />}
+                {currentView === 'notes' && <NotesPanel />}
+                {currentView === 'skills' && <SkillsPanel />}
+                {currentView === 'diagnostics' && <DiagnosticsPanel />}
+              </div>
+              {globalWorkflowOpen && <WorkflowNavigator embedded />}
+            </main>
+            {currentView === 'chat' && !globalWorkflowOpen && <ChatToolRail />}
+          </div>
+        </div>
+      </div>
+
+      {showChrome && <StatusBar />}
+      {showChrome && !globalWorkflowOpen && <WorkflowNavigator />}
+      <ExtensionUiDialog />
+      <LinkedTaskDialog />
+      <AppConfirmDialog />
+      <NotePicker />
+      <TaskLauncher />
+      <CommandPalette />
+      {ContextMenuComponent}
+    </div>
+  )
+}
