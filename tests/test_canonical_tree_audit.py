@@ -36,6 +36,17 @@ class CanonicalTreeAuditTests(unittest.TestCase):
         self.assertEqual(rows["docs/provenance.md"]["review_priority"], "P2-docs")
         self.assertTrue(all(r["semantic_decision"] == "not_reviewed" for r in rows.values()))
 
+    def test_exports_non_utf8_git_names_with_exact_byte_identity(self):
+        raw_name = b"unusual-\\xff.txt"
+        path = raw_name.decode("utf-8", "surrogateescape")
+        rows = audit.compare({}, {path: ("100644", "blob", "a")}, "main", "canonical")
+        self.assertEqual(rows[0]["path_bytes_hex"], raw_name.hex())
+        self.assertEqual(rows[0]["path"], "unusual-\\\\xff.txt")
+        with tempfile.TemporaryDirectory() as d:
+            file = Path(d) / "report.csv"
+            audit.export(file, rows)
+            self.assertEqual(file.read_bytes().decode("utf-8").count(raw_name.hex()), 1)
+
     def test_csv_handles_ambiguous_path_characters(self):
         rows = audit.compare({}, {"name\twith,comma\nand newline": ("100644", "blob", "a")}, "main", "canonical")
         with tempfile.TemporaryDirectory() as d:
