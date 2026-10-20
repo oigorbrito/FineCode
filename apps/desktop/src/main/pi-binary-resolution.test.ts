@@ -4,6 +4,8 @@ import { join, posix, sep } from 'node:path'
 import {
   PI_CLI_REL,
   FINECODE_CLI_REL,
+  FINECODE_FALLBACK_BINARY,
+  FINECODE_FALLBACK_BINARY_WINDOWS,
   PI_FALLBACK_BINARY_POSIX,
   PI_FALLBACK_BINARY_WINDOWS,
   SHELL_PATH_END,
@@ -396,6 +398,28 @@ test('resolvePiBinary does not probe when the engine or the override is explicit
   assert.equal(captureLog.filter((call) => call.args.includes('--version')).length, 0)
 })
 
+test('resolvePiBinary preserves explicit Pi fallback on POSIX and Windows', () => {
+  const posixDeps = fakeDeps({ env: { HOME: POSIX_HOME, PATH: '/nowhere' } })
+  const posixResult = resolvePiBinary(posixDeps, null, 'pi')
+  assert.equal(posixResult.script, PI_FALLBACK_BINARY_POSIX)
+  assert.equal(posixResult.source, 'fallback')
+  assert.equal(posixResult.found, false)
+  assert.match(describePiResolutionFailure(posixResult), /@earendil-works\\/pi-coding-agent/)
+
+  const missing = resolvePiBinary(posixDeps, '/missing/pi', 'pi')
+  assert.equal(missing.script, PI_FALLBACK_BINARY_POSIX)
+  assert.equal(missing.rejectedOverride, '/missing/pi')
+
+  const windowsResult = resolvePiBinary(
+    fakeDeps({ isWindows: true, env: { USERPROFILE: WINDOWS_HOME, PATH: '' } }),
+    null,
+    'pi',
+  )
+  assert.equal(windowsResult.script, PI_FALLBACK_BINARY_WINDOWS)
+  assert.equal(windowsResult.source, 'fallback')
+  assert.equal(windowsResult.found, false)
+})
+
 test('resolvePiBinary can resolve each engine independently for the chooser', () => {
   const deps = fakeDeps({
     env: { HOME: POSIX_HOME, PATH: '/opt/pi:/opt/omp' },
@@ -561,15 +585,16 @@ test('resolvePiBinary falls back to a common install location', () => {
 test('resolvePiBinary reports not-found instead of pretending the fallback exists', () => {
   const deps = fakeDeps({ env: { HOME: POSIX_HOME, PATH: '/nowhere' } })
   const resolution = resolvePiBinary(deps, null)
-  assert.equal(resolution.script, PI_FALLBACK_BINARY_POSIX)
-  assert.equal(resolution.source, 'fallback')
+  assert.equal(resolution.script, FINECODE_FALLBACK_BINARY)
+  assert.equal(resolution.source, 'finecode')
   assert.equal(resolution.found, false)
 })
 
 test('resolvePiBinary falls back to the .cmd name on Windows', () => {
   const deps = fakeDeps({ isWindows: true, env: { USERPROFILE: WINDOWS_HOME, PATH: '' } })
   const resolution = resolvePiBinary(deps, null)
-  assert.equal(resolution.script, PI_FALLBACK_BINARY_WINDOWS)
+  assert.equal(resolution.script, FINECODE_FALLBACK_BINARY_WINDOWS)
+  assert.equal(resolution.source, 'finecode')
   assert.equal(resolution.found, false)
 })
 
