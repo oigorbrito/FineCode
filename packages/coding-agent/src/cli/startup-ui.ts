@@ -38,9 +38,10 @@ import {
 } from "../modes/interactive/theme/theme.ts";
 import { requestTerminalColors } from "../modes/interactive/theme/theme-controller.ts";
 
-const OFFICIAL_PACKAGE_NAME = "@earendil-works/pi-coding-agent";
-const OFFICIAL_APP_NAME = "pi";
-const OFFICIAL_CONFIG_DIR_NAME = ".pi";
+const OFFICIAL_DISTRIBUTIONS = [
+	{ packageName: "@earendil-works/pi-coding-agent", appName: "pi", configDirName: ".pi" },
+	{ packageName: "finecode", appName: "finecode", configDirName: ".pi" },
+] satisfies DistributionMetadata[];
 
 interface DistributionMetadata {
 	packageName: string;
@@ -49,10 +50,11 @@ interface DistributionMetadata {
 }
 
 function isOfficialDistribution({ packageName, appName, configDirName }: DistributionMetadata): boolean {
-	return (
-		packageName === OFFICIAL_PACKAGE_NAME &&
-		appName === OFFICIAL_APP_NAME &&
-		configDirName === OFFICIAL_CONFIG_DIR_NAME
+	return OFFICIAL_DISTRIBUTIONS.some(
+		(distribution) =>
+			distribution.packageName === packageName &&
+			distribution.appName === appName &&
+			distribution.configDirName === configDirName,
 	);
 }
 
@@ -130,7 +132,7 @@ async function clearStartupTui(ui: TUI): Promise<void> {
 
 /**
  * First-time setup runs when all of these hold:
- * - this is the official Pi distribution (not a fork/rebrand)
+ * - this is an official Pi or FineCode distribution (not a third-party fork)
  * - experimental features are enabled (PI_EXPERIMENTAL=1)
  * - the default agent directory is used (no custom agent dir override)
  * - setup was not completed before (settings.json does not exist)

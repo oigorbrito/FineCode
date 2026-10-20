@@ -13,7 +13,6 @@ const outputPackageJsonPath = join(outputDir, "package.json");
 const outputLockfilePath = join(outputDir, "package-lock.json");
 const internalPackagePrefix = "@earendil-works/pi-";
 const internalPackageNames = new Set(["@earendil-works/chord", "finecode"]);
-const installPackageName = "finecode-install-lock";
 const allowedInstallScriptPackages = new Map([
 	["@google/genai@2.21.0", "preinstall is a no-op in the published package"],
 	["protobufjs@7.6.6", "postinstall only warns about protobufjs version scheme mismatches"],
@@ -245,10 +244,10 @@ function addExternalPackage(lockPackages, installLockPackages, addedPaths, queue
 
 function createInstallerPackageJson(codingAgentPackage) {
 	const packageJson = {
-		name: installPackageName,
+		name: codingAgentPackage.name === "finecode" ? "finecode-install-lock" : "@earendil-works/pi-coding-agent-install",
 		version: codingAgentPackage.version,
 		private: true,
-		description: "Lockfile root used by the FineCode installer and updater.",
+		description: `Lockfile root used by the ${codingAgentPackage.name === "finecode" ? "FineCode" : "Pi"} installer and updater.`,
 		dependencies: {
 			[codingAgentPackage.name]: codingAgentPackage.version,
 		},
@@ -274,7 +273,7 @@ function createRootLockEntry(installerPackageJson) {
 	return sortedPackageEntry(entry);
 }
 
-function validateGeneratedFiles(installerPackageJson, installLock, internalWorkspaces) {
+function validateGeneratedFiles(installerPackageJson, installLock, internalNames, internalWorkspaces) {
 	const errors = [];
 	const rootEntry = installLock.packages[""];
 	const includedPackageNames = new Set();
@@ -309,11 +308,9 @@ function validateGeneratedFiles(installerPackageJson, installLock, internalWorks
 		if (entry.dev || entry.devOptional || entry.extraneous) {
 			errors.push(`${lockPath || "root"} contains dev/extraneous metadata`);
 		}
-		const internalWorkspace = packageName ? internalWorkspaces.get(packageName) : undefined;
-		if (internalWorkspace && entry.version !== internalWorkspace.packageJson.version) {
-			errors.push(
-				`${lockPath} internal package version ${entry.version} does not match ${internalWorkspace.packageJson.version}`,
-			);
+		const workspace = internalWorkspaces.get(packageName);
+		if (workspace && entry.version !== workspace.packageJson.version) {
+			errors.push(`${lockPath} internal package version ${entry.version} does not match ${workspace.packageJson.version}`);
 		}
 		if (entry.hasInstallScript) {
 			if (!packageName || !entry.version) {
@@ -337,7 +334,7 @@ function validateGeneratedFiles(installerPackageJson, installLock, internalWorks
 		}
 	}
 
-	for (const name of internalWorkspaces.keys()) {
+	for (const name of internalNames) {
 		if (!includedPackageNames.has(name)) {
 			errors.push(`internal dependency ${name} is missing`);
 		}
@@ -414,10 +411,7 @@ function generateInstallLock() {
 		packages: sortedObject(installLockPackages),
 	};
 
-	const includedInternalWorkspaces = new Map(
-		[...internalNames].map((name) => [name, internalWorkspaces.get(name)]).filter((entry) => entry[1]),
-	);
-	validateGeneratedFiles(installerPackageJson, installLock, includedInternalWorkspaces);
+	validateGeneratedFiles(installerPackageJson, installLock, internalNames, internalWorkspaces);
 	return { installerPackageJson, installLock };
 }
 

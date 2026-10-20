@@ -15,28 +15,26 @@ interface EditorCapture {
 	arguments: string[];
 }
 
-function quoteCommandArgument(value: string): string {
-	return `"${value.replaceAll('"', '\\"')}"`;
-}
-
 async function runExternalEditor(
-	options: { fixtureFlag?: "--fail" | "--empty"; editorArguments?: string[] } = {},
+	fixtureFlag?: "--fail" | "--empty",
+	editorArguments: string[] = [],
 ): Promise<{
 	result: ExternalEditorResult;
 	capture: EditorCapture;
 }> {
-	const testDirectory = mkdtempSync(join(tmpdir(), "pi-external-editor-test-"));
+	const testDirectory = mkdtempSync(join(tmpdir(), "finecode external editor test "));
 	const capturePath = join(testDirectory, "capture.json");
 	try {
-		const commandArguments = [
-			process.execPath,
-			editorFixturePath,
-			capturePath,
-			...(options.editorArguments ?? []),
-			...(options.fixtureFlag ? [options.fixtureFlag] : []),
-		];
 		const result = await editInExternalEditor({
-			command: commandArguments.map(quoteCommandArgument).join(" "),
+			command: [
+				process.execPath,
+				editorFixturePath,
+				capturePath,
+				...editorArguments,
+				...(fixtureFlag ? [fixtureFlag] : []),
+			]
+				.map((arg) => `"${arg.replaceAll('"', '\\"')}"`)
+				.join(" "),
 			content: "original",
 		});
 		const capture = JSON.parse(readFileSync(capturePath, "utf-8")) as EditorCapture;
@@ -47,7 +45,6 @@ async function runExternalEditor(
 }
 
 describe("editInExternalEditor", () => {
-	// #7875: Windows paths with spaces must work without enabling shell parsing.
 	it("edits a prompt inside a private temporary directory", async () => {
 		const { result, capture } = await runExternalEditor();
 		const directory = dirname(capture.filePath);
@@ -65,38 +62,26 @@ describe("editInExternalEditor", () => {
 	});
 
 	it("keeps the original content when the editor exits unsuccessfully", async () => {
-		const { result, capture } = await runExternalEditor({ fixtureFlag: "--fail" });
+		const { result, capture } = await runExternalEditor("--fail");
 
 		expect(result).toEqual({ status: "failed" });
 		expect(existsSync(dirname(capture.filePath))).toBe(false);
 	});
-	it("preserves quoted executable paths and arguments", async () => {
-		const expectedArguments = [
-			"--profile",
-			"My Profile",
-			"--path",
-			"C:\\Users\\Dev\\some dir",
-			"--message",
-			'say "hello"',
-			"",
-		];
-		const { result, capture } = await runExternalEditor({ editorArguments: expectedArguments });
-
+	it("preserves quoted arguments and literal shell metacharacters", async () => {
+		const arguments_ = ["My Profile", "C:\\Users\\Dev\\some dir", 'say "hello"', "", "& echo must-not-run", "$HOME"];
+		const { result, capture } = await runExternalEditor(undefined, arguments_);
 		expect(result).toEqual({ status: "complete", content: "edited" });
-		expect(capture.arguments).toEqual(expectedArguments);
+		expect(capture.arguments).toEqual(arguments_);
 	});
 
 	it("rejects an unterminated quoted command", async () => {
-		const result = await editInExternalEditor({
-			command: `${quoteCommandArgument(process.execPath)} "unterminated`,
-			content: "original",
+		await expect(editInExternalEditor({ command: '"unterminated', content: "original" })).resolves.toEqual({
+			status: "failed",
 		});
-
-		expect(result).toEqual({ status: "failed" });
 	});
 
 	it("returns empty content when the editor clears the prompt", async () => {
-		const { result } = await runExternalEditor({ fixtureFlag: "--empty" });
+		const { result } = await runExternalEditor("--empty");
 
 		expect(result).toEqual({ status: "complete", content: "" });
 	});

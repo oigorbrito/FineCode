@@ -1,10 +1,8 @@
-[**English**](windows.md) | [Português (Brasil)](pt-BR/windows.md)
+# Run Pi on Windows
 
-# Run FineCode on Windows
+Run Pi either as a native Windows process or inside Windows Subsystem for Linux (WSL). Native Windows uses Git Bash by default for Bash commands and can optionally expose PowerShell to the model. Pi inside WSL uses the Linux environment and its Bash installation.
 
-Run FineCode either as a native Windows process or inside Windows Subsystem for Linux (WSL). Native Windows uses Git Bash by default for Bash commands and can optionally expose PowerShell to the model. FineCode inside WSL uses the Linux environment and its Bash installation.
-
-Follow the main [Quickstart](quickstart.md) to install and authenticate FineCode. Use this page to choose and configure its command environment.
+Follow the main [Quickstart](quickstart.md) to install and authenticate Pi. Use this page to choose and configure its command environment.
 
 ## Choose native Windows or WSL
 
@@ -18,19 +16,19 @@ Follow the main [Quickstart](quickstart.md) to install and authenticate FineCode
 
 For most native Windows users, installing [Git for Windows](https://git-scm.com/download/win) is sufficient.
 
-FineCode resolves Bash in this order:
+Pi resolves Bash in this order:
 
 1. `shellPath` from `~/.pi/agent/settings.json`
 2. Git Bash under `Program Files` or `Program Files (x86)`
 3. `bash.exe` on `PATH`, including Cygwin, MSYS2, or legacy WSL Bash
 
-Start FineCode and enter this command to verify the shell:
+Start Pi and enter this command to verify the shell:
 
 ```text
 !printf 'Bash is working\n'
 ```
 
-If FineCode cannot find Bash, it reports the locations it checked. Install Git for Windows, put another Bash executable on `PATH`, or configure `shellPath`.
+If Pi cannot find Bash, it reports the locations it checked. Install Git for Windows, put another Bash executable on `PATH`, or configure `shellPath`.
 
 ## Let the model use PowerShell
 
@@ -46,13 +44,13 @@ To replace the model-facing `bash` tool with `powershell`, add this to `~/.pi/ag
 
 `["-bash", "+powershell"]` does the same while keeping any other default tools you configured.
 
-Restart FineCode, then ask it to run a harmless PowerShell command. The `!` and `!!` editor commands continue to use Bash. The `powershell` tool is available only when FineCode runs as a native Windows process.
+Restart Pi, then ask it to run a harmless PowerShell command. The `!` and `!!` editor commands continue to use Bash. The `powershell` tool is available only when Pi runs as a native Windows process.
 
 See [Settings](settings.md#tools) for other tool combinations.
 
 ## Use a custom Bash executable
 
-Set `shellPath` when Bash is installed somewhere FineCode does not discover automatically:
+Set `shellPath` when Bash is installed somewhere Pi does not discover automatically:
 
 ```json
 {
@@ -66,4 +64,4 @@ See [Configure shell commands](shell-aliases.md) for command prefixes, aliases, 
 
 ## Configure Windows Terminal
 
-Windows Terminal reserves or rewrites some modified keys. See [Windows Terminal](terminal-setup.md#windows-terminal) to configure `Shift+Enter` and `Alt+Enter`, and [Keybindings](keybindings.md) for FineCode's Windows and WSL shortcut defaults.
+Windows Terminal reserves or rewrites some modified keys. See [Windows Terminal](terminal-setup.md#windows-terminal) to configure `Shift+Enter` and `Alt+Enter`, and [Keybindings](keybindings.md) for Pi's Windows and WSL shortcut defaults.

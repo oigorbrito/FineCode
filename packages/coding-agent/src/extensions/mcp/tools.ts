@@ -22,6 +22,7 @@ import {
 } from "@earendil-works/pi-mcp";
 import { Container, Spacer, Text } from "@earendil-works/pi-tui";
 import type { TSchema } from "typebox";
+import { APP_NAME } from "../../config.ts";
 import type {
 	ToolAnnotations,
 	ToolDefinition,
@@ -68,7 +69,7 @@ export interface McpToolDetails {
 export type McpOutputSaver = (data: string | Uint8Array, extension: string) => Promise<string>;
 
 export function saveToTempFile(data: string | Uint8Array, extension: string): Promise<string> {
-	return writeOutputFile("finecode-mcp", extension, data);
+	return writeOutputFile(`${APP_NAME}-mcp`, extension, data);
 }
 
 export interface McpToolCaller {

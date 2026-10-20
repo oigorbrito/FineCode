@@ -1,6 +1,5 @@
 import type { WriteStream } from "node:fs";
 import { open } from "node:fs/promises";
-import { APP_NAME } from "../../config.ts";
 import { createOutputFileStream } from "../../utils/output-files.ts";
 import { DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES, type TruncationResult, truncateTail } from "./truncate.ts";
 
@@ -59,7 +58,7 @@ export class OutputAccumulator {
 		this.maxLines = options.maxLines ?? DEFAULT_MAX_LINES;
 		this.maxBytes = options.maxBytes ?? DEFAULT_MAX_BYTES;
 		this.maxRollingBytes = Math.max(this.maxBytes * 2, 1);
-		this.tempFilePrefix = options.tempFilePrefix ?? `${APP_NAME}-output`;
+		this.tempFilePrefix = options.tempFilePrefix ?? "pi-output";
 	}
 
 	append(data: Buffer): void {

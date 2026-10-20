@@ -1,50 +1,47 @@
-[**English**](configuration.md) | [Português (Brasil)](pt-BR/configuration.md)
-
 # Configuration
 
-FineCode loads settings and reusable resources from global and project directories. This page explains where to put files and how project trust affects loading.
+Pi supports user-level and project configuration. User-level configuration lives in the agent directory, which defaults to `~/.pi/agent`. Project configuration lives in `.pi` under the working directory and loads after [project trust](security.md#understand-project-trust) is granted. The only exception is `sessionDir`, which Pi reads before resolving trust so it can locate sessions.
+
+In interactive mode, use `/settings` to change common preferences. For other options, ask Pi to update the configuration or edit the relevant files directly. Run `/reload` after manually changing settings, keybindings, instructions, or resources.
 
 ## Agent directory
 
-FineCode keeps global configuration, credentials, sessions, packages, and extensions in `~/.pi/agent/`. This existing path is retained for compatibility. Set `PI_CODING_AGENT_DIR` to use another agent directory.
+The agent directory is shown as `<agent-dir>` below. Set its location with the `PI_CODING_AGENT_DIR` environment variable or the SDK's [`agentDir`](sdk.md) option.
 
-Use `finecode --help` to see command-line options that can override configuration for one run.
+| Path | Responsibility |
+|---|---|
+| `<agent-dir>/settings.json` | User-level [settings](settings.md), including preferences, defaults, resource paths, and Pi package declarations. |
+| `<agent-dir>/keybindings.json` | Custom terminal UI and application [keybindings](keybindings.md). |
+| `<agent-dir>/mcp.json` | [MCP servers](mcp.md) available in every project. |
+| `<agent-dir>/models.json` | [Compatible endpoints, models, and model overrides](models.md#configure-a-compatible-endpoint). |
+| `<agent-dir>/auth.json` | Saved API keys and OAuth credentials. |
+| `<agent-dir>/AGENTS.override.md`, `AGENTS.md`, `AGENTS.MD`, `CLAUDE.md`, or `CLAUDE.MD` | User instructions applied across working directories. |
+| `<agent-dir>/SYSTEM.md` | Replaces Pi’s default system prompt. |
+| `<agent-dir>/APPEND_SYSTEM.md` | Adds instructions to Pi’s system prompt. |
+| `<agent-dir>/extensions/` | User [extensions](extensions.md). |
+| `<agent-dir>/skills/` | User [skills](skills.md) and supporting files. |
+| `<agent-dir>/prompts/` | User [prompt templates](prompt-templates.md) exposed as slash commands. |
+| `<agent-dir>/themes/` | User [theme](themes.md) files. |
 
-## Project resources
+## Project `.pi` directory
 
-Project resources are loaded from `.pi/` directories in the working folder and its parent directories. FineCode loads resources from a project only after the project is trusted. See [Project trust](security.md#project-trust).
+| Path | Responsibility |
+|---|---|
+| `.pi/settings.json` | Project-level [settings](settings.md), resource paths, and Pi package declarations. |
+| `.pi/mcp.json` | Project [MCP servers](mcp.md). |
+| `.pi/SYSTEM.md` | Replaces the system prompt for the project. |
+| `.pi/APPEND_SYSTEM.md` | Adds project-specific instructions to the system prompt. |
+| `.pi/extensions/` | Project extensions. |
+| `.pi/skills/` | Project skills and supporting files. |
+| `.pi/prompts/` | Project prompt templates exposed as slash commands. |
+| `.pi/themes/` | Project theme files. |
 
-Common project resources include:
-
-- `AGENTS.md` files with instructions for the agent.
-- `settings.json` with project settings.
-- Extensions, skills, prompt templates, and themes.
-- `.pi/mcp.json` for project MCP servers.
-
-FineCode also accepts resource paths in global settings. Run `/settings` to inspect or edit settings, or configure them directly in `~/.pi/agent/settings.json`.
+For `SYSTEM.md` and `APPEND_SYSTEM.md`, the trusted project file takes precedence over the corresponding agent-directory file. Files with the same name are not combined.
 
 ## Context files
 
-FineCode reads `AGENTS.md` files as instructions. It checks the working directory and its parent directories, plus the agent directory. These files can provide project-specific guidance such as coding conventions, test commands, and directory structure.
+Context files are separate from project `.pi` configuration. Pi loads them from the agent directory, the working directory, and its parent directories. A context file applies whenever Pi runs in its directory or anywhere below it.
 
-Use `/reload` after changing configuration or resource files while FineCode is running.
+An `AGENTS.override.md` replaces `AGENTS.md` or `CLAUDE.md` only in the same directory. It does not suppress context files from the agent directory or other directories.
 
-## Settings and environment variables
-
-Settings control default models and tools, resource locations, keybindings, and other behavior. See [Settings reference](settings.md) for the complete schema.
-
-Environment variables can configure authentication and runtime behavior. See [Environment variables](environment-variables.md) for the supported names, including legacy `PI_*` variables retained for compatibility.
-
-## Resources
-
-FineCode can load reusable resources from built-in directories or paths configured in `settings.json`:
-
-| Resource | Purpose | Documentation |
-|---|---|---|
-| Extensions | Executable tools, commands, and event handlers | [Extensions](extensions.md) |
-| Skills | Task-specific instructions and supporting files | [Skills](skills.md) |
-| Prompt templates | Reusable prompts in the `/` menu | [Prompt templates](prompt-templates.md) |
-| Themes | Terminal colors and styles | [Themes](themes.md) |
-| MCP servers | Connect tools and resources from external services | [MCP](mcp.md) |
-
-Use `/packages` to inspect installed packages. See [FineCode packages](packages.md) to install and distribute resources.
+Context-file discovery does not require project trust.

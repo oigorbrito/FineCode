@@ -80,7 +80,12 @@ export function resolveModelSelection(
 }
 
 export function applyIsolatedEnvironment(home: string, agentDir: string): () => void {
-	const overrides = { HOME: home, USERPROFILE: home, FINECODE_CODING_AGENT_DIR: agentDir };
+	const overrides = {
+		HOME: home,
+		USERPROFILE: home,
+		FINECODE_CODING_AGENT_DIR: agentDir,
+		PI_CODING_AGENT_DIR: agentDir,
+	};
 	const previous = new Map<string, string | undefined>();
 	for (const name of Object.keys(process.env)) {
 		if (!name.startsWith("PI_EVAL_")) continue;
@@ -466,7 +471,7 @@ async function runPiCodingAgent<TOutput extends JsonValue>(
 		}
 		throw failure;
 	}
-	if (!result) throw new Error("FineCode eval completed without a result.");
+	if (!result) throw new Error("Pi eval completed without a result.");
 	return { ...result, timings: { totalMs: performance.now() - startedAt } };
 }
 

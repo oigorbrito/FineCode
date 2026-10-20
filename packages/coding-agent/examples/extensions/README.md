@@ -1,6 +1,8 @@
 # Extension Examples
 
-Example extensions for FineCode.
+Example extensions for FineCode, derived from Pi.
+
+FineCode intentionally excludes `doom-overlay/`, `pirate.ts`, `rainbow-editor.ts`, `snake.ts`, `space-invaders.ts`, and `tic-tac-toe.ts`. Their [upstream source](https://github.com/earendil-works/pi/tree/e86b054753b544600693384d3db4e3281ba86b60/packages/coding-agent/examples/extensions) remains available; they are not part of this checkout.
 
 ## Usage
 
@@ -9,7 +11,7 @@ Example extensions for FineCode.
 finecode --extension examples/extensions/permission-gate.ts
 
 # Or copy to extensions directory for auto-discovery
-cp permission-gate.ts ~/.pi/agent/extensions/
+cp permission-gate.ts ~/.finecode/agent/extensions/
 ```
 
 ## Examples
@@ -94,7 +96,7 @@ cp permission-gate.ts ~/.pi/agent/extensions/
 
 | Extension | Description |
 |-----------|-------------|
-| `mac-system-theme.ts` | Syncs the FineCode theme with macOS dark/light mode |
+| `mac-system-theme.ts` | Syncs theme with macOS dark/light mode |
 
 ### Resources
 
@@ -138,7 +140,7 @@ cp permission-gate.ts ~/.pi/agent/extensions/
 See [docs/extensions.md](../../docs/extensions.md) for full documentation.
 
 ```typescript
-import type { ExtensionAPI } from "finecode";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 
 export default function (pi: ExtensionAPI) {

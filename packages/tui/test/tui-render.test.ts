@@ -146,7 +146,7 @@ describe("TUI debug logging", () => {
 	it("writes redraw logs to the provided directory", async () => {
 		const logDir = mkdtempSync(join(tmpdir(), "pi-tui-log-"));
 		try {
-			await withEnv({ PI_TUI_DEBUG_REDRAW: "1", AI_AGENT: undefined }, async () => {
+			await withEnv({ PI_TUI_DEBUG_REDRAW: "1" }, async () => {
 				const terminal = new VirtualTerminal(40, 10);
 				const tui: TUI = new TuiMainScreen(terminal, undefined, logDir);
 				const component = new TestComponent();
@@ -156,26 +156,6 @@ describe("TUI debug logging", () => {
 				await terminal.waitForRender();
 
 				assert.match(readFileSync(join(logDir, "pi-tui-debug.log"), "utf-8"), /fullRender: first render/);
-				tui.stop();
-			});
-		} finally {
-			rmSync(logDir, { recursive: true, force: true });
-		}
-	});
-
-	it("uses FineCode branding for redraw logs when launched by FineCode", async () => {
-		const logDir = mkdtempSync(join(tmpdir(), "finecode-tui-log-"));
-		try {
-			await withEnv({ PI_TUI_DEBUG_REDRAW: "1", AI_AGENT: "finecode" }, async () => {
-				const terminal = new VirtualTerminal(40, 10);
-				const tui: TUI = new TuiMainScreen(terminal, undefined, logDir);
-				const component = new TestComponent();
-				tui.addChild(component);
-				component.lines = ["test"];
-				tui.start();
-				await terminal.waitForRender();
-
-				assert.match(readFileSync(join(logDir, "finecode-tui-debug.log"), "utf-8"), /fullRender: first render/);
 				tui.stop();
 			});
 		} finally {
@@ -250,9 +230,8 @@ describe("TUI crash dump without configured log directory", () => {
 		// than sharing the real one with concurrent test runs. os.tmpdir() reads
 		// TMPDIR on POSIX and TEMP/TMP on Windows, so override all three.
 		const crashDir = mkdtempSync(join(tmpdir(), "pi-tui-crash-"));
-		const crashLogPath = join(crashDir, "finecode-tui-crash.log");
+		const crashLogPath = join(crashDir, "pi-tui-crash.log");
 		const restoreTmpdirEnv = overrideEnv(["TMPDIR", "TEMP", "TMP"], crashDir);
-		const restoreAI_AGENT = overrideEnv(["AI_AGENT"], "finecode");
 		try {
 			const terminal = new VirtualTerminal(40, 10);
 			const tui: TUI = new TuiMainScreen(terminal);
@@ -274,7 +253,6 @@ describe("TUI crash dump without configured log directory", () => {
 			);
 			assert.match(readFileSync(crashLogPath, "utf-8"), /Terminal width: 40/);
 		} finally {
-			restoreAI_AGENT();
 			restoreTmpdirEnv();
 			rmSync(crashDir, { recursive: true, force: true });
 		}

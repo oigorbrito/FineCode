@@ -1,10 +1,8 @@
-[**English**](extensions.md) | [Português (Brasil)](pt-BR/extensions.md)
-
 # Extensions
 
-Extensions are TypeScript modules that add executable behavior to FineCode. Use one when a workflow needs tools, commands, event handlers, model providers, session state, or terminal UI rather than instructions alone.
+Extensions are TypeScript modules that add executable behavior to Pi. Use one when a workflow needs tools, commands, event handlers, model providers, session state, or terminal UI rather than instructions alone.
 
-An extension runs inside the FineCode process with the same operating-system permissions. It can inspect prompts, tool calls, files, credentials, and session history, so load extensions only from sources you trust.
+An extension runs inside the Pi process with the same operating-system permissions. It can inspect prompts, tool calls, files, credentials, and session history, so load extensions only from sources you trust.
 
 Typical extensions add an agent tool, protect paths, confirm dangerous commands, react to session events, modify context, expose a command, or display persistent status.
 
@@ -31,21 +29,21 @@ export default function (pi: ExtensionAPI) {
 }
 ```
 
-Start FineCode and run `/hello`. During development, load a file directly:
+Start Pi and run `/hello`. During development, load a file directly:
 
 ```bash
-finecode --extension ./hello.ts
+pi --extension ./hello.ts
 ```
 
-FineCode uses `jiti`, so local TypeScript extensions do not need a separate compilation step. Use [FineCode packages](packages.md) for distributed extensions and dependencies.
+Pi uses `jiti`, so local TypeScript extensions do not need a separate compilation step. Use [Pi packages](packages.md) for distributed extensions and dependencies.
 
 <a id="extension-locations"></a>
 <a id="available-imports"></a>
 <a id="choose-where-it-loads"></a>
 
-## Add it to FineCode
+## Add it to Pi
 
-Place the extension in your user or project extensions directory. FineCode loads direct TypeScript or JavaScript files and subdirectories containing an `index.ts` or `index.js` entry point.
+Place the extension in your user or project extensions directory. Pi loads direct TypeScript or JavaScript files and subdirectories containing an `index.ts` or `index.js` entry point.
 
 Use a single file for a small extension and a directory for a multi-file implementation. Put npm dependencies in a nearby `package.json`. See [Configuration](configuration.md) for conventional locations and [Settings](settings.md#resources) for additional paths.
 
@@ -55,7 +53,7 @@ Reload replaces the extension runtime, so code after `await ctx.reload()` must n
 
 ## Understand the runtime lifecycle
 
-The factory can be synchronous or asynchronous. FineCode waits for an asynchronous factory before startup continues, allowing it to fetch configuration or register providers needed during startup.
+The factory can be synchronous or asynchronous. Pi waits for an asynchronous factory before startup continues, allowing it to fetch configuration or register providers needed during startup.
 
 Do not start processes, sockets, watchers, or timers in the factory because some invocations load extensions without starting a session.
 Start long-lived resources from `session_start` or from the command or tool that needs them.
@@ -105,7 +103,7 @@ The lifecycle involves these event groups:
 | Tool execution | `tool_execution_start`, `tool_call`, `tool_execution_update`, `tool_result`, `tool_execution_end` |
 | Settlement | `agent_before_settle`, `agent_settled` |
 
-FineCode counts as busy while a run starts, including the compaction check and `before_agent_start`, so messages sent meanwhile go into the starting run. Message lifecycle events also cover user and tool-result messages; the diagram places only the assistant stream where it occurs in each model turn.
+Pi counts as busy while a run starts, including the compaction check and `before_agent_start`, so messages sent meanwhile go into the starting run. Message lifecycle events also cover user and tool-result messages; the diagram places only the assistant stream where it occurs in each model turn.
 
 Tool hooks run for each tool call, and one assistant response can start another turn by returning tool calls. Provider hooks run only when that transport exposes the corresponding stage. See the exported declarations in [`extensions/types.ts`](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/src/core/extensions/types.ts) for exact event payloads and result types.
 
@@ -149,7 +147,7 @@ flowchart TD
 
 <a id="agent_start--agent_end--agent_before_settle--agent_settled"></a>
 
-Use `agent_before_settle` when an extension must append entries or request one final continuation. Use `agent_settled` for notification-only work that should run after FineCode has no automatic continuation remaining.
+Use `agent_before_settle` when an extension must append entries or request one final continuation. Use `agent_settled` for notification-only work that should run after Pi has no automatic continuation remaining.
 
 <a id="extensionapi-methods"></a>
 
@@ -170,7 +168,7 @@ Use `agent_before_settle` when an extension must append entries or request one f
 | Add terminal rendering | Renderer registration and `ctx.ui` |
 | Communicate with another extension | `pi.events` |
 
-Use the exported declarations from upstream Pi in [`extensions/types.ts`](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/src/core/extensions/types.ts) for exact event, context, tool, and result types.
+Use the exported declarations in [`extensions/types.ts`](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/src/core/extensions/types.ts) for exact event, context, tool, and result types.
 
 ## Follow the extension contracts
 
@@ -198,19 +196,19 @@ Events cover resource discovery, sessions, agent and message lifecycle, provider
 
 Notification handlers should not perform slow work on a streaming event. Transform handlers should preserve fields they do not intentionally own, and gate handlers should fail closed when their safety decision cannot be made.
 
-`before_agent_start` exposes both the current prompt and its structured `systemPromptOptions`. `event.messageType` says what started the run: `"user"` for a prompt or `pi.sendUserMessage()`, with `prompt` and `images`; `"custom"` for `pi.sendMessage(..., { triggerTurn: true })`, with the starting `message` and no `prompt`. A returned `message` is added to either kind of run; check `messageType` to skip runs started by custom messages. Prefer changing prompt sections, selected tools, or guidelines so FineCode can append a transcript delta. Returning `systemPrompt`, or setting `forceSystemPrompt`, replaces the whole prompt for that run while the transcript continues recording the structured sections. Providers receive the forced text as their leading system prompt.
+`before_agent_start` exposes both the current prompt and its structured `systemPromptOptions`. `event.messageType` says what started the run: `"user"` for a prompt or `pi.sendUserMessage()`, with `prompt` and `images`; `"custom"` for `pi.sendMessage(..., { triggerTurn: true })`, with the starting `message` and no `prompt`. A returned `message` is added to either kind of run; check `messageType` to skip runs started by custom messages. Prefer changing prompt sections, selected tools, or guidelines so Pi can append a transcript delta. Returning `systemPrompt`, or setting `forceSystemPrompt`, replaces the whole prompt for that run while the transcript continues recording the structured sections. Providers receive the forced text as their leading system prompt.
 
 `message_end` can replace a finalized message while preserving its role. `tool_call` can mutate input or block execution. `tool_result` handlers compose, with each handler seeing prior changes.
 
 <a id="provider_stream_event"></a>
 
-`provider_stream_event` fires for each parsed provider stream event before FineCode normalizes it. The event identifies the provider, API, and model; `event.data` is the earliest structured value available to FineCode, not necessarily the original HTTP bytes or SSE frame. Treat it as read-only because mutation can affect normalization. The event is notification-only and is not persisted.
+`provider_stream_event` fires for each parsed provider stream event before Pi normalizes it. The event identifies the provider, API, and model; `event.data` is the earliest structured value available to Pi, not necessarily the original HTTP bytes or SSE frame. Treat it as read-only because mutation can affect normalization. The event is notification-only and is not persisted.
 
 Handlers are awaited in stream order, so slow handlers delay stream consumption. Handler errors are reported without changing the provider response. See [`debug-provider.ts`](../examples/extensions/debug-provider.ts) for an opt-in viewer that groups raw events by assistant message.
 
 <a id="context_with_system"></a>
 
-`context` transforms conversation messages without prompt and tool system messages; FineCode restores that state afterward. Use `context_with_system` only when a request-local transformation must own the complete transcript, and keep a system message at index zero.
+`context` transforms conversation messages without prompt and tool system messages; Pi restores that state afterward. Use `context_with_system` only when a request-local transformation must own the complete transcript, and keep a system message at index zero.
 
 `turn_end` and `agent_before_settle` are actionable boundaries. Their handlers can chain proposed `custom`, `custom_message`, `context_edit`, or `compaction` entries and return `continue: true` for one next model request. Guard continuation conditions because an unconditional continuation can loop. Use the exported event declarations for the complete validation and ordering contract.
 
@@ -275,7 +273,7 @@ pi.on("tool_call", async (event, ctx) => {
 });
 ```
 
-A tool that orchestrates other tools can adjust what the model sees while it is active with `prepareLoadout(loadout)`. It runs whenever the active tools change and receives the declared tools, the callable tools, and every registered tool with its exposure, namespace, and prompt guidelines. It returns replacement `descriptions` for declared tools (including its own) and `hiddenDeclarations`: active tools whose declarations it should omit while they stay active and callable. The default system prompt leaves hidden tools out of its tool list and rules, and names no tool in the skills hint when the file reader is hidden, so the orchestrating tool should present their guidelines itself. `codemode` uses only this hook, `exposure`, `reachesTools`, and `ctx.executeTool()`, so another tool can implement the same behavior under a different name.
+A tool that orchestrates other tools can adjust what the model sees while it is active with `prepareLoadout(loadout)`. It runs whenever the active tools change and receives the declared tools, the callable tools, and every registered tool with its exposure, namespace, and prompt guidelines. It returns replacement `descriptions` for declared tools (including its own) and `hiddenDeclarations`: active tools whose declarations requests leave out while they stay active and callable. The default system prompt leaves hidden tools out of its tool list and rules, and names no tool in the skills hint when the file reader is hidden, so the orchestrating tool should present their guidelines itself. `codemode` uses only this hook, `exposure`, `reachesTools`, and `ctx.executeTool()`, so another tool can implement the same behavior under a different name.
 
 A tool that reaches other tools declares which ones a call may reach with `reachesTools(input)`: `"all"`, or the words of the input that may name them, where a word refers to every tool or namespace whose name it contains. `codemode` returns `"all"` for scripts that search or list tools and the words of the script otherwise; `tool_search` always returns `"all"`. Extensions that register tools late use it from their `tool_call` handler to finish registering the tools a call needs before it runs, as the MCP extension does for servers that are still connecting. The MCP extension also activates `codemode` or `tool_search` for MCP tools only when the tool of that name declares `reachesTools`.
 
@@ -283,7 +281,7 @@ A tool that reaches other tools declares which ones a call may reach with `reach
 
 Register every tool first, keep optional tools inactive, and use `pi.setActiveTools()` from a loader tool to select the desired active tools. Names must already be registered; unknown names are ignored.
 
-FineCode records the initial prompt and tool set in the transcript's first system message, then appends tool and prompt changes before the next model request. Providers that cannot represent the transition receive a complete transcript checkpoint, which can invalidate the cached prefix.
+Pi records the initial prompt and tool set in the transcript's first system message, then appends tool and prompt changes before the next model request. Providers that cannot represent the transition receive a complete transcript checkpoint, which can invalidate the cached prefix.
 
 ### Tool rendering
 
@@ -300,7 +298,7 @@ pi.unregisterMcpServer("jira");
 
 Servers registered while the extension loads connect when the session starts, together with the `mcp.json` servers; servers registered later connect right away, and `pi.unregisterMcpServer()` closes the connection and makes the server's tools unreachable. Registrations are not saved: register again on every load, for example based on the extension's own settings. A server in `mcp.json` with the same name takes precedence, and `/mcp` shows the override. Registering the same name again replaces the extension's earlier registration; names registered by another extension, invalid names, and invalid configs throw.
 
-The built-in MCP support connects registered servers. When nothing does, because another extension replaced it (see [MCP](mcp.md#replace-the-built-in-mcp-support)), each registration is reported as an extension error. Other MCP extensions can connect registered servers too: read them with `pi.getMcpServers()` on `session_start` and handle the `mcp_servers_change` event for later changes.
+The built-in MCP support connects registered servers. When nothing does, because another extension replaced it (see [MCP](mcp.md#other-mcp-extensions)), each registration is reported as an extension error. Other MCP extensions can connect registered servers too: read them with `pi.getMcpServers()` on `session_start` and handle the `mcp_servers_change` event for later changes.
 
 <a id="extensioncontext"></a>
 <a id="extensioncommandcontext"></a>
@@ -357,7 +355,7 @@ Keep tool and event behavior independent from rendering so non-interactive modes
 
 ### Errors and cleanup
 
-FineCode reports handler errors and continues where possible. A `tool_call` handler failure blocks the tool as a fail-safe; a tool execution failure becomes an error result for the model.
+Pi reports handler errors and continues where possible. A `tool_call` handler failure blocks the tool as a fail-safe; a tool execution failure becomes an error result for the model.
 
 Release resources in `session_shutdown` even when normal operation attempted cleanup.
 Keep cleanup idempotent because cancellation, reload, session replacement, and process exit can converge on the same path.
@@ -382,4 +380,4 @@ The checked [extension examples](../examples/extensions/) are the implementation
 | Route built-in tools to another machine | [`ssh.ts`](../examples/extensions/ssh.ts) | Reuses tool operation interfaces instead of recreating tool contracts. |
 | Add OAuth and provider-specific streaming | [`custom-provider-gitlab-duo/`](../examples/extensions/custom-provider-gitlab-duo/) | Shows a complete provider integration while delegating supported protocols. |
 
-Use [Custom Providers](custom-provider.md) for model-service integrations, [Terminal UI](tui.md) for custom components, and [FineCode Packages](packages.md) to install or distribute extensions with other resources. Use the exported declarations for exact signatures, payloads, and result schemas; this guide focuses on lifecycle choices, composition, and durable implementation patterns.
+Use [Custom Providers](custom-provider.md) for model-service integrations, [Terminal UI](tui.md) for custom components, and [Pi Packages](packages.md) to install or distribute extensions with other resources. Use the exported declarations for exact signatures, payloads, and result schemas; this guide focuses on lifecycle choices, composition, and durable implementation patterns.

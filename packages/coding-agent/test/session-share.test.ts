@@ -1,11 +1,12 @@
+import type { SpawnSyncReturns } from "node:child_process";
 import { EventEmitter } from "node:events";
 import { readFileSync, writeFileSync } from "node:fs";
 import { PassThrough } from "node:stream";
-import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 const childProcessMocks = vi.hoisted(() => ({
 	spawn: vi.fn(),
-	spawnSync: vi.fn(() => ({ status: 0 })),
+	spawnSync: vi.fn((): Pick<SpawnSyncReturns<string>, "status" | "error"> => ({ status: 0 })),
 }));
 
 vi.mock("node:child_process", () => childProcessMocks);
@@ -24,6 +25,7 @@ function deferred(): { promise: Promise<void>; resolve: () => void } {
 describe("shareSession", () => {
 	beforeAll(() => initTheme("dark"));
 	beforeEach(() => vi.clearAllMocks());
+	afterEach(() => vi.unstubAllGlobals());
 
 	it("keeps concurrent session exports isolated", async () => {
 		const uploads: string[] = [];
@@ -130,6 +132,86 @@ describe("shareSession", () => {
 			expect.any(String),
 		]);
 		expect(statuses[0]).toContain("https://pi.dev/session/#forced-gist");
+	});
+
+	it.each(["missing", "unauthenticated", "spawn-error"] as const)(
+		"reports %s GitHub CLI failures without credentials",
+		async (failure) => {
+			const errors: string[] = [];
+			const exportToHtml = vi.fn(async (filePath: string) => writeFileSync(filePath, "html"));
+			if (failure === "missing") {
+				childProcessMocks.spawnSync.mockReturnValueOnce({
+					status: null,
+					error: Object.assign(new Error("spawnSync gh ENOENT"), { code: "ENOENT" }),
+				});
+			} else if (failure === "unauthenticated") {
+				childProcessMocks.spawnSync.mockReturnValueOnce({ status: 1 });
+			} else {
+				childProcessMocks.spawn.mockImplementationOnce(() => {
+					const child = Object.assign(new EventEmitter(), {
+						stdout: new PassThrough(),
+						stderr: new PassThrough(),
+						kill: vi.fn(),
+					});
+					queueMicrotask(() => child.emit("error", new Error("spawn gh ENOENT")));
+					return child;
+				});
+			}
+			await shareSession({
+				session: {
+					sessionManager: { getSessionId: () => "failure", getCwd: () => "/tmp", getBranch: () => [] },
+					state: { systemPrompt: "", tools: [] },
+					settingsManager: { getSessionShareDestination: () => "gist" },
+					exportToHtml,
+				},
+				ui: { setFocus() {}, requestRender() {} },
+				editorContainer: { clear() {}, addChild() {} },
+				editor: {},
+				showStatus: vi.fn(),
+				showError: (message: string) => errors.push(message),
+			} as never);
+			const expected = {
+				missing: "GitHub CLI (gh) is not installed. Install it from https://cli.github.com/",
+				unauthenticated: "GitHub CLI is not logged in. Run 'gh auth login' first.",
+				"spawn-error": "Failed to create gist: spawn gh ENOENT",
+			};
+			expect(errors).toEqual([expected[failure]]);
+			expect(exportToHtml).toHaveBeenCalledTimes(failure === "spawn-error" ? 1 : 0);
+			expect(childProcessMocks.spawn).toHaveBeenCalledTimes(failure === "spawn-error" ? 1 : 0);
+		},
+	);
+
+	it("labels Radius artifacts as FineCode without changing the Pi share protocol", async () => {
+		const fetch = vi.fn(async (input: unknown, options?: RequestInit) => {
+			const url = new URL(String(input));
+			expect(url.pathname).toBe("/v1/artifacts");
+			expect(url.searchParams.get("title")).toBe("FineCode session");
+			expect(String(options?.body)).toContain('"customType":"pi.share"');
+			return Response.json({ artifact: { canonical_url: "https://example.test/artifact" } });
+		});
+		vi.stubGlobal("fetch", fetch);
+		const showError = vi.fn();
+		const showStatus = vi.fn();
+		await shareSession({
+			session: {
+				sessionManager: { getSessionId: () => "radius", getCwd: () => "/tmp", getBranch: () => [] },
+				state: { systemPrompt: "system", tools: [] },
+				settingsManager: { getSessionShareDestination: () => "radius" },
+				modelRuntime: {
+					getProvider: () => ({ id: "radius" }),
+					getAuth: async () => ({ auth: { apiKey: "fixture-token" } }),
+				},
+			},
+			ui: { setFocus() {}, requestRender() {} },
+			editorContainer: { clear() {}, addChild() {} },
+			editor: {},
+			showStatus,
+			showError,
+		} as never);
+		expect(fetch).toHaveBeenCalledOnce();
+		expect(showError).not.toHaveBeenCalled();
+		expect(showStatus).toHaveBeenCalledWith(expect.stringContaining("https://example.test/artifact"));
+		expect(childProcessMocks.spawnSync).not.toHaveBeenCalled();
 	});
 
 	it("reports missing Radius authentication when Radius is forced", async () => {

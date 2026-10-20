@@ -272,6 +272,7 @@ export function parseArgs(args: string[]): Args {
 
 export function printHelp(extensionFlags?: ExtensionFlag[]): void {
 	const updateTargets = PACKAGE_NAME === "finecode" ? "[source|self]" : "[source|self|pi]";
+	const appDisplayName = PACKAGE_NAME === "finecode" ? "FineCode" : APP_NAME === "pi" ? "Pi" : APP_NAME;
 	const extensionFlagsText =
 		extensionFlags && extensionFlags.length > 0
 			? `\n${chalk.bold("Extension CLI Flags:")}\n${extensionFlags
@@ -291,7 +292,7 @@ ${chalk.bold("Commands:")}
   ${APP_NAME} install <source> [-l]     Install extension source and add to settings
   ${APP_NAME} remove <source> [-l]      Remove extension source from settings
   ${APP_NAME} uninstall <source> [-l]   Alias for remove
-  ${APP_NAME} update ${updateTargets}   Update ${APP_NAME}, extensions, or model catalogs
+  ${APP_NAME} update ${updateTargets}   Update ${appDisplayName}, extensions, or model catalogs
   ${APP_NAME} list                      List installed extensions from settings
   ${APP_NAME} config [-l]               Open TUI to enable/disable package resources (Tab switches scope)
   ${APP_NAME} auth <command>            Print credentials or check provider readiness

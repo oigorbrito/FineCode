@@ -35,10 +35,12 @@ describe("FineCode identity compatibility", () => {
 		const manifest = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")) as {
 			version: string;
 			finecodeRuntimeRelease?: string;
+			bin: Record<string, string>;
 			dependencies: Record<string, string>;
 		};
 		expect(VERSION).toBe("0.0.3");
 		expect(manifest.version).toBe(VERSION);
+		expect(manifest.bin).toEqual({ finecode: "dist/bundle/cli.js" });
 		expect(manifest.finecodeRuntimeRelease).toBe(FINECODE_RUNTIME_RELEASE_MARKER);
 		expect(manifest.dependencies).toMatchObject({
 			"@earendil-works/pi-agent-core": "1.3.0",

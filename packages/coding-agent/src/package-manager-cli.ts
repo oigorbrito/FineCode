@@ -47,6 +47,7 @@ export type PackageCommand = "install" | "remove" | "update" | "list";
 
 type UpdateTarget = { type: "all" } | { type: "self" } | { type: "extensions"; source?: string } | { type: "models" };
 
+const APP_DISPLAY_NAME = PACKAGE_NAME === "finecode" ? "FineCode" : APP_NAME === "pi" ? "Pi" : APP_NAME;
 const DEFAULT_INSTALLER_API_BASE = "https://pi.dev/api/installer/releases";
 const MANAGED_INSTALL_MARKER = "managed-install.json";
 const MANAGED_RELEASE_VERSION_RE = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/;
@@ -363,25 +364,24 @@ Examples:
 			console.log(`${chalk.bold("Usage:")}
   ${getPackageCommandUsage("update")}
 
-Update ${APP_NAME}, installed packages, or model catalogs.
+Update ${APP_DISPLAY_NAME}, installed packages, or model catalogs.
 
 Options:
-  --self                  Update ${APP_NAME} only (default when no target is given)
+  --self                  Update ${APP_DISPLAY_NAME} only (default when no target is given)
   --extensions            Update installed packages only
   --models                Refresh model catalogs only
-  --all                   Update ${APP_NAME} and installed packages
+  --all                   Update ${APP_DISPLAY_NAME} and installed packages
   --extension <source>    Update one package only
   -a, --approve           Trust project-local files for this command
   -na, --no-approve       Ignore project-local files for this command
-  --force                 Reinstall ${APP_NAME} even if the current version is latest
+  --force                 Reinstall ${APP_DISPLAY_NAME} even if the current version is latest
 
 Short forms:
-  ${APP_NAME} update                Update ${APP_NAME} only
-  ${APP_NAME} update --self         Explicitly update ${APP_NAME} only
-  ${APP_NAME} update --all          Update ${APP_NAME} and all extensions
+  ${APP_NAME} update                Update ${APP_DISPLAY_NAME} only
+  ${APP_NAME} update --all          Update ${APP_DISPLAY_NAME} and all extensions
   ${APP_NAME} update --models       Refresh model catalogs only
   ${APP_NAME} update <source>       Update one package
-${PACKAGE_NAME === "finecode" ? `  Legacy alias: ${APP_NAME} update pi (same as --self)\n` : `  ${APP_NAME} update pi             Update ${APP_NAME} only\n`}`);
+${PACKAGE_NAME === "finecode" ? `  Legacy alias: ${APP_NAME} update pi (same as --self)\n` : `  ${APP_NAME} update pi             Update ${APP_DISPLAY_NAME} only\n`}`);
 			return;
 
 		case "list":
@@ -1124,8 +1124,8 @@ export async function handlePackageCommand(
 						return true;
 					}
 					console.log(chalk.green(`Updated ${APP_NAME} from ${VERSION} to ${selfUpdatePlan.version}`));
-					// The pi.dev installer migrates Pi npm installs to a managed install.
-					// FineCode releases use the npm registry and do not use that installer.
+					// The pi.dev installer migrates global npm installs to a managed install
+					// that pins all dependencies. It does not migrate pnpm, yarn, or bun installs.
 					if (installMethod === "npm" && PACKAGE_NAME !== "finecode") {
 						const installerCommand =
 							process.platform === "win32"

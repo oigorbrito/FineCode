@@ -7,6 +7,9 @@ const durableSrcTesting = fileURLToPath(new URL("./src/testing/index.ts", import
 export default defineConfig({
 	test: {
 		environment: "node",
+		// Native shell startup and SQLite stress tests contend heavily across Windows fork workers.
+		// Match a small CI runner's parallelism without changing test deadlines or coverage.
+		maxWorkers: process.platform === "win32" ? 2 : undefined,
 		// Run in workerd by their own config: `npm run test:workers`.
 		exclude: [...configDefaults.exclude, "test-workers/**"],
 		setupFiles: ["./test/setup-document-retention.ts"],

@@ -37,55 +37,14 @@ describe("version checks", () => {
 	});
 
 	it("returns only newer versions", async () => {
-		const fetchMock = vi.fn(async () =>
-			Response.json({
-				name: "finecode",
-				version: "1.2.3",
-				finecodeRuntimeRelease: FINECODE_RUNTIME_RELEASE_MARKER,
-			}),
+		const fetchMock = vi.fn(async (_url: unknown) =>
+			Response.json({ name: "finecode", version: "1.2.3", finecodeRuntimeRelease: FINECODE_RUNTIME_RELEASE_MARKER }),
 		);
 		vi.stubGlobal("fetch", fetchMock);
 
 		await expect(checkForNewPiVersion("1.2.3")).resolves.toBeUndefined();
-		await expect(checkForNewPiVersion("1.2.2")).resolves.toEqual({ version: "1.2.3" });
-	});
-
-	it("checks the FineCode npm package registry for its latest release", async () => {
-		const fetchMock = vi.fn(async () =>
-			Response.json({
-				name: "finecode",
-				version: "1.2.4",
-				finecodeRuntimeRelease: FINECODE_RUNTIME_RELEASE_MARKER,
-			}),
-		);
-		vi.stubGlobal("fetch", fetchMock);
-
-		await expect(getLatestPackageRelease("1.2.3")).resolves.toEqual({ version: "1.2.4" });
-		expect(fetchMock).toHaveBeenCalledWith(
-			"https://registry.npmjs.org/finecode/latest",
-			expect.objectContaining({ headers: expect.objectContaining({ accept: "application/json" }) }),
-		);
-	});
-
-	it("rejects FineCode bootstrap packages and invalid release metadata", async () => {
-		const fetchMock = vi
-			.fn()
-			.mockResolvedValueOnce(Response.json({ name: "finecode", version: "0.0.3" }))
-			.mockResolvedValueOnce(
-				Response.json({
-					name: "finecode",
-					version: "not-a-version",
-					finecodeRuntimeRelease: FINECODE_RUNTIME_RELEASE_MARKER,
-				}),
-			)
-			.mockResolvedValueOnce(Response.json(null))
-			.mockResolvedValueOnce(new Response(null, { status: 404 }));
-		vi.stubGlobal("fetch", fetchMock);
-
-		await expect(getLatestPackageRelease("0.0.3")).resolves.toBeUndefined();
-		await expect(getLatestPackageRelease("0.0.3")).resolves.toBeUndefined();
-		await expect(getLatestPackageRelease("0.0.3")).resolves.toBeUndefined();
-		await expect(getLatestPackageRelease("0.0.3")).resolves.toBeUndefined();
+		await expect(checkForNewPiVersion("1.2.2")).resolves.toEqual({ packageName: "finecode", version: "1.2.3" });
+		expect(fetchMock.mock.calls.every(([url]) => url === "https://registry.npmjs.org/finecode/latest")).toBe(true);
 	});
 
 	it("uses the pi.dev version check api with a pi user agent", async () => {
@@ -148,6 +107,48 @@ describe("version checks", () => {
 			packageName: "@new-scope/pi",
 			version: "1.2.4",
 		});
+	});
+
+	it("checks the FineCode npm package release independently of Pi telemetry", async () => {
+		const fetchMock = vi.fn(async () =>
+			Response.json({ name: "finecode", version: "0.0.4", finecodeRuntimeRelease: FINECODE_RUNTIME_RELEASE_MARKER }),
+		);
+		vi.stubGlobal("fetch", fetchMock);
+
+		await expect(getLatestPackageRelease("0.0.3")).resolves.toEqual({ packageName: "finecode", version: "0.0.4" });
+		expect(fetchMock).toHaveBeenCalledWith(
+			"https://registry.npmjs.org/finecode/latest",
+			expect.objectContaining({ headers: { "User-Agent": "FineCode/finecode" } }),
+		);
+	});
+
+	it.each([
+		null,
+		{ name: "finecode", version: "0.0.4" },
+		{ name: "other", version: "0.0.4", finecodeRuntimeRelease: FINECODE_RUNTIME_RELEASE_MARKER },
+		{ packageName: "other", version: "0.0.4", finecodeRuntimeRelease: FINECODE_RUNTIME_RELEASE_MARKER },
+		{ name: "finecode", version: "invalid", finecodeRuntimeRelease: FINECODE_RUNTIME_RELEASE_MARKER },
+	])("rejects unrecognized FineCode runtime metadata: %j", async (metadata) => {
+		vi.stubGlobal(
+			"fetch",
+			vi.fn(async () => Response.json(metadata)),
+		);
+		await expect(getLatestPackageRelease("0.0.3")).resolves.toBeUndefined();
+	});
+
+	it("does not let registry metadata redirect FineCode to another package", async () => {
+		vi.stubGlobal(
+			"fetch",
+			vi.fn(async () =>
+				Response.json({
+					name: "finecode",
+					packageName: "@other/runtime",
+					version: "0.0.4",
+					finecodeRuntimeRelease: FINECODE_RUNTIME_RELEASE_MARKER,
+				}),
+			),
+		);
+		await expect(getLatestPackageRelease("0.0.3")).resolves.toEqual({ packageName: "finecode", version: "0.0.4" });
 	});
 
 	it("returns update notes from the version check api", async () => {

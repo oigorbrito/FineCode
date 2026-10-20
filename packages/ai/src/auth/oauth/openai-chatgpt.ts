@@ -235,7 +235,6 @@ async function loginOpenAIChatGPT(
 	options?: LoginOptions,
 ): Promise<OAuthCredential> {
 	const hostId = agentHostId(options?.getDeviceId?.());
-	const agentName = options?.agentName ?? AGENT_NAME_HINT;
 	const { verifier, challenge } = await generatePKCE();
 	const state = randomValue();
 	const nonce = randomValue();
@@ -244,14 +243,14 @@ async function loginOpenAIChatGPT(
 	const callback = await startCallbackServer(state).catch((error: unknown) => {
 		if (!(error instanceof Error && "code" in error && error.code === "EADDRINUSE")) throw error;
 		throw new Error(
-			`Port ${CALLBACK_PORT} is in use, probably by an unfinished login in another ${agentName} session or by the Codex CLI. Cancel that login and try again.`,
+			`Port ${CALLBACK_PORT} is in use, probably by an unfinished login in another pi session or by the Codex CLI. Cancel that login and try again.`,
 		);
 	});
 
 	const authorizationUrl = new URL(AUTHORIZE_URL);
 	authorizationUrl.search = new URLSearchParams({
 		client_id: DYNAMIC_CLIENT_ID,
-		agent_name_hint: agentName,
+		agent_name_hint: options?.agentName ?? AGENT_NAME_HINT,
 		ext_agent_host_id: hostId,
 		response_type: "code",
 		redirect_uri: REDIRECT_URI,

@@ -1,5 +1,5 @@
-import { describe, expect, test, vi } from "vitest";
-import { normalizeSessionName, parseArgs, printHelp } from "../src/cli/args.ts";
+import { describe, expect, test } from "vitest";
+import { normalizeSessionName, parseArgs } from "../src/cli/args.ts";
 
 describe("parseArgs", () => {
 	describe("--version flag", () => {
@@ -30,18 +30,6 @@ describe("parseArgs", () => {
 		test("parses -h shorthand", () => {
 			const result = parseArgs(["-h"]);
 			expect(result.help).toBe(true);
-		});
-
-		test("shows FineCode's canonical self-update target in general help", () => {
-			const log = vi.spyOn(console, "log").mockImplementation(() => {});
-			try {
-				printHelp();
-				const help = String(log.mock.calls[0]?.[0]);
-				expect(help).toContain("finecode update [source|self]");
-				expect(help).not.toContain("finecode update [source|self|pi]");
-			} finally {
-				vi.restoreAllMocks();
-			}
 		});
 	});
 

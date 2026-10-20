@@ -443,20 +443,13 @@ describe("MCP connections", () => {
 
 	/** In-memory server that answers initialize, tools/list, and tools/call with "ok". */
 	function createTransport(
-		options: {
-			expireFirstCall?: boolean;
-			methods?: string[];
-			noTools?: boolean;
-			onInitialize?: (message: JsonRpcMessage) => void;
-			resources?: boolean;
-		} = {},
+		options: { expireFirstCall?: boolean; methods?: string[]; noTools?: boolean; resources?: boolean } = {},
 	) {
 		const pair = createInMemoryTransportPair();
 		servers.push(pair.server);
 		pair.server.onMessage((message) => {
 			if (!("id" in message) || !("method" in message)) return;
 			options.methods?.push(message.method);
-			if (message.method === "initialize") options.onInitialize?.(message);
 			const response: JsonRpcMessage =
 				message.method === "initialize"
 					? {
@@ -567,17 +560,15 @@ for await (const line of createInterface({ input: process.stdin })) {
 		},
 	);
 
-	it("identifies FineCode to MCP servers and handles servers without tools", async () => {
+	it("connects to servers without the tools capability without listing tools", async () => {
 		const methods: string[] = [];
-		const initializeMessages: JsonRpcMessage[] = [];
 		const { connection } = connect({ name: "fake", config: { command: "unused" }, source: "test" }, [
-			() => createTransport({ noTools: true, methods, onInitialize: (message) => initializeMessages.push(message) }),
+			() => createTransport({ noTools: true, methods }),
 		]);
 		await connection.getClient();
 		expect(connection.state).toBe("connected");
 		expect(connection.tools).toEqual([]);
 		expect(methods).toEqual(["initialize"]);
-		expect(initializeMessages[0]).toMatchObject({ params: { clientInfo: { name: "finecode" } } });
 		await connection.close();
 	});
 

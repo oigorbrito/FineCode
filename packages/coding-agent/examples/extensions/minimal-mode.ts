@@ -11,13 +11,12 @@
  * - Minimal: Shows only tool call, no output (this extension's collapsed mode)
  *
  * Usage:
- *   finecode -e ./minimal-mode.ts
+ *   pi -e ./minimal-mode.ts
  *
  * Then use ctrl+o to toggle between minimal (collapsed) and full (expanded) views.
  */
 
-import { Text } from "@earendil-works/pi-tui";
-import type { ExtensionAPI } from "finecode";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import {
 	createBashToolDefinition,
 	createEditToolDefinition,
@@ -27,7 +26,8 @@ import {
 	createReadToolDefinition,
 	createWriteToolDefinition,
 	formatReadLineRange,
-} from "finecode";
+} from "@earendil-works/pi-coding-agent";
+import { Text } from "@earendil-works/pi-tui";
 import { homedir } from "os";
 
 /**

@@ -4,6 +4,7 @@ import { constants as osConstants } from "node:os";
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { spawn } from "child_process";
 import { type Static, Type } from "typebox";
+import { APP_NAME } from "../../config.ts";
 import { waitForChildProcess } from "../../utils/child-process.ts";
 import {
 	getShellConfig,
@@ -421,7 +422,7 @@ const bashToolConfig: ShellToolConfig = {
 	prompt: "$",
 	promptSnippet: bashToolSystemPromptContribution.snippet,
 	promptGuidelines: bashToolSystemPromptContribution.guidelines,
-	tempFilePrefix: "finecode-bash",
+	tempFilePrefix: `${APP_NAME}-bash`,
 };
 
 export function createBashToolDefinition(

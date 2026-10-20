@@ -1299,7 +1299,7 @@ export class ExtensionRunner {
 
 	/**
 	 * Run the request-time transforms in two phases. `context` handlers see the conversation
-	 * only and the agent restores the prompt and tool state after each; `context_with_system`
+	 * only and Pi restores the prompt and tool state after each; `context_with_system`
 	 * handlers then see the full transcript and their output is used as returned.
 	 */
 	async emitContext(messages: AgentMessage[]): Promise<AgentMessage[]> {

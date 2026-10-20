@@ -331,7 +331,7 @@ describe("ownership", () => {
 		expect((await harness.waitForTask(leaf, context)).state.outcome.status).toBe("completed");
 		expect((await harness.waitForTask(top, context)).state.outcome.status).toBe("completed");
 		await harness.close(context);
-	}, 60_000);
+	}, 90_000); // Leave headroom for persisting 20,000 SQLite-backed tasks on Windows.
 
 	it("holds an owner for work a commit creates below ended tasks loaded from storage", async () => {
 		const directory = await mkdtemp(join(tmpdir(), "pi-durable-ownership-"));

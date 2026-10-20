@@ -29,7 +29,7 @@ import {
 	StreamableHttpTransport,
 } from "@earendil-works/pi-mcp";
 import { McpOAuthAuthorizationRequiredError, type OAuthChallenge } from "@earendil-works/pi-mcp/oauth";
-import { APP_NAME, VERSION } from "../../config.ts";
+import { VERSION } from "../../config.ts";
 import { resolveConfigValueOrThrow, resolveHeadersOrThrow } from "../../core/resolve-config-value.ts";
 import type { McpServerEntry } from "./config.ts";
 import type { McpServerLog } from "./log.ts";
@@ -358,7 +358,7 @@ export class McpServerConnection implements McpToolCaller, McpResourceServer {
 
 	private async connectOnce(): Promise<McpClient> {
 		const client = new McpClient({
-			name: APP_NAME,
+			name: "pi",
 			version: VERSION,
 			requestTimeoutMs: this.timeoutMs,
 			roots: [{ uri: pathToFileURL(this.cwd).href, name: basename(this.cwd) }],

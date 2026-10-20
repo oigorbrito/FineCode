@@ -1,7 +1,7 @@
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { APP_NAME } from "../../config.ts";
+import { APP_NAME, PACKAGE_NAME } from "../../config.ts";
 import { spawnProcess } from "../../utils/child-process.ts";
 import { stripBom } from "../../utils/text.ts";
 
@@ -11,6 +11,8 @@ export interface ExternalEditorOptions {
 }
 
 export type ExternalEditorResult = { status: "complete"; content: string } | { status: "failed" };
+
+const APP_DISPLAY_NAME = PACKAGE_NAME === "finecode" ? "FineCode" : APP_NAME === "pi" ? "Pi" : APP_NAME;
 
 function parseExternalEditorCommand(command: string): string[] | undefined {
 	const args: string[] = [];
@@ -62,7 +64,7 @@ function parseExternalEditorCommand(command: string): string[] | undefined {
 }
 
 export async function editInExternalEditor(options: ExternalEditorOptions): Promise<ExternalEditorResult> {
-	const directory = mkdtempSync(join(tmpdir(), "finecode-editor-"));
+	const directory = mkdtempSync(join(tmpdir(), `${APP_NAME}-editor-`));
 	const filePath = join(directory, "prompt.md");
 	try {
 		writeFileSync(filePath, options.content, "utf-8");
@@ -70,9 +72,8 @@ export async function editInExternalEditor(options: ExternalEditorOptions): Prom
 		if (!commandArgs?.length) return { status: "failed" };
 		const [editor, ...editorArgs] = commandArgs;
 		if (!editor) return { status: "failed" };
-		const appDisplayName = APP_NAME === "finecode" ? "FineCode" : "Pi";
 		process.stdout.write(
-			`Launching external editor: ${options.command}\n${appDisplayName} will resume when the editor exits.\n`,
+			`Launching external editor: ${options.command}\n${APP_DISPLAY_NAME} will resume when the editor exits.\n`,
 		);
 
 		// Do not use spawnSync here. On Windows, synchronous child_process calls can keep

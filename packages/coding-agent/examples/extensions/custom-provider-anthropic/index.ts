@@ -13,10 +13,10 @@
  *   cd packages/coding-agent/examples/extensions/custom-provider && npm install
  *
  *   # With OAuth (run /login custom-anthropic first)
- *   finecode -e ./packages/coding-agent/examples/extensions/custom-provider
+ *   pi -e ./packages/coding-agent/examples/extensions/custom-provider
  *
  *   # With API key
- *   CUSTOM_ANTHROPIC_API_KEY=sk-ant-... finecode -e ./packages/coding-agent/examples/extensions/custom-provider
+ *   CUSTOM_ANTHROPIC_API_KEY=sk-ant-... pi -e ./packages/coding-agent/examples/extensions/custom-provider
  *
  * Then use /model to select custom-anthropic/claude-sonnet-4-5
  */
@@ -46,7 +46,7 @@ import {
 	type ToolResultMessage,
 	type TranscriptContext,
 } from "@earendil-works/pi-ai";
-import type { ExtensionAPI } from "finecode";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 // =============================================================================
 // OAuth implementation adapted for the legacy extension compatibility interface.

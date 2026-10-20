@@ -1,5 +1,3 @@
-[**English**](rpc-extension-ui.md) | [Português (Brasil)](pt-BR/rpc-extension-ui.md)
-
 # RPC Extension UI
 
 Extensions can request user interaction through `ctx.ui`. In RPC mode, supported calls become a request/response subprotocol alongside normal [RPC commands](rpc-commands.md) and [session events](json.md).
@@ -26,7 +24,7 @@ Some `ExtensionUIContext` methods are not supported or degraded in RPC mode beca
 
 Note: `ctx.mode` is `"rpc"` and `ctx.hasUI` is `true` in RPC mode because the dialog and fire-and-forget methods are functional via the extension UI sub-protocol. Use `ctx.mode === "tui"` to guard TUI-specific features like `custom()` that require a real terminal.
 
-## Requests from FineCode
+## Requests from Pi
 
 All requests have `type: "extension_ui_request"`, a unique `id`, and a `method` field.
 
@@ -154,7 +152,7 @@ Set the terminal window/tab title. Fire-and-forget.
   "type": "extension_ui_request",
   "id": "uuid-8",
   "method": "setTitle",
-  "title": "finecode - my project"
+  "title": "pi - my project"
 }
 ```
 
@@ -171,7 +169,7 @@ Set the text in the input editor. Fire-and-forget.
 }
 ```
 
-## Responses to FineCode
+## Responses to Pi
 
 Responses are sent for dialog methods only (`select`, `confirm`, `input`, `editor`). The `id` must match the request.
 
@@ -199,4 +197,4 @@ Dismiss any dialog method. The extension receives `undefined` (for select/input/
 
 See the checked [RPC extension UI client](../examples/rpc-extension-ui.ts) and its [demo extension](../examples/extensions/rpc-demo.ts).
 
-The upstream Pi request and response unions are available for reference in [`rpc-types.ts`](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/src/modes/rpc/rpc-types.ts). See [Extensions](extensions.md#ui-and-modes) for mode-independent extension guidance.
+The exported request and response unions are defined in [`rpc-types.ts`](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/src/modes/rpc/rpc-types.ts). See [Extensions](extensions.md#ui-and-modes) for mode-independent extension guidance.

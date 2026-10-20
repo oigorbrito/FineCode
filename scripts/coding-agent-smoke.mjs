@@ -3,7 +3,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-export const codingAgentName = "finecode";
+export const codingAgentName = "@earendil-works/pi-coding-agent";
 
 export function smokeTestCodingAgent(directory, runtime = process.execPath) {
 	const packageDir = join(directory, "node_modules", codingAgentName);
@@ -33,8 +33,7 @@ assert.equal(typeof SessionManager.inMemory, "function");
 assert.equal(typeof ModelRuntime.create, "function");
 `);
 		execFileSync(runtime, [entry], { cwd: directory, env, stdio: ["inherit", "pipe", "pipe"], timeout: 30_000 });
-		if (Object.keys(manifest.bin).join(",") !== "finecode") throw new Error("Unexpected npm CLI aliases");
-		for (const cli of new Set([manifest.bin.finecode, "dist/cli.js"])) {
+		for (const cli of new Set([manifest.bin.pi, "dist/cli.js"])) {
 			const output = execFileSync(runtime, [join(packageDir, cli), "--version"], {
 				cwd: directory,
 				encoding: "utf8",
