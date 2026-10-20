@@ -20,7 +20,7 @@ test('normalizeStoredSettings preserves the FineCode engine identity', () => {
 test('normalizeStoredSettings falls back to defaults for unknown values', () => {
   const settings = normalizeStoredSettings({ permissionMode: 'yolo', piEngine: 'codex', language: 'xx' }, LANGUAGES)
   assert.equal(settings.permissionMode, DEFAULT_SETTINGS.permissionMode)
-  assert.equal(settings.piEngine, 'auto')
+  assert.equal(settings.piEngine, DEFAULT_SETTINGS.piEngine)
   assert.equal(settings.language, DEFAULT_SETTINGS.language)
 })
 
