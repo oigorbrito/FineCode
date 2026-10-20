@@ -10,12 +10,12 @@
  * which can be cheaper/faster than the main conversation model.
  *
  * Usage:
- *   finecode --extension examples/extensions/custom-compaction.ts
+ *   pi --extension examples/extensions/custom-compaction.ts
  */
 
 import { uuidv7 } from "@earendil-works/pi-ai";
-import type { ExtensionAPI } from "finecode";
-import { convertToLlm, serializeConversation } from "finecode";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { convertToLlm, serializeConversation } from "@earendil-works/pi-coding-agent";
 
 export default function (pi: ExtensionAPI) {
 	pi.on("session_before_compact", async (event, ctx) => {

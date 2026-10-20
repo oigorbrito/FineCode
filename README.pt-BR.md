@@ -6,7 +6,7 @@
 
 # FineCode
 
-FineCode é um agente de programação minimalista e extensível, derivado do Pi. Seu comando canônico é `finecode`; `pi` continua disponível como alias de compatibilidade.
+FineCode é um agente de programação minimalista e extensível, derivado do Pi. Seu comando canônico é `finecode`; o pacote npm não expõe um alias `pi`.
 
 Personalize o FineCode com [extensões](packages/coding-agent/docs/pt-BR/extensions.md), [skills](packages/coding-agent/docs/pt-BR/skills.md), [modelos de prompt](packages/coding-agent/docs/pt-BR/prompt-templates.md) e [temas](packages/coding-agent/docs/pt-BR/themes.md). Agrupe recursos em pacotes e compartilhe-os pelo npm ou pelo git.
 
@@ -20,7 +20,7 @@ O pacote npm do FineCode ainda não foi publicado. Após o lançamento, instale 
 npm install -g --ignore-scripts finecode
 ```
 
-Inicie com `finecode`; o comando legado `pi` continua disponível. A instalação pelo npm não fixa dependências transitivas e não exige scripts de ciclo de vida das dependências.
+Inicie com `finecode`. A instalação pelo npm não fixa dependências transitivas e não exige scripts de ciclo de vida das dependências.
 
 Inicie o FineCode no diretório em que deseja trabalhar:
 
@@ -31,7 +31,7 @@ finecode
 
 Para usar um provedor de IA integrado, execute `/login` dentro do FineCode para conectar uma assinatura ou chave de API. Em seguida, atribua uma tarefa.
 
-Consulte a [documentação local](packages/coding-agent/docs/pt-BR/index.md) para instruções de configuração e uso. Os serviços `pi.dev` mencionados nos links continuam sendo recursos upstream do Pi.
+Consulte a [documentação local](packages/coding-agent/docs/pt-BR/index.md) para instruções de configuração e uso. Os serviços `pi.dev` mencionados nos links continuam sendo recursos upstream do Pi. A documentação herdada pode usar `pi` e `.pi`; o FineCode usa `finecode` e, por padrão, `.finecode`.
 
 ## Executar com Nix
 
@@ -145,7 +145,7 @@ O arquivo inclui os dados de modelos da versão e os prebuilds nativos. `--offli
 
 Tratamos alterações nas dependências npm como alterações de código que precisam ser revisadas.
 
-- As dependências externas diretas são fixadas em versões exatas. Os pacotes internos do workspace continuam usando intervalos de versões.
+- As dependências diretas do registro, incluindo dependências internas do workspace, são fixadas em versões exatas.
 - `.npmrc` define `save-exact=true` e `min-release-age=2` para evitar que o npm resolva versões de dependências publicadas no mesmo dia.
 - `package-lock.json` é a fonte de verdade das dependências. O pre-commit bloqueia alterações acidentais no lockfile, a menos que `PI_ALLOW_LOCKFILE_CHANGE=1` esteja definido.
 - `npm run check` verifica as dependências diretas fixadas, a compatibilidade dos imports nativos de TypeScript e o install-lock gerado do coding-agent.

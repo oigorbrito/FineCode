@@ -4,11 +4,11 @@
   <a href="https://discord.com/invite/3cU7Bz4UPx"><img alt="Discord" src="https://img.shields.io/badge/discord-community-5865F2?style=flat-square&logo=discord&logoColor=white" /></a>
 </p>
 
-> New issues and PRs from new contributors are closed automatically. Maintainers review closed submissions daily. See [CONTRIBUTING.md](../../CONTRIBUTING.md).
+> FineCode is maintained solo. Issues and PRs remain open for manual maintainer review. See [CONTRIBUTING.md](../../CONTRIBUTING.md).
 
 # FineCode
 
-FineCode is a minimal, extensible coding agent built from Pi, with the `finecode` command as its canonical CLI. The `pi` command remains available as a compatibility alias.
+FineCode is a minimal, extensible coding agent built from Pi, with the `finecode` command as its canonical CLI. Pi remains the upstream project's separate command.
 
 Customize FineCode with [extensions](docs/extensions.md), [skills](docs/skills.md), [prompt templates](docs/prompt-templates.md), and [themes](docs/themes.md). Bundle these resources as packages and share them through npm or git.
 
@@ -16,15 +16,15 @@ FineCode ships with powerful defaults and can be extended for your workflow. Use
 
 ## Getting started
 
-Install FineCode from npm (Node.js 22.19 or newer):
+The FineCode npm runtime is not published yet. Once released, install it with Node.js 22.19 or newer:
 
 ```bash
 npm install -g --ignore-scripts finecode
 ```
 
-Start the CLI with `finecode`; `pi` remains an alias. The npm package does not pin transitive dependencies and does not require dependency lifecycle scripts for installation. The FineCode package is not published yet.
+Start the CLI with `finecode`. The npm package does not pin transitive dependencies and does not require dependency lifecycle scripts for installation.
 
-On macOS and Linux, Nix users can run this checkout with `nix run .` or install it with `nix profile install .`. See the [quickstart](docs/quickstart.md#1-install-finecode).
+On macOS and Linux, Nix users can run this checkout with `nix run .` or install it with `nix profile install .`. The [upstream Pi quickstart](docs/quickstart.md) describes Pi, not the FineCode command or installer.
 
 Start FineCode in the directory where you want it to work:
 
@@ -35,7 +35,7 @@ finecode
 
 For a built-in AI provider, run `/login` inside FineCode to connect a subscription or API key. Then give FineCode a task.
 
-See the [documentation](docs/index.md) for full setup and usage instructions.
+See the [documentation](docs/index.md) for full setup and usage instructions. These upstream-derived docs may use `pi`, `.pi`, and Pi-specific services; FineCode uses `finecode`, `.finecode`, and the intended npm channel described above.
 
 ## Share your OSS coding agent sessions
 
@@ -68,7 +68,7 @@ npm run check
 ./test.sh
 ```
 
-Read [CONTRIBUTING.md](../../CONTRIBUTING.md) before opening an issue or pull request. It defines the contribution gate, issue quality bar, and required checks. Read [AGENTS.md](../../AGENTS.md) for repository-specific implementation, testing, dependency, and release rules.
+Read [CONTRIBUTING.md](../../CONTRIBUTING.md) before opening an issue or pull request. It defines manual contribution review, issue quality expectations, and required checks. Read [AGENTS.md](../../AGENTS.md) for repository-specific implementation, testing, dependency, and release rules.
 
 ## License
 

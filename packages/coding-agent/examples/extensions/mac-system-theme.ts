@@ -1,13 +1,13 @@
 /**
- * Syncs the FineCode theme with macOS system appearance (dark/light mode).
+ * Syncs pi theme with macOS system appearance (dark/light mode).
  *
  * Usage:
- *   finecode -e examples/extensions/mac-system-theme.ts
+ *   pi -e examples/extensions/mac-system-theme.ts
  */
 
 import { exec } from "node:child_process";
 import { promisify } from "node:util";
-import type { ExtensionAPI } from "finecode";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 const execAsync = promisify(exec);
 

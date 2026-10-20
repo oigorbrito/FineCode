@@ -4,11 +4,11 @@
   <a href="https://discord.com/invite/3cU7Bz4UPx"><img alt="Discord" src="https://img.shields.io/badge/discord-community-5865F2?style=flat-square&logo=discord&logoColor=white" /></a>
 </p>
 
-> Novas issues e PRs de colaboradores iniciantes são fechadas automaticamente. Os mantenedores revisam diariamente as submissões fechadas. Consulte [CONTRIBUTING.md](../../CONTRIBUTING.pt-BR.md).
+> FineCode é mantido como projeto solo. Issues e PRs permanecem abertas para revisão manual do mantenedor. Consulte [CONTRIBUTING.md](../../CONTRIBUTING.pt-BR.md).
 
 # FineCode
 
-FineCode é um agente de programação minimalista e extensível, derivado do Pi, com o comando `finecode` como CLI canônica. O comando `pi` continua disponível como alias de compatibilidade.
+FineCode é um agente de programação minimalista e extensível, derivado do Pi, com o comando `finecode` como CLI canônica. Pi continua sendo o comando separado do projeto upstream.
 
 Personalize o FineCode com [extensões](docs/pt-BR/extensions.md), [skills](docs/pt-BR/skills.md), [modelos de prompt](docs/pt-BR/prompt-templates.md) e [temas](docs/pt-BR/themes.md). Agrupe esses recursos em pacotes e compartilhe-os pelo npm ou pelo git.
 
@@ -16,13 +16,13 @@ O FineCode oferece padrões avançados e pode ser estendido para se adaptar ao s
 
 ## Primeiros passos
 
-Instale o FineCode pelo npm (Node.js 22.19 ou superior):
+O runtime npm do FineCode ainda não foi publicado. Após o lançamento, instale-o com Node.js 22.19 ou superior:
 
 ```bash
 npm install -g --ignore-scripts finecode
 ```
 
-Inicie a CLI com `finecode`; `pi` continua disponível como alias. O pacote npm não fixa dependências transitivas e não exige scripts de ciclo de vida das dependências durante a instalação. O pacote FineCode ainda não foi publicado.
+Inicie a CLI com `finecode`. O pacote npm não fixa dependências transitivas e não exige scripts de ciclo de vida das dependências durante a instalação.
 
 No macOS e Linux, usuários do Nix podem executar este checkout com `nix run .` ou instalá-lo com `nix profile install .`. Consulte o [guia rápido](docs/pt-BR/quickstart.md#1-install-finecode).
 
@@ -35,7 +35,7 @@ finecode
 
 Para usar um provedor de IA integrado, execute `/login` dentro do FineCode para conectar uma assinatura ou chave de API. Em seguida, atribua uma tarefa ao FineCode.
 
-Consulte a [documentação](docs/pt-BR/index.md) para instruções completas de configuração e uso.
+Consulte a [documentação](docs/pt-BR/index.md) para instruções completas de configuração e uso. A documentação herdada pode mencionar `pi`, `.pi` e serviços específicos do Pi; no FineCode use `finecode`, `.finecode` e o canal npm previsto acima.
 
 ## Compartilhe sessões de programação open source
 

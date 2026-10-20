@@ -6,7 +6,7 @@
 
 # FineCode
 
-FineCode is a minimal, extensible coding agent built from Pi. Its canonical command is `finecode`; `pi` remains available as a compatibility alias.
+FineCode is a minimal, extensible coding agent built from Pi. Its canonical command is `finecode`; the npm package does not expose a `pi` alias.
 
 Customize FineCode with [extensions](packages/coding-agent/docs/extensions.md), [skills](packages/coding-agent/docs/skills.md), [prompt templates](packages/coding-agent/docs/prompt-templates.md), and [themes](packages/coding-agent/docs/themes.md). Bundle resources as packages and share them through npm or git.
 
@@ -20,7 +20,7 @@ The FineCode npm package is not published yet. Once released, install the CLI wi
 npm install -g --ignore-scripts finecode
 ```
 
-Start it with `finecode`; the legacy `pi` command remains available. The npm installation does not pin transitive dependencies and does not require dependency lifecycle scripts.
+Start it with `finecode`. The npm installation does not pin transitive dependencies and does not require dependency lifecycle scripts.
 
 Start FineCode in the directory where you want it to work:
 
@@ -31,7 +31,7 @@ finecode
 
 For a built-in AI provider, run `/login` inside FineCode to connect a subscription or API key. Then give it a task.
 
-See the [local documentation](packages/coding-agent/docs/index.md) for setup and usage. The linked `pi.dev` services remain upstream Pi resources.
+See the [local documentation](packages/coding-agent/docs/index.md) for setup and usage. The linked `pi.dev` services remain upstream Pi resources. Upstream-derived docs may use `pi` and `.pi`; FineCode uses `finecode` and defaults to `.finecode`.
 
 ## Run with Nix
 
@@ -145,7 +145,7 @@ The archive includes release model data and native prebuilds. `--offline-model-d
 
 We treat npm dependency changes as reviewed code changes.
 
-- Direct external dependencies are pinned to exact versions. Internal workspace packages remain version-ranged.
+- Direct registry dependencies, including internal workspace dependencies, are pinned to exact versions.
 - `.npmrc` sets `save-exact=true` and `min-release-age=2` to avoid same-day dependency releases during npm resolution.
 - `package-lock.json` is the dependency ground truth. Pre-commit blocks accidental lockfile commits unless `PI_ALLOW_LOCKFILE_CHANGE=1` is set.
 - `npm run check` verifies pinned direct deps, native TypeScript import compatibility, and the generated coding-agent install lock.
