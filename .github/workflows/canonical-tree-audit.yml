@@ -1,0 +1,48 @@
+name: Canonical Tree Audit
+
+on:
+  pull_request:
+    paths:
+      - 'scripts/audit_canonical_tree.py'
+      - 'tests/test_canonical_tree_audit.py'
+      - '.github/workflows/canonical-tree-audit.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify-tree-audit:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout complete history
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Prepare Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Contract tests
+        run: python -m unittest discover -s tests -p test_canonical_tree_audit.py -v
+      - name: Pin local historical references
+        run: |
+          git fetch --no-tags origin \
+            refs/heads/feat/full-upstream-tree-migration:refs/remotes/origin/feat/full-upstream-tree-migration \
+            refs/heads/sync/pi-upstream-1402973a:refs/remotes/origin/sync/pi-upstream-1402973a
+      - name: Compare complete committed trees
+        run: |
+          python scripts/audit_canonical_tree.py \
+            --main origin/main \
+            --canonical origin/feat/full-upstream-tree-migration \
+            --upstream origin/sync/pi-upstream-1402973a \
+            --out tree-integrity-evidence
+      - name: Upload reproducible evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: historical-canonical-tree-evidence
+          path: tree-integrity-evidence/
+          if-no-files-found: warn
+          retention-days: 30
