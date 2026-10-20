@@ -1,0 +1,732 @@
+import assert from 'node:assert/strict'
+import { test } from 'node:test'
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { dirname, join } from 'node:path'
+import {
+  buildAgentRunEnv,
+  buildPiArgs,
+  buildPiInvocation,
+  buildPiRunEnv,
+  detectPiInstallations,
+  findNodeBinary,
+  PiRpcManager,
+  RESOLUTION_DEPS,
+  RpcTimeoutError,
+  resolveStartCli,
+  RpcFrameDecoder,
+  setPiExecutableOverride,
+  toPiCli,
+  type PiCli,
+} from './pi-rpc-manager'
+import type { PiResolution, ResolutionDeps } from './pi-binary-resolution'
+import { appLog } from './app-log'
+import { piDotenvPath } from './pi-dotenv'
+import { NO_CWD_EXE_SEARCH_VARIABLE, disableCwdExecutableSearch } from './windows-exe-search'
+import { i18n } from '../shared/i18n'
+import { PSEUDO_LANGUAGE, SOURCE_LANGUAGE } from '../shared/i18n/languages'
+
+/** A pseudo-language string: bracketed and padded with "~" (see pseudo.ts). */
+const PSEUDO_MARKED = /^\[[^]*~+\]$/
+const PREFLIGHT_LOG_MESSAGE = 'Pre-flight failed'
+
+const RESOLUTION_FIXTURE_ENV_KEYS = [
+  'HOME', 'USERPROFILE', 'PATH', 'PATHEXT', 'SHELL', 'APPDATA', 'LOCALAPPDATA', 'ProgramFiles', 'NVM_HOME',
+]
+
+function sandboxResolutionEnv(directory: string): () => void {
+  const previous = new Map(RESOLUTION_FIXTURE_ENV_KEYS.map((key) => [key, process.env[key]]))
+  Object.assign(process.env, {
+    HOME: directory,
+    USERPROFILE: directory,
+    PATH: directory,
+    PATHEXT: '.COM;.EXE;.BAT;.CMD',
+    SHELL: join(directory, 'no-such-shell'),
+    APPDATA: join(directory, 'AppData', 'Roaming'),
+    LOCALAPPDATA: join(directory, 'AppData', 'Local'),
+    ProgramFiles: join(directory, 'Program Files'),
+    NVM_HOME: join(directory, 'nvm'),
+  })
+  return () => {
+    for (const key of RESOLUTION_FIXTURE_ENV_KEYS) {
+      const value = previous.get(key)
+      if (value === undefined) delete process.env[key]
+      else process.env[key] = value
+    }
+  }
+}
+
+function executableFixture(directory: string, name: string): string {
+  return join(directory, `${name}${process.platform === 'win32' ? '.cmd' : ''}`)
+}
+
+/** The sender's chunk size: OMP protocol v2 splits payloads at 256 KiB. */
+const CHUNK_PAYLOAD_BYTES = 256 * 1024
+/** The frame size the decoder used to demand before it would reassemble. */
+const REMOVED_FRAME_FLOOR_BYTES = 1024 * 1024
+const MAX_REASSEMBLED_BYTES = 64 * 1024 * 1024
+
+/**
+ * A resolution fixture. `needsShell` is only ever true on Windows for a
+ * `.cmd`/`.bat`/`.ps1` shim, and never together with `useNode` — see
+ * pi-binary-resolution.finalize.
+ */
+function piCli(overrides: Partial<PiCli> = {}): PiCli {
+  return {
+    script: '/usr/local/bin/pi',
+    node: '/usr/bin/node',
+    useNode: false,
+    needsShell: false,
+    found: true,
+    nodeFound: true,
+    failureReason: null,
+    ...overrides,
+  }
+}
+
+/** The physical frames a sender emits for one logical frame, in wire order. */
+function chunkFrames(chunkId: string, payload: string): Array<Record<string, unknown>> {
+  const bytes = Buffer.from(payload, 'utf8')
+  const count = Math.ceil(bytes.length / CHUNK_PAYLOAD_BYTES)
+  return Array.from({ length: count }, (_unused, index) => ({
+    type: 'rpc_chunk',
+    chunkId,
+    index,
+    count,
+    byteLength: bytes.length,
+    data: bytes.subarray(index * CHUNK_PAYLOAD_BYTES, (index + 1) * CHUNK_PAYLOAD_BYTES).toString('base64'),
+  }))
+}
+
+function decodeAll(frames: Array<Record<string, unknown>>): object | undefined {
+  const decoder = new RpcFrameDecoder()
+  let decoded: object | undefined
+  for (const frame of frames) {
+    const result = decoder.push(frame)
+    if (result) decoded = result
+  }
+  return decoded
+}
+
+function responsePayload(size: number, filler: string): string {
+  return JSON.stringify({ type: 'response', command: 'get_messages', success: true, data: filler.repeat(size) })
+}
+
+test('fresh sessions launch with the remembered model and reasoning', () => {
+  assert.deepEqual(buildPiArgs({
+    provider: 'test', model: 'test-model', defaultThinkingLevel: 'high', continueSession: false,
+  }), ['--mode', 'rpc', '--provider', 'test', '--model', 'test-model', '--thinking', 'high'])
+  assert.equal(buildPiArgs({}).includes('--thinking'), false)
+  assert.ok(buildPiArgs({ defaultThinkingLevel: 'off' }).includes('off'))
+})
+
+test('remembered reasoning never overrides a resumed or forked session', () => {
+  for (const binding of [
+    { sessionPath: '/sessions/existing.jsonl' },
+    { forkSessionPath: '/sessions/parent.jsonl' },
+    { continueSession: true },
+  ]) {
+    assert.equal(buildPiArgs({ defaultThinkingLevel: 'high', ...binding }).includes('--thinking'), false)
+  }
+})
+
+test('explicit thinking arguments override the saved preference', () => {
+  for (const args of [['--thinking', 'low'], ['--thinking=low']]) {
+    assert.deepEqual(buildPiArgs({ defaultThinkingLevel: 'high', args }), ['--mode', 'rpc', ...args])
+  }
+})
+
+test('RpcFrameDecoder reassembles a lossless OMP protocol-v2 frame', () => {
+  const frames = chunkFrames('rpc-test', responsePayload(1_100_000, 'x'))
+  assert.equal((decodeAll(frames) as { data?: string }).data?.length, 1_100_000)
+})
+
+test('RpcFrameDecoder reassembles a two-chunk frame smaller than one whole frame', () => {
+  // 300 KiB splits into exactly two chunks, and two chunks can never reach the
+  // 1 MiB floor the metadata check used to impose — every such sequence was
+  // discarded, leaving sendCommand to time out with an empty result.
+  const payload = responsePayload(300 * 1024, 'y')
+  const frames = chunkFrames('rpc-small', payload)
+  assert.equal(frames.length, 2)
+  assert.ok(Buffer.byteLength(payload, 'utf8') < REMOVED_FRAME_FLOOR_BYTES)
+
+  const decoded = decodeAll(frames)
+  assert.deepEqual(decoded, JSON.parse(payload))
+})
+
+test('RpcFrameDecoder still refuses a declared length above the reassembly limit', () => {
+  const decoder = new RpcFrameDecoder()
+  const frame = {
+    type: 'rpc_chunk',
+    chunkId: 'rpc-huge',
+    index: 0,
+    count: 2,
+    byteLength: MAX_REASSEMBLED_BYTES + 1,
+    data: Buffer.from('a').toString('base64'),
+  }
+  assert.throws(() => decoder.push(frame), /invalid rpc chunk metadata/)
+  assert.equal(decoder.hasPending(), false)
+})
+
+test('RpcFrameDecoder rejects a sequence that does not match its declared length', () => {
+  const frames = chunkFrames('rpc-lying', responsePayload(300 * 1024, 'z'))
+  const inflated = frames.map((frame) => ({ ...frame, byteLength: (frame.byteLength as number) + 1 }))
+  assert.throws(() => decodeAll(inflated), /length mismatch/)
+})
+
+test('RpcFrameDecoder can be reset after an interrupted sequence', () => {
+  const decoder = new RpcFrameDecoder()
+  const first = {
+    type: 'rpc_chunk',
+    chunkId: 'rpc-a',
+    index: 0,
+    count: 2,
+    byteLength: 2,
+    data: Buffer.from('a').toString('base64'),
+  }
+  decoder.push(first)
+  assert.equal(decoder.hasPending(), true)
+  assert.throws(() => decoder.push({ ...first, chunkId: 'rpc-b' }), /sequence mismatch/)
+  decoder.reset()
+  assert.equal(decoder.hasPending(), false)
+})
+
+test('FineCode runs use an isolated agent directory, not Pi configuration or dotenv', () => {
+  const previous = process.env.PI_DESKTOP_USER_DATA_DIR
+  const desktopData = mkdtempSync(join(tmpdir(), 'finecode-agent-data-'))
+  process.env.PI_DESKTOP_USER_DATA_DIR = desktopData
+  try {
+    const env = buildAgentRunEnv('finecode', false, {
+      PATH: '/safe',
+      PI_CODING_AGENT_DIR: '/pi-agent',
+      FINECODE_CODING_AGENT_SESSION_DIR: '/shared/sessions',
+      PI_CODING_AGENT_SESSION_DIR: '/shared/sessions',
+      OMP_CODING_AGENT_DIR: '/omp-agent',
+    })
+    const fineCodeAgentDir = join(desktopData, 'finecode-agent')
+    assert.equal(env.FINECODE_CODING_AGENT_DIR, fineCodeAgentDir)
+    assert.equal(env.PI_CODING_AGENT_DIR, fineCodeAgentDir)
+    assert.equal(env.FINECODE_CODING_AGENT_SESSION_DIR, undefined)
+    assert.equal(env.PI_CODING_AGENT_SESSION_DIR, undefined)
+    assert.equal(env.OMP_CODING_AGENT_DIR, undefined)
+  } finally {
+    if (previous === undefined) delete process.env.PI_DESKTOP_USER_DATA_DIR
+    else process.env.PI_DESKTOP_USER_DATA_DIR = previous
+    rmSync(desktopData, { recursive: true, force: true })
+  }
+})
+
+test('OMP runs map its isolated root to the runtime variable used by OMP 18', () => {
+  const env = buildAgentRunEnv('omp', false, {
+    HOME: '/home/tester',
+    USERPROFILE: '/home/tester',
+    PI_CODING_AGENT_DIR: '/pi-agent',
+    PI_CODING_AGENT_SESSION_DIR: '/pi-session-override',
+    OMP_CODING_AGENT_DIR: '/omp-agent',
+    OMP_CODING_AGENT_SESSION_DIR: '/omp-session-override',
+  })
+  assert.equal(env.PI_CODING_AGENT_DIR, '/omp-agent')
+  assert.equal(env.PI_CODING_AGENT_SESSION_DIR, undefined)
+  assert.equal(env.OMP_CODING_AGENT_SESSION_DIR, undefined)
+})
+
+test('FineCode refuses unowned sessions and caller-controlled storage', async () => {
+  const previousDataDir = process.env.PI_DESKTOP_USER_DATA_DIR
+  const desktopData = mkdtempSync(join(tmpdir(), 'finecode-start-security-'))
+  process.env.PI_DESKTOP_USER_DATA_DIR = desktopData
+  try {
+    const manager = new PiRpcManager()
+    const outside = await manager.start({ cwd: desktopData, sessionPath: join(tmpdir(), 'outside-session.jsonl') })
+    assert.match(outside.error ?? '', /outside the authorized engine stores/)
+
+    const storageOverride = await manager.start({
+      cwd: desktopData,
+      engine: 'finecode',
+      args: ['--session-dir', join(tmpdir(), 'shared-sessions')],
+    })
+    assert.match(storageOverride.error ?? '', /managed by the desktop/)
+  } finally {
+    if (previousDataDir === undefined) delete process.env.PI_DESKTOP_USER_DATA_DIR
+    else process.env.PI_DESKTOP_USER_DATA_DIR = previousDataDir
+    rmSync(desktopData, { recursive: true, force: true })
+  }
+})
+
+test('FineCode starts use a desktop-owned project session directory', () => {
+  const previous = process.env.PI_DESKTOP_USER_DATA_DIR
+  const desktopData = mkdtempSync(join(tmpdir(), 'finecode-session-data-'))
+  process.env.PI_DESKTOP_USER_DATA_DIR = desktopData
+  try {
+    assert.deepEqual(buildPiArgs({ cwd: '/projects/app' }), ['--mode', 'rpc'])
+    assert.deepEqual(buildPiArgs({ engine: 'omp', cwd: '/projects/app' }), ['--mode', 'rpc'])
+    assert.deepEqual(buildPiArgs({ engine: 'pi', cwd: '/projects/app' }), ['--mode', 'rpc'])
+    assert.deepEqual(buildPiArgs({ engine: 'finecode', cwd: '/projects/app' }), [
+      '--mode', 'rpc', '--session-dir', join(desktopData, 'finecode-agent', 'sessions', '--projects-app--'),
+    ])
+  } finally {
+    if (previous === undefined) delete process.env.PI_DESKTOP_USER_DATA_DIR
+    else process.env.PI_DESKTOP_USER_DATA_DIR = previous
+    rmSync(desktopData, { recursive: true, force: true })
+  }
+})
+
+test('a caller that asks for a shared session directory still gets one', () => {
+  assert.deepEqual(
+    buildPiArgs({ engine: 'omp', args: ['--session-dir', '/shared/sessions'] }),
+    ['--mode', 'rpc', '--session-dir', '/shared/sessions'],
+  )
+})
+
+test('an explicit session path is passed to the engine that owns it', () => {
+  assert.deepEqual(
+    buildPiArgs({ engine: 'omp', sessionPath: '/home/u/.omp/agent/sessions/--p--/s.jsonl' }),
+    ['--mode', 'rpc', '--session', '/home/u/.omp/agent/sessions/--p--/s.jsonl'],
+  )
+  // --session wins over the resume preference, so opening a session never
+  // silently lands on "the most recent session for this cwd" instead.
+  assert.deepEqual(
+    buildPiArgs({ sessionPath: '/sessions/s.jsonl', continueSession: true }),
+    ['--mode', 'rpc', '--session', '/sessions/s.jsonl'],
+  )
+})
+
+test('a start resolves the engine that owns the session, without moving the configured one', () => {
+  // PATH fixtures use platform-valid executable suffixes and private install roots.
+  const dir = mkdtempSync(join(tmpdir(), 'pi engine-'))
+  const restoreEnv = sandboxResolutionEnv(dir)
+  try {
+    writeFileSync(executableFixture(dir, 'pi'), '')
+    writeFileSync(executableFixture(dir, 'omp'), '')
+    // The user's configured default: Pi for everything.
+    setPiExecutableOverride(null, 'pi')
+
+    assert.deepEqual(
+      { kind: resolveStartCli({ engine: 'omp' }).kind, script: resolveStartCli({ engine: 'omp' }).script },
+      { kind: 'omp', script: executableFixture(dir, 'omp') },
+      'an OMP session must start OMP even though Pi is the configured engine',
+    )
+    assert.equal(resolveStartCli({ engine: 'pi' }).script, executableFixture(dir, 'pi'))
+    assert.equal(resolveStartCli({}).script, executableFixture(dir, 'pi'), 'no engine means the configured one')
+    // The override is a parameter, never a global the caller flips: two session
+    // runtimes start concurrently, so a mutated global would leak one session's
+    // engine into another session's spawn.
+    assert.equal(resolveStartCli({}).kind, 'pi', 'resolving OMP must not change the configured engine')
+  } finally {
+    setPiExecutableOverride(null, 'auto')
+    restoreEnv()
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('a session whose engine is not installed still opens under the configured one', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'pi engine-missing '))
+  const restoreEnv = sandboxResolutionEnv(dir)
+  try {
+    writeFileSync(executableFixture(dir, 'pi'), '')
+    setPiExecutableOverride(null, 'pi')
+
+    // No `omp` binary in the sandbox. Both engines write the same JSONL, so
+    // opening the conversation beats refusing to open it.
+    const cli = resolveStartCli({ engine: 'omp' })
+    assert.equal(cli.script, executableFixture(dir, 'pi'))
+    assert.equal(cli.found, true)
+    assert.equal(cli.failureReason, null)
+  } finally {
+    setPiExecutableOverride(null, 'auto')
+    restoreEnv()
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('a pre-flight failure shows interface text and logs English', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'pi preflight-language '))
+  const restoreEnv = sandboxResolutionEnv(dir)
+  await i18n.changeLanguage(PSEUDO_LANGUAGE)
+  try {
+    writeFileSync(executableFixture(dir, 'pi'), '')
+    setPiExecutableOverride(null, 'pi')
+    const missingCwd = join(dir, 'missing')
+
+    const status = await new PiRpcManager().start({ cwd: missingCwd })
+
+    assert.equal(status.status, 'error')
+    // The UI text is in the interface language; the path inside it is not.
+    assert.match(status.error ?? '', PSEUDO_MARKED)
+    assert.ok(status.error?.includes(missingCwd))
+    // The log feeds the diagnostics report, which stays English.
+    const logged = appLog.getRecent().filter((entry) => entry.message === PREFLIGHT_LOG_MESSAGE).at(-1)
+    assert.equal(logged?.detail, `Pi working directory does not exist or is not a directory:\n  ${missingCwd}`)
+  } finally {
+    await i18n.changeLanguage(SOURCE_LANGUAGE)
+    setPiExecutableOverride(null, 'auto')
+    restoreEnv()
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('buildPiInvocation escapes the shim path and args for the Windows cmd.exe hop', () => {
+  const cli = piCli({ script: String.raw`C:\Program Files\nodejs\pi.cmd`, needsShell: true })
+  assert.deepEqual(buildPiInvocation(cli, ['--mode', 'rpc', '--session', 'a&calc']), {
+    file: String.raw`"C:\Program Files\nodejs\pi.cmd"`,
+    args: ['--mode', 'rpc', '--session', '"a&calc"'],
+  })
+})
+
+test('buildPiInvocation escapes cmd metacharacters coming from the user profile path', () => {
+  const cli = piCli({ script: String.raw`C:\Users\Tom & Jerry\100%\pi.cmd`, needsShell: true })
+  assert.equal(
+    buildPiInvocation(cli, []).file,
+    String.raw`"C:\Users\Tom & Jerry\100"^%"\pi.cmd"`,
+  )
+})
+
+test('buildPiInvocation leaves the node path byte-identical', () => {
+  // useNode implies needsShell false (a .js entry point is launched directly),
+  // so nothing may be rewritten even when the paths contain spaces.
+  const cli = piCli({
+    script: String.raw`C:\Program Files\nodejs\node_modules\pi\cli.js`,
+    node: String.raw`C:\Program Files\nodejs\node.exe`,
+    useNode: true,
+  })
+  assert.deepEqual(buildPiInvocation(cli, ['--mode', 'rpc', '--session', 'a&calc']), {
+    file: String.raw`C:\Program Files\nodejs\node.exe`,
+    args: [
+      String.raw`C:\Program Files\nodejs\node_modules\pi\cli.js`,
+      '--mode',
+      'rpc',
+      '--session',
+      'a&calc',
+    ],
+  })
+})
+
+test('buildPiInvocation leaves a direct POSIX spawn byte-identical', () => {
+  const cli = piCli({ script: '/home/tester/my agents/pi' })
+  assert.deepEqual(buildPiInvocation(cli, ['--mode', 'rpc', '--session', 'a&calc']), {
+    file: '/home/tester/my agents/pi',
+    args: ['--mode', 'rpc', '--session', 'a&calc'],
+  })
+})
+
+test('buildPiInvocation preserves fork startup arguments', () => {
+  const cli = piCli()
+  assert.deepEqual(buildPiInvocation(cli, ['--mode', 'rpc', '--fork', '/sessions/source.jsonl']), {
+    file: '/usr/local/bin/pi',
+    args: ['--mode', 'rpc', '--fork', '/sessions/source.jsonl'],
+  })
+})
+
+// ─── Node lookup: no bare fallback ───────────────────────────────────────────
+//
+// Pi's cli.js runs with the Node binary found here, and the spawn's working
+// directory is the workspace. A bare `node.exe` fallback would make Windows
+// look in that workspace first, so "not found" has to stay not found.
+
+const WINDOWS_LOCAL_APP_DATA = 'C:\\Users\\tester\\AppData\\Local'
+
+/** Filesystem-only resolver deps: `files` exist and no probe answers. */
+function nodeLookupDeps(isWindows: boolean, env: NodeJS.ProcessEnv, files: string[] = []): ResolutionDeps {
+  const existing = new Set(files)
+  return {
+    isWindows,
+    env,
+    exists: (path) => existing.has(path),
+    isDirectory: () => false,
+    listDir: () => [],
+    capture: () => null,
+  }
+}
+
+test('findNodeBinary reports no Node instead of a bare name the OS would look up in the workspace', () => {
+  assert.equal(findNodeBinary(nodeLookupDeps(true, { LOCALAPPDATA: WINDOWS_LOCAL_APP_DATA, PATH: 'C:\\Windows' })), null)
+  assert.equal(findNodeBinary(nodeLookupDeps(false, { PATH: '/nowhere' })), null)
+})
+
+test('findNodeBinary takes Node from an absolute PATH entry, never from a relative one', () => {
+  const pathDir = 'D:\\node'
+  const deps = nodeLookupDeps(
+    true,
+    { LOCALAPPDATA: WINDOWS_LOCAL_APP_DATA, PATH: ['.', pathDir].join(';'), PATHEXT: '.EXE' },
+    [join('.', 'node.exe'), join(pathDir, 'node.exe')],
+  )
+  assert.equal(findNodeBinary(deps), join(pathDir, 'node.exe'))
+})
+
+test('a cli.js engine with no Node binary fails as node-not-found, so nothing is spawned', () => {
+  const resolution: PiResolution = {
+    script: '/opt/pi/cli.js',
+    useNode: true,
+    needsShell: false,
+    source: 'override',
+    found: true,
+    rejectedOverride: null,
+    pathEnv: '/usr/bin',
+  }
+  const cli = toPiCli(resolution, 'pi', null)
+  assert.equal(cli.nodeFound, false)
+  assert.deepEqual(cli.failureReason, { kind: 'node-not-found', node: cli.node })
+  // An executable that runs directly needs no Node at all.
+  assert.equal(toPiCli({ ...resolution, script: '/opt/pi/pi', useNode: false }, 'pi', null).failureReason, null)
+})
+
+test('buildPiInvocation rejects arguments cmd.exe cannot carry', () => {
+  const cli = piCli({ script: String.raw`C:\npm\pi.cmd`, needsShell: true })
+  assert.throws(
+    () => buildPiInvocation(cli, ['--session', 'a\nb']),
+    /cannot be passed through cmd\.exe/,
+  )
+  // Off the cmd path the same value is passed through as-is: spawn hands argv
+  // to the OS directly, so there is nothing to truncate a command line.
+  assert.deepEqual(buildPiInvocation(piCli(), ['--session', 'a\nb']).args, ['--session', 'a\nb'])
+})
+
+// ─── Startup deadline behavior (issues #58, #98) ────────────────────────────
+//
+// Pi's RPC mode prints nothing until it answers the readiness probe, and the
+// engine runs every extension session_start hook before it reads stdin. So a
+// healthy Pi can stay unready for tens of seconds, with or without output.
+// Every process that is still running gets the one long deadline; a process
+// that dies ends the attempt at once through its exit event.
+
+/** Fast test timings — real values are 20s / 120s. */
+const TEST_WAITING_NOTICE_MS = 400
+const TEST_READY_MS = 2_000
+/** Probe id the manager correlates on; fixed by the wire protocol. */
+const PROBE_ID = '__startup_probe__'
+/** Fixture heartbeat: proves liveness well within the notice delay. */
+const HEARTBEAT_MS = 100
+/** Late-ready fixtures answer between the notice delay and the deadline. */
+const LATE_READY_DELAY_MS = 900
+const FAKE_EXIT_CODE = 7
+const SKIP_ON_WINDOWS = { skip: process.platform === 'win32' ? 'POSIX shebang fixture' : false }
+
+/**
+ * A stand-in engine. Modes via FAKE_PI_MODE:
+ *  - 'silent'            — stays alive, never writes stdout.
+ *  - 'silent-late-ready' — writes nothing until it answers the probe after
+ *                          FAKE_PI_READY_DELAY_MS.
+ *  - 'late-ready'        — emits frames immediately, answers the probe only
+ *                          after FAKE_PI_READY_DELAY_MS.
+ *  - 'never-ready'       — emits frames forever, never answers the probe.
+ *  - 'exit'              — exits at once with FAKE_EXIT_CODE.
+ * In every mode, the engine also exits at once with FAKE_EXIT_CODE when it
+ * inherited the variable FAKE_PI_EXIT_IF_ENV names (in any letter case).
+ */
+const FAKE_ENGINE_SOURCE = `#!/usr/bin/env node
+const mode = process.env.FAKE_PI_MODE || 'silent'
+const readyDelayMs = Number(process.env.FAKE_PI_READY_DELAY_MS || '0')
+const forbiddenName = (process.env.FAKE_PI_EXIT_IF_ENV || '').toLowerCase()
+const emit = (obj) => process.stdout.write(JSON.stringify(obj) + '\\n')
+if (mode === 'exit') process.exit(${FAKE_EXIT_CODE})
+if (forbiddenName && Object.keys(process.env).some((name) => name.toLowerCase() === forbiddenName)) process.exit(${FAKE_EXIT_CODE})
+if (mode === 'late-ready' || mode === 'never-ready') {
+  emit({ type: 'extension_ui_request', id: 'boot', method: 'setStatus', statusKey: 'boot', statusText: 'loading' })
+  setInterval(() => emit({ type: 'extension_ui_request', id: 'hb', method: 'setStatus', statusKey: 'hb', statusText: 'busy' }), ${HEARTBEAT_MS})
+}
+if (mode === 'late-ready' || mode === 'silent-late-ready') {
+  setTimeout(() => emit({ id: '${PROBE_ID}', type: 'response', command: 'get_state', success: true }), readyDelayMs)
+}
+process.stdin.resume()
+`
+
+async function withFakeEngine(
+  run: (manager: PiRpcManager, startEnv: Record<string, string>) => Promise<void>,
+  env: Record<string, string>,
+): Promise<void> {
+  const dir = mkdtempSync(join(tmpdir(), 'pi-fake-engine-'))
+  const script = join(dir, 'fake-pi')
+  writeFileSync(script, FAKE_ENGINE_SOURCE)
+  chmodSync(script, 0o755)
+  setPiExecutableOverride(script, 'pi')
+  const manager = new PiRpcManager({ waitingNoticeMs: TEST_WAITING_NOTICE_MS, readyMs: TEST_READY_MS })
+  try {
+    await run(manager, env)
+  } finally {
+    manager.stop()
+    setPiExecutableOverride(null, 'auto')
+    rmSync(dir, { recursive: true, force: true })
+  }
+}
+
+const delay = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms))
+
+/** Starts Pi, checks the waiting notice between the two timings, and expects ready. */
+async function assertReadyAfterWaitingNotice(manager: PiRpcManager, env: Record<string, string>): Promise<void> {
+  const phases: string[] = []
+  manager.on('startup-phase', (phase: string) => phases.push(phase))
+
+  const started = manager.start({ env })
+  await delay(TEST_WAITING_NOTICE_MS + 200)
+  assert.equal(manager.getStatus().status, 'starting', 'still starting after the notice delay')
+  assert.equal(manager.getStatus().startupPhase, 'waiting-on-engine')
+  assert.deepEqual(phases, ['waiting-on-engine'], 'the phase flip is announced once')
+
+  const status = await started
+  assert.equal(status.status, 'running', 'a late probe response still means ready')
+  assert.equal(status.startupPhase, undefined, 'phase reporting ends with startup')
+}
+
+test('startup keeps waiting past the notice delay while Pi is emitting output', SKIP_ON_WINDOWS, async () => {
+  await withFakeEngine(
+    assertReadyAfterWaitingNotice,
+    { FAKE_PI_MODE: 'late-ready', FAKE_PI_READY_DELAY_MS: String(LATE_READY_DELAY_MS) },
+  )
+})
+
+test('startup keeps waiting past the notice delay while a running Pi stays silent', SKIP_ON_WINDOWS, async () => {
+  await withFakeEngine(
+    assertReadyAfterWaitingNotice,
+    { FAKE_PI_MODE: 'silent-late-ready', FAKE_PI_READY_DELAY_MS: String(LATE_READY_DELAY_MS) },
+  )
+})
+
+test('a silent never-ready Pi fails at the deadline with a no-output error', SKIP_ON_WINDOWS, async () => {
+  await withFakeEngine(async (manager, env) => {
+    const startedAt = Date.now()
+    const status = await manager.start({ env })
+    assert.equal(status.status, 'error')
+    assert.ok(Date.now() - startedAt >= TEST_READY_MS, 'the full deadline is granted before giving up')
+    assert.match(status.error ?? '', /produced no output within 2s/)
+    // The old message asserted two specific causes that misdiagnosed issue
+    // #58 for days; the error must not name them any more.
+    assert.doesNotMatch(status.error ?? '', /shell:true|waiting on input/)
+    assert.equal(status.startupPhase, undefined, 'phase reporting ends with startup')
+  }, { FAKE_PI_MODE: 'silent' })
+})
+
+test('a chatty but never-ready Pi fails at the deadline with an engine-busy error', SKIP_ON_WINDOWS, async () => {
+  await withFakeEngine(async (manager, env) => {
+    const startedAt = Date.now()
+    const status = await manager.start({ env })
+    assert.equal(status.status, 'error')
+    assert.ok(Date.now() - startedAt >= TEST_READY_MS, 'the full deadline is granted before giving up')
+    assert.match(status.error ?? '', /did not become ready within 2s/)
+    assert.match(status.error ?? '', /model server/, 'the message points at the real cause class')
+    assert.equal(status.startupPhase, undefined, 'phase reporting ends with startup')
+  }, { FAKE_PI_MODE: 'never-ready' })
+})
+
+test('a Pi that exits before ready fails fast without waiting for the deadline', SKIP_ON_WINDOWS, async () => {
+  await withFakeEngine(async (manager, env) => {
+    const startedAt = Date.now()
+    const status = await manager.start({ env })
+    assert.equal(status.status, 'error')
+    assert.match(status.error ?? '', new RegExp(`exited with code ${FAKE_EXIT_CODE} before becoming ready`))
+    assert.ok(Date.now() - startedAt < TEST_READY_MS, 'a dead process must not inherit the deadline')
+  }, { FAKE_PI_MODE: 'exit' })
+})
+
+test('the Pi child receives variables from the user env file', SKIP_ON_WINDOWS, async () => {
+  const home = mkdtempSync(join(tmpdir(), 'pi-dotenv-home-'))
+  const savedHome = process.env.HOME
+  try {
+    mkdirSync(dirname(piDotenvPath(home)))
+    writeFileSync(piDotenvPath(home), 'FAKE_PI_MODE=late-ready\n')
+    process.env.HOME = home
+    await withFakeEngine(async (manager, env) => {
+      // Without the env file the fake engine stays silent and fails the start.
+      const status = await manager.start({ env })
+      assert.equal(status.status, 'running')
+    }, {})
+  } finally {
+    if (savedHome === undefined) delete process.env.HOME
+    else process.env.HOME = savedHome
+    rmSync(home, { recursive: true, force: true })
+  }
+})
+
+/**
+ * Run `run` with process.env as Windows startup leaves it for a user who had
+ * not set the current-folder search switch: the app added it. Simulated on
+ * POSIX. A spelling this environment already had is put back afterwards.
+ */
+async function withWindowsStartupEnv(run: () => void | Promise<void>): Promise<void> {
+  const key = NO_CWD_EXE_SEARCH_VARIABLE.toLowerCase()
+  const inherited = Object.entries(process.env).filter(([name]) => name.toLowerCase() === key)
+  for (const [name] of inherited) delete process.env[name]
+  disableCwdExecutableSearch(process.env, 'win32')
+  try {
+    await run()
+  } finally {
+    delete process.env[NO_CWD_EXE_SEARCH_VARIABLE]
+    for (const [name, value] of inherited) process.env[name] = value
+    disableCwdExecutableSearch(process.env, process.platform)
+  }
+}
+
+test('a Pi or OMP run keeps the current-folder search switch only when cmd.exe starts it', () => {
+  const base: NodeJS.ProcessEnv = { Path: 'C:\\Windows\\system32' }
+  disableCwdExecutableSearch(base, 'win32')
+  try {
+    assert.equal(NO_CWD_EXE_SEARCH_VARIABLE in buildPiRunEnv(false, base), false, 'direct launch')
+    assert.equal(NO_CWD_EXE_SEARCH_VARIABLE in buildPiRunEnv(true, base), true, 'cmd.exe shim launch')
+  } finally {
+    disableCwdExecutableSearch({}, process.platform)
+  }
+})
+
+test('a direct Pi start does not hand the current-folder search switch to the engine', SKIP_ON_WINDOWS, async () => {
+  // The engine is the user's tool: its own commands must find programs as
+  // they do outside the app.
+  await withWindowsStartupEnv(() => withFakeEngine(async (manager, env) => {
+    const status = await manager.start({ env })
+    assert.equal(status.status, 'running', status.error ?? '')
+  }, { FAKE_PI_MODE: 'late-ready', FAKE_PI_EXIT_IF_ENV: NO_CWD_EXE_SEARCH_VARIABLE }))
+})
+
+test('an engine probe does not hand the current-folder search switch to the engine', SKIP_ON_WINDOWS, async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'pi-probe-env-'))
+  const script = join(dir, 'fake-omp')
+  const forbiddenName = JSON.stringify(NO_CWD_EXE_SEARCH_VARIABLE.toLowerCase())
+  writeFileSync(
+    script,
+    `#!/usr/bin/env node\nconsole.log(Object.keys(process.env).filter((name) => name.toLowerCase() === ${forbiddenName}).length)\n`,
+  )
+  chmodSync(script, 0o755)
+  try {
+    await withWindowsStartupEnv(() => {
+      const stdout = RESOLUTION_DEPS.capture(script, [], {
+        shell: false,
+        timeoutMs: TEST_READY_MS,
+        pathEnv: process.env.PATH ?? '',
+      })
+      assert.equal(stdout?.trim(), '0')
+    })
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('detectPiInstallations serves a cached scan until a rescan forces a fresh one', () => {
+  // Use Windows executable suffixes and sandbox every install root; a global
+  // install must not leak into a PATH-fixture assertion.
+  const dir = mkdtempSync(join(tmpdir(), 'pi detect-'))
+  const restoreEnv = sandboxResolutionEnv(dir)
+  try {
+    writeFileSync(executableFixture(dir, 'pi'), '')
+
+    const initial = detectPiInstallations(true)
+    assert.deepEqual(initial, [{ kind: 'pi', path: executableFixture(dir, 'pi'), source: 'path' }])
+
+    // An engine installed after that scan: the cached answer cannot show it.
+    writeFileSync(executableFixture(dir, 'omp'), '')
+    assert.deepEqual(detectPiInstallations(), initial)
+
+    assert.deepEqual(detectPiInstallations(true), [
+      { kind: 'pi', path: executableFixture(dir, 'pi'), source: 'path' },
+      { kind: 'omp', path: executableFixture(dir, 'omp'), source: 'omp' },
+    ])
+  } finally {
+    restoreEnv()
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('RpcTimeoutError is identified by class, not by message text', () => {
+  const error = new RpcTimeoutError('get_state', 30_000)
+  assert.ok(error instanceof RpcTimeoutError)
+  assert.ok(error instanceof Error)
+  assert.equal(error.name, 'RpcTimeoutError')
+  assert.equal(error.commandType, 'get_state')
+  assert.equal(error.message, 'Command get_state timed out after 30000ms')
+})
