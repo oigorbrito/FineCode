@@ -31,6 +31,6 @@ Repositório: `oigorbrito/FineCode`.
 3. O workflow usa branches históricas como **fixtures**, não como provas de que o upstream atual esteja totalmente incorporado.
 4. `review_priority` é apenas triagem de arquivos, **não** uma decisão semântica.
 5. A integridade operacional (instalação, CLI, execução de ferramentas, sessões, Desktop e distribuição) precisa de validação end-to-end separada.
-6. Caminhos Git com bytes de nome não UTF-8 podem ser decodificados por `surrogateescape` internamente, mas sua exportação CSV em UTF-8 requer tratamento explícito. Até corrigir isto, marcar esse caso como limitação conhecida do auditor.
+6. Caminhos Git com bytes de nome não UTF-8: corrigido no auditor deste PR. A coluna `path` usa exibição UTF-8 segura com bytes inválidos escapados; `path_bytes_hex` preserva a identidade exata dos bytes do nome. Teste de regressão dedicado foi adicionado. A análise semântica dos nomes continua distinta da comparação de objetos.
 
 **Resultado:** semântica central de `ls-tree` e `rev-parse` compatível com a documentação; governança insuficientemente demonstrada para aprovação formal; prova de paridade estrutural completa ou operacional **não estabelecida**.
