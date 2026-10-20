@@ -24,6 +24,18 @@ class CanonicalTreeAuditTests(unittest.TestCase):
         self.assertTrue(all(row["semantic_decision"] == "not_reviewed"
                             for row in rows if row["state"] != "identical_object"))
 
+    def test_triage_priority_does_not_claim_semantic_equivalence(self):
+        main = {"packages/ai/src/models.ts": ("100644", "blob", "a")}
+        other = {"packages/ai/src/models.ts": ("100644", "blob", "b"),
+                 "packages/ai/test/models.test.ts": ("100644", "blob", "t"),
+                 "docs/provenance.md": ("100644", "blob", "d")}
+        rows = {r["path"]: r for r in audit.compare(main, other, "main", "canonical")}
+        self.assertEqual(rows["packages/ai/src/models.ts"]["review_priority"], "P0-runtime-or-contract")
+        self.assertEqual(rows["packages/ai/src/models.ts"]["subsystem"], "packages/ai")
+        self.assertEqual(rows["packages/ai/test/models.test.ts"]["review_priority"], "P1-tests")
+        self.assertEqual(rows["docs/provenance.md"]["review_priority"], "P2-docs")
+        self.assertTrue(all(r["semantic_decision"] == "not_reviewed" for r in rows.values()))
+
     def test_csv_handles_ambiguous_path_characters(self):
         rows = audit.compare({}, {"name\twith,comma\nand newline": ("100644", "blob", "a")}, "main", "canonical")
         with tempfile.TemporaryDirectory() as d:
