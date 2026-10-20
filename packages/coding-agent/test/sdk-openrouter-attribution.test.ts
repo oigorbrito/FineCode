@@ -97,7 +97,11 @@ describe("createAgentSession provider attribution headers", () => {
 		}
 
 		const authStorage = AuthStorage.inMemory({
-			[model.provider]: { type: "api_key", key: "test-api-key" },
+			[model.provider]: {
+				type: "api_key",
+				key: "test-api-key",
+				...(model.provider === "cloudflare-workers-ai" ? { env: { CLOUDFLARE_ACCOUNT_ID: "test-account" } } : {}),
+			},
 		});
 		const modelRegistry = await createInMemoryModelRegistry(authStorage);
 		let capturedOptions: SimpleStreamOptions | undefined;
@@ -237,6 +241,13 @@ describe("createAgentSession provider attribution headers", () => {
 		);
 
 		expect(headers?.["X-BILLING-INVOKE-ORIGIN"]).toBeUndefined();
+	});
+
+	it("uses FineCode user agent for Cloudflare provider attribution", async () => {
+		const headers = await captureHeaders(
+			createModel("cloudflare-workers-ai", "https://api.cloudflare.com/client/v4/accounts/test/ai/run/model"),
+		);
+		expect(headers?.["User-Agent"]).toBe("finecode-coding-agent");
 	});
 
 	it("adds OpenCode session headers", async () => {
