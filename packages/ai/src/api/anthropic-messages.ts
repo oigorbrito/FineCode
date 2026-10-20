@@ -1278,7 +1278,10 @@ function buildParams(
 	if (thinkingDisabled) {
 		// No effort is sent, so the model default applies. Anthropic rejects `block_binding`
 		// with disabled thinking.
-		params.thinking = { type: "disabled" };
+		// MiniMax effort-based adaptive models reject explicit disabled thinking.
+		if (!(model.compat?.forceAdaptiveThinking === true && (model.provider === "minimax" || model.provider === "minimax-cn"))) {
+			params.thinking = { type: "disabled" };
+		}
 	} else if (effortMessages) {
 		// Managed effort models use adaptive thinking so prefix mismatches can
 		// be dropped instead of surfacing as persistent 400 responses.
