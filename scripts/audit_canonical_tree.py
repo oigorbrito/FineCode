@@ -3,7 +3,7 @@
 
 Requires Git and Python 3.10+. No checkout/reset/fetch/write to repository.
 Example:
- python scripts/audit_canonical_tree.py --main origin/main --canonical feat/full-upstream-tree-migration --upstream pi-upstream/main --out D:/finecode-reconciliation/tree-audit
+ python scripts/audit_canonical_tree.py --main origin/main --canonical refs/heads/CANONICAL --canonical-expected-sha FULL_COMMIT_SHA --canonical-source RECORD_OF_SOURCE_PROVENANCE --out D:/finecode-reconciliation/tree-audit
 """
 from __future__ import annotations
 
@@ -96,16 +96,32 @@ def main() -> None:
     ap.add_argument("--main", required=True, help="Main ref, pinned to full SHA during execution")
     ap.add_argument("--canonical", required=True, help="Modified internal canonical branch ref")
     ap.add_argument("--upstream", help="Separate upstream snapshot ref, never implicitly substituted for canonical")
+    ap.add_argument("--canonical-expected-sha", required=True,
+                    help="Externally verified full 40/64-character SHA of the modified canonical source")
+    ap.add_argument("--canonical-source", required=True,
+                    help="Auditable provenance identifier (repository URL or local source record), not a branch nickname")
     ap.add_argument("--out", required=True, type=Path)
     args = ap.parse_args()
+    # Explicit evidence is mandatory. A historical migration branch is NOT a canonical source.
+    expected = args.canonical_expected_sha.strip().lower()
+    if len(expected) not in (40, 64) or any(ch not in "0123456789abcdef" for ch in expected):
+        ap.error("--canonical-expected-sha must be a full 40/64-character hexadecimal commit SHA")
+    if not args.canonical_source.strip() or args.canonical_source.strip() == args.canonical:
+        ap.error("--canonical-source must identify provenance independently of the ref name")
     # Resolve all refs before generating anything; no implicit remote refresh.
     refs = {"main": pin(args.main), "canonical": pin(args.canonical)}
     if args.upstream:
         refs["upstream"] = pin(args.upstream)
+    if refs["canonical"].lower() != expected:
+        ap.error("canonical ref does not match independently pinned --canonical-expected-sha")
+    if refs["canonical"] == refs["main"]:
+        ap.error("canonical ref points to main; this cannot establish an independent source")
     trees = {key: tree(sha) for key, sha in refs.items()}
     args.out.mkdir(parents=True, exist_ok=True)
     manifest = {"refs": refs, "source_arguments": {"main": args.main, "canonical": args.canonical,
-                "upstream": args.upstream}, "scope": "COMMITTED_GIT_TREES_ONLY",
+                "upstream": args.upstream, "canonical_source": args.canonical_source,
+                "canonical_expected_sha": expected}, "source_identity": "OPERATOR_ASSERTED_NOT_VERIFIED",
+                "scope": "COMMITTED_GIT_TREES_ONLY",
                 "notes": ["No worktree/index/stash/untracked examination", "No behavioral parity inferred",
                           "No current-upstream claim without independently verified source SHA"],
                 "comparisons": {}}
