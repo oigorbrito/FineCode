@@ -8,8 +8,10 @@ const DEFAULT_GATEWAY_PREFIX = `https://gateway.ai.cloudflare.com/v1/{${CLOUDFLA
 function customGatewayPrefix(domain: string): string {
 	const value = domain.trim();
 	const parsed = URL.parse(value);
-	const url = parsed?.protocol === "https:" || parsed?.protocol === "http:" ? parsed : URL.parse(`https://${value}`);
-	if (!url) throw new Error(`Invalid CLOUDFLARE_GATEWAY_DOMAIN: ${domain}`);
+	const url = parsed ?? URL.parse(`https://${value}`);
+	if (!url || url.protocol !== "https:" || !url.hostname || url.username || url.password) {
+		throw new Error("CLOUDFLARE_GATEWAY_DOMAIN must be a valid HTTPS endpoint without embedded credentials");
+	}
 	url.pathname = url.pathname.replace(/\/+$/, "");
 	url.search = "";
 	url.hash = "";
