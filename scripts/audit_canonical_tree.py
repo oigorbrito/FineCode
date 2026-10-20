@@ -38,6 +38,26 @@ def tree(commit: str) -> dict[str, tuple[str, str, str]]:
     return result
 
 
+def classify_path(path: str, state: str) -> tuple[str, str]:
+    """Prioritize review, never decide equivalence without inspection."""
+    parts = path.split("/")
+    if parts[0] in ("packages", "apps") and len(parts) > 1:
+        subsystem = "/".join(parts[:2])
+    elif parts[0] == ".github":
+        subsystem = "github-governance"
+    else:
+        subsystem = parts[0]
+    if state == "identical_object":
+        priority = "none"
+    elif path.endswith((".md", ".mdx")):
+        priority = "P2-docs"
+    elif "/test/" in path or path.startswith("tests/") or path.endswith((".test.ts", ".spec.ts")):
+        priority = "P1-tests"
+    else:
+        priority = "P0-runtime-or-contract"
+    return subsystem, priority
+
+
 def compare(main: dict, other: dict, main_label: str, other_label: str) -> list[dict]:
     rows = []
     for path in sorted(main.keys() | other.keys()):
@@ -52,7 +72,8 @@ def compare(main: dict, other: dict, main_label: str, other_label: str) -> list[
             state = "mode_or_type_difference"
         else:
             state = "different_object"
-        rows.append({"path": path, "state": state, f"{main_label}_mode": m[0] if m else "",
+        subsystem, priority = classify_path(path, state)
+        rows.append({"path": path, "state": state, "subsystem": subsystem, "review_priority": priority, f"{main_label}_mode": m[0] if m else "",
                      f"{main_label}_kind": m[1] if m else "", f"{main_label}_oid": m[2] if m else "",
                      f"{other_label}_mode": o[0] if o else "", f"{other_label}_kind": o[1] if o else "",
                      f"{other_label}_oid": o[2] if o else "",
