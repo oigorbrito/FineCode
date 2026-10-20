@@ -1,3 +1,4 @@
+from contextlib import chdir
 import importlib.util
 import os
 from pathlib import Path
@@ -30,21 +31,17 @@ class ReviewDraftTests(unittest.TestCase):
             if path.endswith("/pulls") and method == "POST":
                 return {"number": 777}
             return {}
-        original_cwd = os.getcwd()
-        try:
-            with tempfile.TemporaryDirectory() as tmp:
-                os.chdir(tmp)
-                with patch.object(importer, "git", fake_git), \
-                     patch.object(importer, "git_sha", return_value="c" * 40), \
-                     patch.object(importer, "api", fake_api), \
-                     patch.object(importer, "sync_pr_labels"), \
-                     patch.object(importer, "TARGET", "example/FineCode"):
-                    result = importer.stage_conflict_review(UPSTREAM, "upstream/pi-pr-42")
-                manifest = Path("upstream-review/pi-pr-42.md")
-                self.assertTrue(manifest.is_file())
-                self.assertIn("No upstream code has been applied", manifest.read_text())
-        finally:
-            os.chdir(original_cwd)
+        # Restore cwd before removing the directory (required on Windows).
+        with tempfile.TemporaryDirectory() as tmp, chdir(tmp):
+            with patch.object(importer, "git", fake_git), \
+                 patch.object(importer, "git_sha", return_value="c" * 40), \
+                 patch.object(importer, "api", fake_api), \
+                 patch.object(importer, "sync_pr_labels"), \
+                 patch.object(importer, "TARGET", "example/FineCode"):
+                result = importer.stage_conflict_review(UPSTREAM, "upstream/pi-pr-42")
+            manifest = Path("upstream-review/pi-pr-42.md")
+            self.assertTrue(manifest.is_file())
+            self.assertIn("No upstream code has been applied", manifest.read_text())
         self.assertEqual(result, "review_only_created")
         created = next(data for path, method, data in requests
                        if method == "POST" and path.endswith("/pulls"))
@@ -66,20 +63,15 @@ class ReviewDraftTests(unittest.TestCase):
             if method == "PATCH":
                 patches.append(data)
             return {}
-        original_cwd = os.getcwd()
-        try:
-            with tempfile.TemporaryDirectory() as tmp:
-                os.chdir(tmp)
-                Path("upstream-review").mkdir()
-                with patch.object(importer, "git", fake_git), \
-                     patch.object(importer, "git_sha", side_effect=[tip, "d" * 40]), \
-                     patch.object(importer, "api", fake_api), \
-                     patch.object(importer, "TARGET", "example/FineCode"):
-                    result = importer.refresh_conflict_review(
-                        {"number": 777}, upstream, "upstream/pi-pr-42", old, tip)
-                self.assertIn(new, Path("upstream-review/pi-pr-42.md").read_text())
-        finally:
-            os.chdir(original_cwd)
+        with tempfile.TemporaryDirectory() as tmp, chdir(tmp):
+            Path("upstream-review").mkdir()
+            with patch.object(importer, "git", fake_git), \
+                 patch.object(importer, "git_sha", side_effect=[tip, "d" * 40]), \
+                 patch.object(importer, "api", fake_api), \
+                 patch.object(importer, "TARGET", "example/FineCode"):
+                result = importer.refresh_conflict_review(
+                    {"number": 777}, upstream, "upstream/pi-pr-42", old, tip)
+            self.assertIn(new, Path("upstream-review/pi-pr-42.md").read_text())
         self.assertEqual(result, "review_only_updated")
         self.assertEqual(len(patches), 1)
         self.assertIn(new, patches[0]["body"])

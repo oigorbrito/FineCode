@@ -19,10 +19,22 @@ jobs:
     steps:
       - name: Checkout FineCode
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: Test upstream metadata reconciliation
-        run: python3 -m unittest discover -s tests -p "test_upstream_tracker_reconciliation.py" -v
+      - name: Test metadata reconciliation and PR importer safety
+        env:
+          PYTHONDONTWRITEBYTECODE: "1"
+        run: python3 -m unittest discover -s tests -p "test_upstream_*.py" -v
       - name: Mirror Pi issues, PR status and releases without merging
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_RUN_ID: ${{ github.run_id }}
+          UPSTREAM_TRACKER_MANIFEST: upstream-tracker-manifest.json
         run: python3 scripts/upstream_tracker.py
+      - name: Upload reconciliation evidence
+        if: always() && hashFiles('upstream-tracker-manifest.json') != ''
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: upstream-tracker-manifest-${{ github.run_id }}
+          path: upstream-tracker-manifest.json
+          if-no-files-found: error
+          retention-days: 90
