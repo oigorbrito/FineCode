@@ -73,7 +73,10 @@ def compare(main: dict, other: dict, main_label: str, other_label: str) -> list[
         else:
             state = "different_object"
         subsystem, priority = classify_path(path, state)
-        rows.append({"path": path, "state": state, "subsystem": subsystem, "review_priority": priority, f"{main_label}_mode": m[0] if m else "",
+        rows.append({"path": path.encode("utf-8", "surrogateescape").decode("utf-8", "backslashreplace"),
+                     "path_bytes_hex": path.encode("utf-8", "surrogateescape").hex(),
+                     "state": state, "subsystem": subsystem.encode("utf-8", "surrogateescape").decode("utf-8", "backslashreplace"),
+                     "review_priority": priority, f"{main_label}_mode": m[0] if m else "",
                      f"{main_label}_kind": m[1] if m else "", f"{main_label}_oid": m[2] if m else "",
                      f"{other_label}_mode": o[0] if o else "", f"{other_label}_kind": o[1] if o else "",
                      f"{other_label}_oid": o[2] if o else "",
