@@ -82,4 +82,17 @@ describe("Cloudflare provider streams", () => {
 
 		expect(captured).toEqual(["https://ai.example.com/openai", "https://ai.example.com/openai"]);
 	});
+
+	it("rejects insecure or credential-bearing custom gateway URLs before dispatch", () => {
+		let dispatches = 0;
+		const streams = cloudflareStreams({
+			stream: () => { dispatches++; return new AssistantMessageEventStream(); },
+			streamSimple: () => { dispatches++; return new AssistantMessageEventStream(); },
+		});
+		for (const domain of ["http://ai.example.com", "https://user:pass@ai.example.com", "ftp://ai.example.com", "://bad"]) {
+			expect(() => streams.stream(model, context, { env: { CLOUDFLARE_GATEWAY_DOMAIN: domain } }))
+				.toThrow(/HTTPS endpoint/);
+		}
+		expect(dispatches).toBe(0);
+	});
 });
