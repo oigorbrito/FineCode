@@ -47,6 +47,23 @@ class CanonicalTreeAuditTests(unittest.TestCase):
             audit.export(file, rows)
             self.assertEqual(file.read_bytes().decode("utf-8").count(raw_name.hex()), 1)
 
+    def test_canonical_source_gate_rejects_missing_or_mismatched_sha(self):
+        import subprocess
+        from unittest.mock import patch
+        cases = [
+            (["--canonical-expected-sha", "123", "--canonical-source", "signed-record"], "invalid"),
+            (["--canonical-expected-sha", "a" * 40, "--canonical-source", "signed-record"], "mismatched"),
+        ]
+        for extra, _ in cases:
+            with self.subTest(extra=extra):
+                with tempfile.TemporaryDirectory() as tmp:
+                    # Source mismatch is rejected before reading any tree or writing output.
+                    cmd = ["python", str(MODULE), "--main", "HEAD", "--canonical", "HEAD",
+                           "--out", str(Path(tmp) / "out"), *extra]
+                    result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertFalse((Path(tmp) / "out").exists())
+
     def test_csv_handles_ambiguous_path_characters(self):
         rows = audit.compare({}, {"name\twith,comma\nand newline": ("100644", "blob", "a")}, "main", "canonical")
         with tempfile.TemporaryDirectory() as d:

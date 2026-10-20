@@ -7,6 +7,19 @@ on:
       - 'tests/test_canonical_tree_audit.py'
       - '.github/workflows/canonical-tree-audit.yml'
   workflow_dispatch:
+    inputs:
+      canonical_ref:
+        description: 'Explicit modified canonical ref (not historical migration)'
+        required: true
+        type: string
+      canonical_expected_sha:
+        description: 'Full SHA verified independently from canonical source'
+        required: true
+        type: string
+      canonical_source:
+        description: 'Independent provenance record (URL or documented source identity)'
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -26,23 +39,30 @@ jobs:
           python-version: '3.12'
       - name: Contract tests
         run: python -m unittest discover -s tests -p test_canonical_tree_audit.py -v
-      - name: Pin local historical references
+      - name: Reject false canonical source substitution
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          CANONICAL_REF: ${{ inputs.canonical_ref }}
+          CANONICAL_EXPECTED_SHA: ${{ inputs.canonical_expected_sha }}
+          CANONICAL_SOURCE: ${{ inputs.canonical_source }}
         run: |
-          git fetch --no-tags origin \
-            refs/heads/feat/full-upstream-tree-migration:refs/remotes/origin/feat/full-upstream-tree-migration \
-            refs/heads/sync/pi-upstream-1402973a:refs/remotes/origin/sync/pi-upstream-1402973a
-      - name: Compare complete committed trees
-        run: |
+          if [[ "$CANONICAL_REF" == *"feat/full-upstream-tree-migration"* || "$CANONICAL_REF" == *"sync/pi-upstream"* ]]; then
+            echo "::error::Historical fixture cannot serve as current modified canonical source"
+            exit 1
+          fi
+          test -n "$CANONICAL_SOURCE"
+          git rev-parse --verify "${CANONICAL_REF}^{commit}"
           python scripts/audit_canonical_tree.py \
-            --main origin/main \
-            --canonical origin/feat/full-upstream-tree-migration \
-            --upstream origin/sync/pi-upstream-1402973a \
+            --main HEAD \
+            --canonical "$CANONICAL_REF" \
+            --canonical-expected-sha "$CANONICAL_EXPECTED_SHA" \
+            --canonical-source "$CANONICAL_SOURCE" \
             --out tree-integrity-evidence
-      - name: Upload reproducible evidence
-        if: always()
+      - name: Upload evidence from explicitly verified source
+        if: github.event_name == 'workflow_dispatch'
         uses: actions/upload-artifact@v4
         with:
-          name: historical-canonical-tree-evidence
+          name: canonical-source-evidence
           path: tree-integrity-evidence/
-          if-no-files-found: warn
+          if-no-files-found: error
           retention-days: 30
