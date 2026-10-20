@@ -30,8 +30,10 @@ import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 import { MINIMUM_PI_VERSION } from "./model-catalog-minimum-version.mjs";
 import { compareModelCatalogPiVersions } from "./model-catalog-protocol.ts";
+import { execNpmSync } from "./npm-command.mjs";
 
 const PI_AI_PACKAGE = "@earendil-works/pi-ai";
+const PI_SOURCE_REPOSITORY = "https://github.com/earendil-works/pi.git";
 
 /** Read a release's built-in model data (`dist/providers/data`) as model lists by provider. */
 function readBuiltinModels(dataDir) {
@@ -61,8 +63,17 @@ function mergeReleaseCatalog(builtin, catalog) {
 	return merged;
 }
 
+function tarPath(path) {
+	if (process.platform !== "win32") return path;
+	const match = path.match(/^([A-Za-z]):[\\/](.*)$/);
+	return match ? `/${match[1].toLowerCase()}/${match[2].replace(/\\/g, "/")}` : path.replace(/\\/g, "/");
+}
+
 function run(command, args, cwd) {
-	const result = spawnSync(command, args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+	const result =
+		command === "npm"
+			? { status: 0, stdout: execNpmSync(args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }), stderr: "" }
+			: spawnSync(command, args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
 	if (result.error) throw result.error;
 	if (result.status !== 0) {
 		const output = [result.stdout, result.stderr].filter(Boolean).join("\n").trim();
@@ -88,16 +99,18 @@ function main() {
 	const releaseDir = join(temporaryDir, "release");
 	try {
 		console.log(`Checking the model catalog against pi ${release}...`);
-		// The release's source code.
+		// CI checkouts of FineCode do not contain tags from the upstream Pi repository.
+		const sourceRepository = join(temporaryDir, "source");
+		run("git", ["clone", "--quiet", "--depth", "1", "--branch", `v${release}`, PI_SOURCE_REPOSITORY, sourceRepository], root);
 		const archive = join(temporaryDir, "release.tar");
-		run("git", ["archive", "--prefix=release/", "--output", archive, `v${release}`], root);
-		run("tar", ["xf", archive, "-C", temporaryDir], root);
+		run("git", ["archive", "--prefix=release/", "--output", archive, "HEAD"], sourceRepository);
+		run("tar", ["xf", tarPath(archive), "-C", tarPath(temporaryDir)], root);
 
 		// The built-in models users have: the data shipped in the published package.
 		const [{ filename }] = JSON.parse(
 			run("npm", ["pack", `${PI_AI_PACKAGE}@${release}`, "--pack-destination", temporaryDir, "--json"], root),
 		);
-		run("tar", ["xzf", join(temporaryDir, filename), "-C", temporaryDir, "package/dist/providers/data"], root);
+		run("tar", ["xzf", tarPath(join(temporaryDir, filename)), "-C", tarPath(temporaryDir), "package/dist/providers/data"], root);
 		const builtin = readBuiltinModels(join(temporaryDir, "package/dist/providers/data"));
 		const catalog = JSON.parse(readFileSync(catalogPath, "utf8"));
 		const mergedPath = join(temporaryDir, "models.all.json");

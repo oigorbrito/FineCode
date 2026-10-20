@@ -37,4 +37,10 @@ A suíte final executada no Windows durou 641,629 s e terminou exit 1 porque doi
 
 A árvore final está limpa; `origin/main` é ancestral da branch e `git merge-tree` não aponta conflitos. SHAs da série: `60d4b6c8115855fedc465c4c53f8de474c4efa28`, `570bfe385`, `e5282f928`, `8bf033b76`, `bb82f53ec`, `c64d63fd0`, `41f3e27bc`, `64edaba0b`, `d54d3ad9a`, `5dba2a778`, `055fb109a` e merge `8227c33c6`.
 
-**Estado remoto e PR: ainda pendente.** Push convencional e PR draft seguem após o commit deste relatório. `READY_FOR_MANUAL_REVIEW` depende da coleta e avaliação dos checks GitHub; merge da PR permanece manual.
+## Primeira execução da CI remota
+
+A PR #476 existe como draft. Na primeira execução remota (`39428422596`, `39428422601`, `39428422637`), upstream-pr-import-safety, upstream-mirror-reconciliation, MCP conformance, pin e os builds Ubuntu x86_64/ARM passaram. O job model-catalog falhou porque `git archive v1.3.0` procurava uma tag upstream ausente no clone FineCode. Foi corrigido para clonar a tag da origem Pi explicitamente; o workflow não precisa mais buscar todo o histórico/tag set do fork. A checagem de catálogo local agora passou: compatível com Pi 1.3.0; validação dry-run do catálogo também passou.
+
+O job CI `build-check-test` terminou em falha durante os testes de AI; o log remoto termina ao iniciar esse workspace, sem diagnóstico de teste, sinal ou causa. No Windows pós-merge a suíte de AI passou, mas isso não substitui confirmação Linux. A matriz Nix registrou Linux x86_64/ARM aprovados e job macOS cancelado após 15 minutos; não há evidência de regressão funcional específica. Não foram reduzidos testes, modificados limites ou classificados esses resultados como PASS. O resultado integral do primeiro CI fica registrado como **falho/inconclusivo**.
+
+Foi commitada a correção verificável do caminho do catálogo e a CI disparada de novo pela atualização da PR draft. O estado do novo run e as ações seguintes serão registrados aqui. **Não marcar `READY_FOR_MANUAL_REVIEW` até que CI e matriz Nix estejam satisfatórios.** Merge permanece manual.
