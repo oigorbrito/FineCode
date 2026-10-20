@@ -13,7 +13,7 @@ packages/ai/src/providers/cloudflare-auth.ts,changed,76161611967f483494d884d7cac
 packages/ai/src/providers/cloudflare-stream.ts,changed,b9eface3637ca5ade53088b57143f50f192b3942,c8acc48af3c1209149a4145af4483c16568623e5,NOT_REVIEWED,#496;#497
 packages/ai/src/types.ts,changed,d47996f3971290b00446e9efd94516f35e3fdcc8,b729c1521a0b86bc2ed5ccc7d2f78ae96d29d5da,NOT_REVIEWED,#495
 packages/ai/test/abort.test.ts,changed,b457cfa9dd8aa2b7fe739f040c36bb6d01ccaf72,7074a662f884607d7d686a0e21d6d0a0f163a02f,NOT_REVIEWED,#498
-packages/ai/test/anthropic-adaptive-thinking-models.test.ts,changed,67a93aa74c36584069b73daf79da45561a607bac,a3a1c44140e6683730a25e0e264bf6b8a0cf7368,NOT_REVIEWED,NONE
+packages/ai/test/anthropic-adaptive-thinking-models.test.ts,changed,67a93aa74c36584069b73daf79da45561a607bac,a3a1c44140e6683730a25e0e264bf6b8a0cf7368,NOT_REVIEWED,commit:3a468227a2f8a484199c42ebc7d7697604f4b6d6
 packages/ai/test/anthropic-force-adaptive-thinking.test.ts,changed,c523e699c642b20fffdf1e605f0c6914d6c9a8bf,6629782f2b616499aab84d56db70f8645aebd345,NOT_REVIEWED,#500
 packages/ai/test/cloudflare-stream.test.ts,changed,3d2fb058e58c1e2c777707920a952f09d4ed626a,47efcf53b0cba745386482f947c04206701ead83,NOT_REVIEWED,#496;#497
 packages/ai/test/codex-websocket-cached-probe.ts,changed,d9a802e1c630c26c775ae4156fdb0e6f0c18d023,c15166258ba4b6b5dc289da2b16428d25f07046a,NOT_REVIEWED,#498
