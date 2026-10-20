@@ -23,7 +23,7 @@
 | `64edaba0b` | Inventário canônico e relatórios de estabilização/reconciliação. |
 | `d54d3ad9a` | Reconcilia os 11 commits de `main`: TUI FineCode, status operacional e fixture OpenRouter independente do catálogo. |
 | `5dba2a778` | Mantém o renderer Pi disponível e separa o logo por distribuição para evitar conflito de integração. |
-| merge de `origin/main` | Preserva a história publicada; sem conflitos de conteúdo previstos pelo `git merge-tree`. |
+| `8227c33c6` | Merge normal de `origin/main` em `feat/full-upstream-tree-migration`; preserva os 11 commits novos da main, sem force/rebase e sem conflitos de conteúdo. |
 
 Os arquivos de `main` que também tocavam o TUI foram inspecionados. `footer.ts` combina o prefixo de marca FineCode com o caminho normalizado e os contadores upstream. `interactive-mode.ts` preserva tanto o status operacional quanto os marcadores de ferramenta. `openai-completions-tool-choice.test.ts` usa fixture local equivalente e deixa de depender do ID mutável `deepseek-r1` no catálogo remoto. O renderer upstream de logo Pi é preservado; a apresentação do runtime de cada distribuição usa `distribution-logo.ts`.
 
@@ -31,6 +31,10 @@ O report de migração preserva a proveniência Pi e classifica os 438 caminhos:
 
 ## Validação local
 
-No snapshot antes do merge de `main`: `npm run build` e `npm run check` terminaram com exit 0; a suíte completa terminou naturalmente em 624,882 s com **8.891 PASS / 0 FAIL / 957 SKIP**, incluindo TUI TAP 1.067 PASS/1 SKIP sem dupla contagem. A reconciliação de `main` passou em 35 testes focados de sete arquivos, `npm run check` e `npm run build`, todos exit 0; a prova de comportamento dos dois logotipos passou em 3 testes. A alteração final preserva o conteúdo exato do logo upstream Pi e separa a compatibilidade no componente de distribuição.
+No snapshot validado antes do merge de `main`, `npm run build` e `npm run check` terminaram com exit 0; `./test.sh` terminou naturalmente em 624,882 s, exit 0, com **8.891 PASS / 0 FAIL / 957 SKIP**. A reconciliação da main passou em 35 testes focados de sete arquivos, check e build. Após merge, o build final e `npm run check` novamente terminaram com exit 0; 34 testes focados em oito arquivos e a prova dos logotipos (3 testes) passaram.
 
-**Estado de checks remotos e PR: pendente.** Atualizar esta seção e a seção Estado após merge normal, último check/build/tests, push convencional, abertura da PR draft e coleta do resultado dos checks GitHub. Não marcar `READY_FOR_MANUAL_REVIEW` antes dos gates remotos satisfatórios. Nenhum merge da PR.
+A suíte final executada no Windows durou 641,629 s e terminou exit 1 porque dois testes do Codemode excederam seus limites intactos de 5 s sob contenção (`worker backend` e `inline backend`). Os outros 221 testes daquele pacote passaram; uma execução isolada subsequente de **todo Codemode** passou com **223 PASS / 3 SKIP**. Os demais workspaces do `./test.sh` passaram. A contabilização composta por escopo é **8.913 PASS / 0 FAIL / 957 SKIP**, mas **não** representa uma execução integral única com exit 0. Os limites/asserts não foram alterados. A CI remota executará novamente a suíte em Linux.
+
+A árvore final está limpa; `origin/main` é ancestral da branch e `git merge-tree` não aponta conflitos. SHAs da série: `60d4b6c8115855fedc465c4c53f8de474c4efa28`, `570bfe385`, `e5282f928`, `8bf033b76`, `bb82f53ec`, `c64d63fd0`, `41f3e27bc`, `64edaba0b`, `d54d3ad9a`, `5dba2a778`, `055fb109a` e merge `8227c33c6`.
+
+**Estado remoto e PR: ainda pendente.** Push convencional e PR draft seguem após o commit deste relatório. `READY_FOR_MANUAL_REVIEW` depende da coleta e avaliação dos checks GitHub; merge da PR permanece manual.
