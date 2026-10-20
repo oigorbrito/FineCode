@@ -1286,7 +1286,7 @@ export function sliceWithWidth(
 				// Keep original order: codes from before the range must precede codes at the boundary
 				result += pendingAnsi + ansi.code;
 				pendingAnsi = "";
-			} else if (currentCol < startCol) pendingAnsi += ansi.code;
+			} else if (currentCol < startCol && !ansi.code.startsWith("\x1b_")) pendingAnsi += ansi.code;
 			i += ansi.length;
 			continue;
 		}
