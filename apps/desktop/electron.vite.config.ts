@@ -1,4 +1,5 @@
-import { resolve, basename } from 'path'
+import { dirname, resolve, basename } from 'path'
+import { createRequire } from 'node:module'
 import { defineConfig, externalizeDepsPlugin } from 'electron-vite'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
@@ -6,12 +7,14 @@ import { readFileSync, copyFileSync, mkdirSync, existsSync } from 'fs'
 import type { Plugin } from 'vite'
 
 const { version } = JSON.parse(readFileSync(resolve(__dirname, 'package.json'), 'utf-8'))
+const nodeRequire = createRequire(import.meta.url)
 
 // The voice engines (transformers.js and parakeet.js) run onnxruntime-web,
 // which loads its WebAssembly runtime by URL. Ship those files with the
 // renderer under `voice-wasm/` and serve them in dev, so speech-to-text works
 // offline without fetching WASM from a CDN (which the locked CSP forbids).
-const ORT_DIST = resolve(__dirname, 'node_modules/onnxruntime-web/dist')
+const ORT_DIST = dirname(nodeRequire.resolve('onnxruntime-web'))
+const ORT_PACKAGE_DIR = dirname(ORT_DIST)
 const VOICE_WASM_DIR = 'voice-wasm'
 
 // Only the runtime builds the engines load. parakeet.js uses the shared
@@ -138,7 +141,7 @@ export default defineConfig({
         // resolve through the package's own exports.
         {
           find: /^onnxruntime-web$/,
-          replacement: resolve(__dirname, 'node_modules/onnxruntime-web'),
+          replacement: ORT_PACKAGE_DIR,
         },
       ]
     }
