@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { getModel, streamSimple } from "../src/compat.ts";
 import { findEnvKeys, getEnvApiKey } from "../src/env-api-keys.ts";
 import { getSupportedThinkingLevels } from "../src/models.ts";
+import type { Model } from "../src/types.ts";
 
 const originalBasetenApiKey = process.env.BASETEN_API_KEY;
 
@@ -19,8 +20,25 @@ describe("Baseten models", () => {
 		expect(getModel("baseten", "zai-org/GLM-5.2-Fast").input).toEqual(["text"]);
 	});
 
-	it("models Kimi K2.6 reasoning as an explicit off/on toggle", async () => {
-		const model = getModel("baseten", "moonshotai/Kimi-K2.6");
+	it("serializes Baseten toggle reasoning as an explicit off/on setting", async () => {
+		const model: Model<"openai-completions"> = {
+			id: "test-toggle-model",
+			name: "Test toggle model",
+			api: "openai-completions",
+			provider: "baseten",
+			baseUrl: "https://inference.baseten.co/v1",
+			reasoning: true,
+			input: ["text"],
+			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+			contextWindow: 8192,
+			maxTokens: 4096,
+			thinkingLevelMap: { off: "off", minimal: null, low: null, medium: null, high: "high", xhigh: null, max: null },
+			compat: {
+				supportsReasoningEffort: false,
+				thinkingFormat: "baseten",
+				chatTemplateArgs: { enable_thinking: { $var: "thinking.enabled" } },
+			},
+		};
 		let payload: Record<string, unknown> | undefined;
 
 		expect(model.thinkingLevelMap).toEqual({
