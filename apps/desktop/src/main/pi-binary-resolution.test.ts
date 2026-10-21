@@ -357,10 +357,10 @@ test('resolvePiBinary refuses an auto-detected omp that cannot run', () => {
   // behind a spawn timeout minutes later.
   const deps = fakeDeps({ env: { HOME: POSIX_HOME, PATH: '/opt/omp' }, files: ['/opt/omp/omp'] })
   const resolution = resolvePiBinary(deps, null)
-  assert.equal(resolution.script, PI_FALLBACK_BINARY_POSIX)
-  assert.equal(resolution.source, 'fallback')
+  assert.equal(resolution.script, FINECODE_FALLBACK_BINARY)
+  assert.equal(resolution.source, 'finecode')
   assert.equal(resolution.found, false)
-  assert.match(describePiResolutionFailure(resolution), /npm install -g @earendil-works\/pi-coding-agent/)
+  assert.match(describePiResolutionFailure(resolution), /npm install -g finecode/)
 })
 
 test('resolvePiBinary refuses an auto-detected omp whose output carries no version', () => {
@@ -404,7 +404,7 @@ test('resolvePiBinary preserves explicit Pi fallback on POSIX and Windows', () =
   assert.equal(posixResult.script, PI_FALLBACK_BINARY_POSIX)
   assert.equal(posixResult.source, 'fallback')
   assert.equal(posixResult.found, false)
-  assert.match(describePiResolutionFailure(posixResult), /@earendil-works\\/pi-coding-agent/)
+  assert.match(describePiResolutionFailure(posixResult), /@earendil-works\/pi-coding-agent/)
 
   const missing = resolvePiBinary(posixDeps, '/missing/pi', 'pi')
   assert.equal(missing.script, PI_FALLBACK_BINARY_POSIX)
@@ -685,7 +685,7 @@ test('resolvePiBinary never takes Pi from a relative PATH entry', () => {
   const deps = fakeDeps({ env: { HOME: POSIX_HOME, PATH: 'bin' }, files: [join('bin', 'pi')] })
   const resolution = resolvePiBinary(deps, null)
   assert.equal(resolution.found, false)
-  assert.equal(resolution.script, PI_FALLBACK_BINARY_POSIX)
+  assert.equal(resolution.script, FINECODE_FALLBACK_BINARY)
 })
 
 // ─── Failure messaging ───────────────────────────────────────────────────────
@@ -703,6 +703,6 @@ test('describePiResolutionFailure calls out a configured path that does not exis
 test('describePiResolutionFailure gives install guidance when nothing was configured', () => {
   const deps = fakeDeps({ env: { HOME: POSIX_HOME, PATH: '/nowhere' } })
   const message = describePiResolutionFailure(resolvePiBinary(deps, null))
-  assert.match(message, /npm install -g @earendil-works\/pi-coding-agent/)
+  assert.match(message, /npm install -g finecode/)
   assert.match(message, /Settings/)
 })
