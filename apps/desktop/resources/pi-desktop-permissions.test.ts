@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises'
+import { copyFile, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { after, before, describe, it } from 'node:test'
@@ -19,8 +19,14 @@ const ASK_EDITS_MODE = 'ask-edits'
 const ENGLISH = 'en'
 
 const RESOURCES_DIR = dirname(fileURLToPath(import.meta.url))
-const EXTENSION_URL = pathToFileURL(join(RESOURCES_DIR, 'pi-desktop-permissions.ts')).href
 const LOCALES_DIR = join(RESOURCES_DIR, 'locales')
+const EXTENSION_MODULE_FILES = [
+  'pi-desktop-permissions.ts',
+  'permission-rules.ts',
+  'permission-prompt-text.ts',
+  'repo-set-map.ts',
+  'path-within.ts',
+]
 // Windows needs elevation for symlinks; the checks stay POSIX-tested.
 const SKIP_WITHOUT_SYMLINKS = process.platform === 'win32'
 
@@ -45,29 +51,37 @@ interface ToolCallOutcome {
   blocked: string | null
 }
 
-let loadedCopies = 0
-
 /**
- * Load a fresh copy of the extension the way Pi and OMP do: its default
- * export registers a `tool_call` handler. It reads its settings from the
- * environment when it loads, so each copy is its own module instance.
+ * Load an isolated extension module the way Pi and OMP do: its default export
+ * registers a `tool_call` handler and reads settings at module load. A unique
+ * directory is required because the TS test loader caches URL-query variants
+ * of the same source path on Windows.
  */
 async function loadExtension(settings: Record<string, string | undefined>): Promise<ToolCallHandler> {
   for (const [name, value] of Object.entries(settings)) {
     if (value === undefined) delete process.env[name]
     else process.env[name] = value
   }
-  loadedCopies += 1
-  const extension = await import(`${EXTENSION_URL}?copy=${loadedCopies}`) as { default: (pi: ExtensionAPI) => void }
-  let handler: ToolCallHandler | undefined
-  const pi = {
-    on(event: string, registered: ToolCallHandler) {
-      if (event === 'tool_call') handler = registered
-    },
+  const moduleDirectory = await mkdtemp(join(tmpdir(), 'pi-desktop-permissions-extension-'))
+  try {
+    await Promise.all(EXTENSION_MODULE_FILES.map((fileName) => copyFile(
+      join(RESOURCES_DIR, fileName),
+      join(moduleDirectory, fileName),
+    )))
+    const extensionUrl = pathToFileURL(join(moduleDirectory, 'pi-desktop-permissions.ts')).href
+    const extension = await import(extensionUrl) as { default: (pi: ExtensionAPI) => void }
+    let handler: ToolCallHandler | undefined
+    const pi = {
+      on(event: string, registered: ToolCallHandler) {
+        if (event === 'tool_call') handler = registered
+      },
+    }
+    extension.default(pi as unknown as ExtensionAPI)
+    assert.ok(handler, 'the extension registers a tool_call handler')
+    return handler
+  } finally {
+    await rm(moduleDirectory, { recursive: true, force: true })
   }
-  extension.default(pi as unknown as ExtensionAPI)
-  assert.ok(handler, 'the extension registers a tool_call handler')
-  return handler
 }
 
 /** Run one tool call with `cwd` as the agent's working directory. The user denies every prompt. */
@@ -257,6 +271,7 @@ describe('normal tab (no repo map)', () => {
   before(async () => {
     root = await mkdtemp(join(tmpdir(), 'pi-desktop-permissions-single-'))
     await mkdir(join(root, 'src'))
+    await writeFile(join(root, 'src/a.ts'), 'original content\n')
   })
 
   after(async () => {
@@ -281,6 +296,7 @@ describe('normal tab (no repo map)', () => {
       prompt: 'Allow write?\n\nPi wants to run the write tool.\n\nTarget: src/a.ts',
       blocked: 'User denied write permission in FineCode Desktop.',
     })
+    assert.equal(await readFile(join(root, 'src/a.ts'), 'utf8'), 'original content\n', 'denied writes must leave the target unchanged')
     assert.deepEqual(await runToolCall(askEdits, root, 'read', { path: '~/.bashrc' }), { prompt: null, blocked: null })
   })
 })
