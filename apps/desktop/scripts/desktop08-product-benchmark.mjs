@@ -16,7 +16,7 @@ const warmups = 2
 const marker = 'DESKTOP08_BENCHMARK_OK'
 const prompt = `Return exactly this text: ${marker}`
 assert.ok(cli.endsWith('.js'), 'pass the pinned FineCode CLI bundle path')
-assert.ok(process.env.DESKTOP_PACKAGED_EXE || process.argv[3], 'pass the unpacked Pi Desktop executable')
+assert.ok(process.env.DESKTOP_PACKAGED_EXE || process.argv[3], 'pass the unpacked FineCode Desktop executable')
 assert.equal(process.platform, 'win32', 'the product benchmark requires the Windows packaged application')
 assert.equal(Number.isInteger(iterations) && iterations >= 10, true, 'at least 10 valid iterations are required')
 
@@ -259,7 +259,7 @@ async function runDesktop(iteration, warmup) {
     let usable = false
     for (let attempt = 0; attempt < 120; attempt++) {
       try {
-        usable = await evaluate("document.title==='Pi Desktop' && document.body.innerText.includes('New Task')")
+        usable = await evaluate("document.title==='FineCode Desktop' && document.body.innerText.includes('New Task')")
         if (usable) break
       } catch {
         // Wait through renderer startup navigation.

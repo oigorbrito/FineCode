@@ -373,7 +373,7 @@ export function formatRepoMapPrompt(
     'Edit each repository only inside its path below, and use absolute paths for files outside your working directory.',
     'This list is current. When it differs from earlier messages in the conversation, follow this list.',
     ...context.repos.map((repo) => describeRepo(repo, hasAgentsFile)),
-    'Keep the repositories consistent with each other. Unless the user asks, do not commit, push, or open pull requests: the user ships all repositories together from Pi Desktop.',
+    'Keep the repositories consistent with each other. Unless the user asks, do not commit, push, or open pull requests: the user ships all repositories together from FineCode Desktop.',
     `</${REPO_MAP_PROMPT_TAG}>`,
   ].join('\n')
 }

@@ -6,11 +6,14 @@ import { createServer } from 'node:http'
 import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import process from 'node:process'
+import { clearTimeout, setTimeout as setTimer } from 'node:timers'
 import { setTimeout as delay } from 'node:timers/promises'
 import { performance } from 'node:perf_hooks'
 import { join, resolve } from 'node:path'
 
 const log = new Console(process.stdout, process.stderr)
+const APP_SHUTDOWN_TIMEOUT_MS = 5_000
+const CDP_REQUEST_TIMEOUT_MS = 30_000
 const data = await mkdtemp(join(tmpdir(), 'desktop03-electron-data-'))
 const finecodeData = join(data, 'finecode-agent')
 const project = await mkdtemp(join(tmpdir(), 'desktop03-electron-project-'))
@@ -90,13 +93,24 @@ async function connectToRenderer(port, app) {
     } catch {
       // Chromium has not opened its debugging endpoint yet.
     }
+    if (app.exitCode !== null) break
     await delay(250)
   }
   assert.ok(target, `Electron renderer unavailable; exitCode=${app.exitCode}`)
   const socket = new globalThis.WebSocket(target.webSocketDebuggerUrl)
-  await new Promise((resolveOpen, reject) => {
-    socket.addEventListener('open', resolveOpen, { once: true })
-    socket.addEventListener('error', reject, { once: true })
+  await new Promise((resolveOpen, rejectOpen) => {
+    const timeout = setTimer(() => {
+      socket.close()
+      rejectOpen(new Error('Chromium renderer WebSocket connection timed out'))
+    }, APP_SHUTDOWN_TIMEOUT_MS)
+    socket.addEventListener('open', () => {
+      clearTimeout(timeout)
+      resolveOpen()
+    }, { once: true })
+    socket.addEventListener('error', () => {
+      clearTimeout(timeout)
+      rejectOpen(new Error('Could not connect to the Chromium renderer WebSocket'))
+    }, { once: true })
   })
   let cdpId = 0
   const pending = new Map()
@@ -109,8 +123,15 @@ async function connectToRenderer(port, app) {
   })
   const evaluate = async (expression) => {
     const id = ++cdpId
-    const packet = await new Promise((resolvePacket) => {
-      pending.set(id, resolvePacket)
+    const packet = await new Promise((resolvePacket, rejectPacket) => {
+      const timeout = setTimer(() => {
+        pending.delete(id)
+        rejectPacket(new Error(`Chromium evaluate request ${id} timed out`))
+      }, CDP_REQUEST_TIMEOUT_MS)
+      pending.set(id, (result) => {
+        clearTimeout(timeout)
+        resolvePacket(result)
+      })
       socket.send(JSON.stringify({ id, method: 'Runtime.evaluate', params: { expression, returnByValue: true, awaitPromise: true } }))
     })
     if (packet.error) throw new Error(JSON.stringify(packet.error))
@@ -137,9 +158,41 @@ function sampleApplicationProcessTree(pid) {
   }
 }
 
-function terminateApp(app) {
-  const killed = spawnSync('taskkill', ['/pid', String(app.pid), '/T', '/F'], { stdio: 'ignore' })
-  if (killed.status !== 0) app.kill()
+function waitForAppExit(app, timeoutMs) {
+  if (app.exitCode !== null) return Promise.resolve(true)
+  return new Promise((resolveExit) => {
+    const onExit = () => {
+      clearTimeout(timeout)
+      resolveExit(true)
+    }
+    const timeout = setTimer(() => {
+      app.off('exit', onExit)
+      resolveExit(false)
+    }, timeoutMs)
+    app.once('exit', onExit)
+  })
+}
+
+async function terminateApp(app) {
+  if (!app?.pid || app.exitCode !== null) return
+  if (process.platform === 'win32') {
+    const close = spawnSync('powershell.exe', ['-NoProfile', '-Command', `(Get-Process -Id ${app.pid} -ErrorAction SilentlyContinue).CloseMainWindow()`], {
+      encoding: 'utf8', windowsHide: true, timeout: 10_000,
+    })
+    if (close.status === 0 && await waitForAppExit(app, APP_SHUTDOWN_TIMEOUT_MS)) return
+  } else {
+    app.kill('SIGTERM')
+    if (await waitForAppExit(app, APP_SHUTDOWN_TIMEOUT_MS)) return
+  }
+  if (app.exitCode === null) {
+    if (process.platform === 'win32') {
+      const killed = spawnSync('taskkill', ['/pid', String(app.pid), '/T', '/F'], { stdio: 'ignore', timeout: 10_000 })
+      if (killed.status !== 0) app.kill()
+    } else {
+      app.kill('SIGKILL')
+    }
+    assert.equal(await waitForAppExit(app, APP_SHUTDOWN_TIMEOUT_MS), true, `Electron process ${app.pid} did not exit`)
+  }
 }
 
 const env = { ...process.env, PI_DESKTOP_USER_DATA_DIR: data }
@@ -161,26 +214,37 @@ try {
     for (let attempt = 0; attempt < 120; attempt++) {
       try {
         const state = JSON.parse(await evaluate("JSON.stringify({title:document.title,text:document.body.innerText})"))
-        if (state.title.includes('Desktop') && state.text.includes('New Task')) return state
+        if (state.title === 'FineCode Desktop' && state.text.includes('New Task')) return state
       } catch {
         // The renderer can navigate between loading states during startup.
       }
+      assert.equal(app.exitCode, null, 'Electron exited before the renderer became usable')
       await delay(50)
     }
     throw new Error('Electron renderer did not become usable')
   }
   const initial = await waitForUsableUi()
   const uiUsableMs = performance.now() - appStartedAt
-  assert.ok(initial.title.includes('Desktop'), `Unexpected title: ${initial.title}`)
+  assert.equal(initial.title, 'FineCode Desktop')
   assert.match(initial.text, /New Task/)
   const workspace = JSON.parse(await evaluate(`(async()=>{const ws=await window.piDesktop.workspace.create('DESKTOP03 fixture',${JSON.stringify(project)});await window.piDesktop.workspace.setActive(ws.id);const status=await window.piDesktop.workspace.startPi(ws.id,{provider:'local',model:'deterministic'});return JSON.stringify({id:ws.id,status})})()`))
   assert.equal(workspace.status.status, 'running', workspace.status.error ?? 'Desktop did not start FineCode')
   // Main process updates its persistent workspace registry. Reload once so the
   // frontend boots through the same recovery path used by an ordinary launch.
   await evaluate('window.location.reload()')
-  await delay(2500)
-  const boot = JSON.parse(await evaluate("(async()=>JSON.stringify({active:await window.piDesktop.workspace.getActive(),text:document.body.innerText.slice(0,500)}))()"))
-  assert.equal(boot.active?.path, project, 'frontend should recover the active fixture workspace')
+  await waitForUsableUi()
+  let boot
+  for (let attempt = 0; attempt < 120; attempt++) {
+    try {
+      boot = JSON.parse(await evaluate("(async()=>JSON.stringify({active:await window.piDesktop.workspace.getActive(),text:document.body.innerText.slice(0,500)}))()"))
+      if (boot.active?.path === project) break
+    } catch {
+      // The renderer can still be restoring its workspace after navigation.
+    }
+    assert.equal(app.exitCode, null, 'Electron exited while restoring the workspace')
+    await delay(50)
+  }
+  assert.equal(boot?.active?.path, project, 'frontend should recover the active fixture workspace')
   await evaluate("(()=>{window.__desktop03FirstEventAt=null;window.piDesktop.onEvent((event)=>{if(window.__desktop03FirstEventAt===null&&event.type==='message_update')window.__desktop03FirstEventAt=Date.now()})})()")
   const promptStartedAt = Date.now()
   const taskStartedAt = performance.now()
@@ -236,8 +300,7 @@ try {
   assert.equal(rendered, true)
   await evaluate(`window.piDesktop.workspace.stopPi(${JSON.stringify(workspace.id)})`)
   socket.close()
-  terminateApp(app)
-  for (let attempt = 0; attempt < 60 && app.exitCode === null; attempt++) await delay(50)
+  await terminateApp(app)
 
   const restartStartedAt = performance.now()
   app = launchElectron()
@@ -263,6 +326,7 @@ try {
     await delay(50)
   }
   assert.equal(restoredTranscript, true, 'application restart should restore the FineCode transcript')
+  assert.equal(await evaluate('document.title'), 'FineCode Desktop')
   const restartResumeMs = performance.now() - resumeStartedAt
   const desktopProcessResources = sampleApplicationProcessTree(app.pid)
   log.log(JSON.stringify({
@@ -278,9 +342,14 @@ try {
   }))
 } finally {
   socket?.close()
-  terminateApp(app)
-  await delay(1000)
-  await new Promise((resolveClose) => server.close(resolveClose))
-  await rm(data, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 }).catch(() => undefined)
-  await rm(project, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 }).catch(() => undefined)
+  try {
+    await terminateApp(app)
+  } finally {
+    server.closeAllConnections()
+    await new Promise((resolveClose, rejectClose) => server.close((error) => error ? rejectClose(error) : resolveClose()))
+  }
+  await Promise.all([
+    rm(data, { recursive: true, force: true }),
+    rm(project, { recursive: true, force: true }),
+  ])
 }

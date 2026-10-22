@@ -79,7 +79,7 @@ export default function piDesktopPermissions(pi: ExtensionAPI): void {
     if (!confirmed) {
       return {
         block: true,
-        reason: `User denied ${event.toolName} permission in Pi Desktop.`,
+        reason: `User denied ${event.toolName} permission in FineCode Desktop.`,
       }
     }
   })

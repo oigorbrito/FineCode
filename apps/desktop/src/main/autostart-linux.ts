@@ -1,5 +1,6 @@
 import { homedir } from 'os'
 import { join } from 'path'
+import { PI_DESKTOP_PRODUCT_NAME } from '../shared/product-name'
 
 // Pure helpers for the Linux freedesktop autostart entry that implements
 // "Run on startup" on Linux (Electron's setLoginItemSettings is macOS/Windows
@@ -11,8 +12,8 @@ import { join } from 'path'
 // old entry is reused (not duplicated) after an update.
 export const LINUX_AUTOSTART_FILENAME = 'pi-desktop.desktop'
 
-const APP_DISPLAY_NAME = 'Pi Desktop'
-const APP_COMMENT = 'Automatically start Pi Desktop at login'
+const APP_DISPLAY_NAME = PI_DESKTOP_PRODUCT_NAME
+const APP_COMMENT = `Automatically start ${PI_DESKTOP_PRODUCT_NAME} at login`
 
 /**
  * Absolute path to the per-user autostart entry, honoring `$XDG_CONFIG_HOME`
