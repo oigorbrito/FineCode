@@ -6,80 +6,105 @@ import { createServer } from 'node:http'
 import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import process from 'node:process'
+import { clearTimeout, setTimeout as setTimer } from 'node:timers'
 import { setTimeout as delay } from 'node:timers/promises'
 import { performance } from 'node:perf_hooks'
 import { join, resolve } from 'node:path'
 
 const log = new Console(process.stdout, process.stderr)
+const APP_SHUTDOWN_TIMEOUT_MS = 5_000
+const CDP_REQUEST_TIMEOUT_MS = 30_000
 const data = await mkdtemp(join(tmpdir(), 'desktop03-electron-data-'))
 const finecodeData = join(data, 'finecode-agent')
-const project = await mkdtemp(join(tmpdir(), 'desktop03-electron-project-'))
-await mkdir(finecodeData, { recursive: true })
-await writeFile(join(project, 'result.txt'), 'fixture baseline\n', 'utf8')
-for (const args of [
-  ['init', '--quiet'],
-  ['config', 'user.name', 'DESKTOP03 fixture'],
-  ['config', 'user.email', 'desktop03@example.invalid'],
-  ['add', 'result.txt'],
-  ['commit', '--quiet', '-m', 'fixture baseline'],
-]) {
-  const result = spawnSync('git', args, { cwd: project, encoding: 'utf8', windowsHide: true })
-  assert.equal(result.status, 0, result.stderr || `git ${args[0]} failed`)
-}
+let project
 let requestCount = 0
 let cancelledRequests = 0
-const server = createServer(async (request, response) => {
-  const chunks = []
-  for await (const chunk of request) chunks.push(chunk)
-  requestCount++
-  JSON.parse(Buffer.concat(chunks).toString('utf8'))
-  if (requestCount === 3) {
-    response.on('close', () => { cancelledRequests++ })
-    return
+let server
+let debugPort
+try {
+  project = await mkdtemp(join(tmpdir(), 'desktop03-electron-project-'))
+  await mkdir(finecodeData, { recursive: true })
+  await writeFile(join(project, 'result.txt'), 'fixture baseline\n', 'utf8')
+  for (const args of [
+    ['init', '--quiet'],
+    ['config', 'user.name', 'DESKTOP03 fixture'],
+    ['config', 'user.email', 'desktop03@example.invalid'],
+    ['add', 'result.txt'],
+    ['commit', '--quiet', '-m', 'fixture baseline'],
+  ]) {
+    const result = spawnSync('git', args, { cwd: project, encoding: 'utf8', windowsHide: true })
+    assert.equal(result.status, 0, result.stderr || `git ${args[0]} failed`)
   }
-  response.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache' })
-  const send = (chunk) => response.write(`data: ${JSON.stringify(chunk)}\n\n`)
-  if (requestCount === 1) {
-    send({ choices: [{ index: 0, delta: { tool_calls: [{ index: 0, id: 'call-write-1', type: 'function', function: { name: 'write', arguments: '{"path":"result.txt","content":"desktop03 deterministic result\\n"}' } }] }, finish_reason: null }] })
-    send({ choices: [{ index: 0, delta: {}, finish_reason: 'tool_calls' }] })
-  } else {
-    send({ choices: [{ index: 0, delta: { content: 'Desktop integration completed.' }, finish_reason: null }] })
-    send({ choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] })
-  }
-  send('[DONE]')
-  response.end()
-})
-await new Promise((resolveListen) => server.listen(0, '127.0.0.1', resolveListen))
-const address = server.address()
-assert.ok(address && typeof address === 'object')
-const debugPort = await new Promise((resolvePort, reject) => {
-  const probe = createServer()
-  probe.once('error', reject)
-  probe.listen(0, '127.0.0.1', () => {
-    const probeAddress = probe.address()
-    if (!probeAddress || typeof probeAddress === 'string') {
-      probe.close()
-      reject(new Error('Could not reserve a Chromium debugging port'))
+  server = createServer(async (request, response) => {
+    const chunks = []
+    for await (const chunk of request) chunks.push(chunk)
+    requestCount++
+    JSON.parse(Buffer.concat(chunks).toString('utf8'))
+    if (requestCount === 3) {
+      response.on('close', () => { cancelledRequests++ })
       return
     }
-    probe.close((error) => error ? reject(error) : resolvePort(probeAddress.port))
+    response.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache' })
+    const send = (chunk) => response.write(`data: ${JSON.stringify(chunk)}\n\n`)
+    if (requestCount === 1) {
+      send({ choices: [{ index: 0, delta: { tool_calls: [{ index: 0, id: 'call-write-1', type: 'function', function: { name: 'write', arguments: '{"path":"result.txt","content":"desktop03 deterministic result\\n"}' } }] }, finish_reason: null }] })
+      send({ choices: [{ index: 0, delta: {}, finish_reason: 'tool_calls' }] })
+    } else {
+      send({ choices: [{ index: 0, delta: { content: 'Desktop integration completed.' }, finish_reason: null }] })
+      send({ choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] })
+    }
+    send('[DONE]')
+    response.end()
   })
-})
-await writeFile(join(data, 'settings.json'), JSON.stringify({
-  piEngine: 'finecode',
-  piExecutablePath: resolve(process.env.FINECODE_CLI_PATH ?? '../../packages/coding-agent/dist/bundle/cli.js'),
-  permissionMode: 'ask-edits',
-  openToHomeOnLaunch: true,
-}), 'utf8')
-await writeFile(join(finecodeData, 'models.json'), JSON.stringify({ providers: { local: {
-  baseUrl: `http://127.0.0.1:${address.port}/v1`,
-  api: 'openai-completions',
-  apiKey: 'local-only',
-  models: [{
-    id: 'deterministic', name: 'Desktop03 deterministic', reasoning: false, input: ['text'],
-    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, contextWindow: 4096, maxTokens: 256,
-  }],
-} } }), 'utf8')
+  await new Promise((resolveListen, rejectListen) => {
+    server.once('error', rejectListen)
+    server.listen(0, '127.0.0.1', () => {
+      server.off('error', rejectListen)
+      resolveListen()
+    })
+  })
+  const address = server.address()
+  assert.ok(address && typeof address === 'object')
+  debugPort = await new Promise((resolvePort, reject) => {
+    const probe = createServer()
+    probe.once('error', reject)
+    probe.listen(0, '127.0.0.1', () => {
+      const probeAddress = probe.address()
+      if (!probeAddress || typeof probeAddress === 'string') {
+        probe.close()
+        reject(new Error('Could not reserve a Chromium debugging port'))
+        return
+      }
+      probe.close((error) => error ? reject(error) : resolvePort(probeAddress.port))
+    })
+  })
+  await writeFile(join(data, 'settings.json'), JSON.stringify({
+    piEngine: 'finecode',
+    piExecutablePath: resolve(process.env.FINECODE_CLI_PATH ?? '../../packages/coding-agent/dist/bundle/cli.js'),
+    permissionMode: 'ask-edits',
+    openToHomeOnLaunch: true,
+  }), 'utf8')
+  await writeFile(join(finecodeData, 'models.json'), JSON.stringify({ providers: { local: {
+    baseUrl: `http://127.0.0.1:${address.port}/v1`,
+    api: 'openai-completions',
+    apiKey: 'local-only',
+    models: [{
+      id: 'deterministic', name: 'Desktop03 deterministic', reasoning: false, input: ['text'],
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, contextWindow: 4096, maxTokens: 256,
+    }],
+  } } }), 'utf8')
+} catch (error) {
+  if (server?.listening) {
+    server.closeAllConnections()
+    await new Promise((resolveClose) => server.close(resolveClose))
+  }
+  await Promise.all([
+    rm(data, { recursive: true, force: true }),
+    ...(project ? [rm(project, { recursive: true, force: true })] : []),
+  ])
+  throw error
+}
+
 async function connectToRenderer(port, app) {
   let target
   for (let attempt = 0; attempt < 120; attempt++) {
@@ -90,35 +115,105 @@ async function connectToRenderer(port, app) {
     } catch {
       // Chromium has not opened its debugging endpoint yet.
     }
+    if (app.exitCode !== null) break
     await delay(250)
   }
   assert.ok(target, `Electron renderer unavailable; exitCode=${app.exitCode}`)
   const socket = new globalThis.WebSocket(target.webSocketDebuggerUrl)
-  await new Promise((resolveOpen, reject) => {
-    socket.addEventListener('open', resolveOpen, { once: true })
-    socket.addEventListener('error', reject, { once: true })
+  await new Promise((resolveOpen, rejectOpen) => {
+    const timeout = setTimer(() => {
+      socket.close()
+      rejectOpen(new Error('Chromium renderer WebSocket connection timed out'))
+    }, APP_SHUTDOWN_TIMEOUT_MS)
+    socket.addEventListener('open', () => {
+      clearTimeout(timeout)
+      resolveOpen()
+    }, { once: true })
+    socket.addEventListener('error', () => {
+      clearTimeout(timeout)
+      rejectOpen(new Error('Could not connect to the Chromium renderer WebSocket'))
+    }, { once: true })
   })
   let cdpId = 0
   const pending = new Map()
-  socket.addEventListener('message', (event) => {
+  const rejectPending = (error) => {
+    for (const request of pending.values()) request.reject(error)
+    pending.clear()
+  }
+  const onMessage = (event) => {
     const packet = JSON.parse(String(event.data))
-    if (packet.id && pending.has(packet.id)) {
-      pending.get(packet.id)(packet)
+    const request = pending.get(packet.id)
+    if (request) {
       pending.delete(packet.id)
+      request.resolve(packet)
     }
-  })
+  }
+  const onSocketError = () => rejectPending(new Error('Chromium renderer WebSocket failed'))
+  const onSocketClose = () => {
+    rejectPending(new Error('Chromium renderer WebSocket closed'))
+    socket.removeEventListener('message', onMessage)
+    socket.removeEventListener('error', onSocketError)
+    socket.removeEventListener('close', onSocketClose)
+  }
+  socket.addEventListener('message', onMessage)
+  socket.addEventListener('error', onSocketError)
+  socket.addEventListener('close', onSocketClose)
   const evaluate = async (expression) => {
     const id = ++cdpId
-    const packet = await new Promise((resolvePacket) => {
-      pending.set(id, resolvePacket)
-      socket.send(JSON.stringify({ id, method: 'Runtime.evaluate', params: { expression, returnByValue: true, awaitPromise: true } }))
+    const packet = await new Promise((resolvePacket, rejectPacket) => {
+      const timeout = setTimer(() => {
+        pending.delete(id)
+        rejectPacket(new Error(`Chromium evaluate request ${id} timed out`))
+      }, CDP_REQUEST_TIMEOUT_MS)
+      pending.set(id, {
+        resolve: (result) => {
+          clearTimeout(timeout)
+          resolvePacket(result)
+        },
+        reject: (error) => {
+          clearTimeout(timeout)
+          rejectPacket(error)
+        },
+      })
+      try {
+        socket.send(JSON.stringify({ id, method: 'Runtime.evaluate', params: { expression, returnByValue: true, awaitPromise: true } }))
+      } catch (error) {
+        pending.delete(id)
+        clearTimeout(timeout)
+        rejectPacket(error)
+      }
     })
     if (packet.error) throw new Error(JSON.stringify(packet.error))
     if (packet.result.exceptionDetails) throw new Error(packet.result.exceptionDetails.text)
     return packet.result.result.value
   }
+  let closePromise
+  const close = () => {
+    if (closePromise) return closePromise
+    closePromise = new Promise((resolveClose) => {
+      const onClose = () => {
+        clearTimeout(timeout)
+        resolveClose()
+      }
+      const timeout = setTimer(() => {
+        socket.removeEventListener('close', onClose)
+        onSocketClose()
+        resolveClose()
+      }, APP_SHUTDOWN_TIMEOUT_MS)
+      socket.addEventListener('close', onClose, { once: true })
+      if (socket.readyState === globalThis.WebSocket.CLOSED) {
+        clearTimeout(timeout)
+        socket.removeEventListener('close', onClose)
+        resolveClose()
+      } else {
+        rejectPending(new Error('Chromium renderer WebSocket is closing'))
+        socket.close()
+      }
+    })
+    return closePromise
+  }
   const sendPrompt = async (message) => evaluate(`(()=>{const input=document.querySelector('textarea');if(!input)return false;const setter=Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value').set;setter.call(input,${JSON.stringify(message)});input.dispatchEvent(new Event('input',{bubbles:true}));const send=document.querySelector('button[aria-label="Send message"]');if(!send||send.disabled)return false;send.click();return true})()`)
-  return { socket, evaluate, sendPrompt }
+  return { evaluate, sendPrompt, close }
 }
 
 function sampleApplicationProcessTree(pid) {
@@ -137,9 +232,41 @@ function sampleApplicationProcessTree(pid) {
   }
 }
 
-function terminateApp(app) {
-  const killed = spawnSync('taskkill', ['/pid', String(app.pid), '/T', '/F'], { stdio: 'ignore' })
-  if (killed.status !== 0) app.kill()
+function waitForAppExit(app, timeoutMs) {
+  if (app.exitCode !== null) return Promise.resolve(true)
+  return new Promise((resolveExit) => {
+    const onExit = () => {
+      clearTimeout(timeout)
+      resolveExit(true)
+    }
+    const timeout = setTimer(() => {
+      app.off('exit', onExit)
+      resolveExit(false)
+    }, timeoutMs)
+    app.once('exit', onExit)
+  })
+}
+
+async function terminateApp(app) {
+  if (!app?.pid || app.exitCode !== null) return
+  if (process.platform === 'win32') {
+    const close = spawnSync('powershell.exe', ['-NoProfile', '-Command', `(Get-Process -Id ${app.pid} -ErrorAction SilentlyContinue).CloseMainWindow()`], {
+      encoding: 'utf8', windowsHide: true, timeout: 10_000,
+    })
+    if (close.status === 0 && await waitForAppExit(app, APP_SHUTDOWN_TIMEOUT_MS)) return
+  } else {
+    app.kill('SIGTERM')
+    if (await waitForAppExit(app, APP_SHUTDOWN_TIMEOUT_MS)) return
+  }
+  if (app.exitCode === null) {
+    if (process.platform === 'win32') {
+      const killed = spawnSync('taskkill', ['/pid', String(app.pid), '/T', '/F'], { stdio: 'ignore', timeout: 10_000 })
+      if (killed.status !== 0) app.kill()
+    } else {
+      app.kill('SIGKILL')
+    }
+    assert.equal(await waitForAppExit(app, APP_SHUTDOWN_TIMEOUT_MS), true, `Electron process ${app.pid} did not exit`)
+  }
 }
 
 const env = { ...process.env, PI_DESKTOP_USER_DATA_DIR: data }
@@ -150,37 +277,49 @@ const electronArgs = process.env.ELECTRON_EXECUTABLE
 const launchElectron = () => spawn(electron, electronArgs, {
   cwd: process.cwd(), env, stdio: 'ignore', windowsHide: false,
 })
-let app = launchElectron()
-let socket
+let app
 let evaluate
 let sendPrompt
+let closeRenderer
 try {
+  app = launchElectron()
   const appStartedAt = performance.now()
-  ;({ socket, evaluate, sendPrompt } = await connectToRenderer(debugPort, app))
+  ;({ evaluate, sendPrompt, close: closeRenderer } = await connectToRenderer(debugPort, app))
   const waitForUsableUi = async () => {
     for (let attempt = 0; attempt < 120; attempt++) {
       try {
         const state = JSON.parse(await evaluate("JSON.stringify({title:document.title,text:document.body.innerText})"))
-        if (state.title.includes('Desktop') && state.text.includes('New Task')) return state
+        if (state.title === 'FineCode Desktop' && state.text.includes('New Task')) return state
       } catch {
         // The renderer can navigate between loading states during startup.
       }
+      assert.equal(app.exitCode, null, 'Electron exited before the renderer became usable')
       await delay(50)
     }
     throw new Error('Electron renderer did not become usable')
   }
   const initial = await waitForUsableUi()
   const uiUsableMs = performance.now() - appStartedAt
-  assert.ok(initial.title.includes('Desktop'), `Unexpected title: ${initial.title}`)
+  assert.equal(initial.title, 'FineCode Desktop')
   assert.match(initial.text, /New Task/)
   const workspace = JSON.parse(await evaluate(`(async()=>{const ws=await window.piDesktop.workspace.create('DESKTOP03 fixture',${JSON.stringify(project)});await window.piDesktop.workspace.setActive(ws.id);const status=await window.piDesktop.workspace.startPi(ws.id,{provider:'local',model:'deterministic'});return JSON.stringify({id:ws.id,status})})()`))
   assert.equal(workspace.status.status, 'running', workspace.status.error ?? 'Desktop did not start FineCode')
   // Main process updates its persistent workspace registry. Reload once so the
   // frontend boots through the same recovery path used by an ordinary launch.
   await evaluate('window.location.reload()')
-  await delay(2500)
-  const boot = JSON.parse(await evaluate("(async()=>JSON.stringify({active:await window.piDesktop.workspace.getActive(),text:document.body.innerText.slice(0,500)}))()"))
-  assert.equal(boot.active?.path, project, 'frontend should recover the active fixture workspace')
+  await waitForUsableUi()
+  let boot
+  for (let attempt = 0; attempt < 120; attempt++) {
+    try {
+      boot = JSON.parse(await evaluate("(async()=>JSON.stringify({active:await window.piDesktop.workspace.getActive(),text:document.body.innerText.slice(0,500)}))()"))
+      if (boot.active?.path === project) break
+    } catch {
+      // The renderer can still be restoring its workspace after navigation.
+    }
+    assert.equal(app.exitCode, null, 'Electron exited while restoring the workspace')
+    await delay(50)
+  }
+  assert.equal(boot?.active?.path, project, 'frontend should recover the active fixture workspace')
   await evaluate("(()=>{window.__desktop03FirstEventAt=null;window.piDesktop.onEvent((event)=>{if(window.__desktop03FirstEventAt===null&&event.type==='message_update')window.__desktop03FirstEventAt=Date.now()})})()")
   const promptStartedAt = Date.now()
   const taskStartedAt = performance.now()
@@ -235,13 +374,12 @@ try {
   const rendered = await evaluate("document.body.innerText.includes('FineCode') && document.body.innerText.includes('Desktop integration completed.')")
   assert.equal(rendered, true)
   await evaluate(`window.piDesktop.workspace.stopPi(${JSON.stringify(workspace.id)})`)
-  socket.close()
-  terminateApp(app)
-  for (let attempt = 0; attempt < 60 && app.exitCode === null; attempt++) await delay(50)
+  await closeRenderer()
+  await terminateApp(app)
 
   const restartStartedAt = performance.now()
   app = launchElectron()
-  ;({ socket, evaluate, sendPrompt } = await connectToRenderer(debugPort, app))
+  ;({ evaluate, sendPrompt, close: closeRenderer } = await connectToRenderer(debugPort, app))
   await waitForUsableUi()
   const restartUiUsableMs = performance.now() - restartStartedAt
   const restartedWorkspace = JSON.parse(await evaluate(`(async()=>JSON.stringify(await window.piDesktop.workspace.getActive()))()`))
@@ -263,6 +401,7 @@ try {
     await delay(50)
   }
   assert.equal(restoredTranscript, true, 'application restart should restore the FineCode transcript')
+  assert.equal(await evaluate('document.title'), 'FineCode Desktop')
   const restartResumeMs = performance.now() - resumeStartedAt
   const desktopProcessResources = sampleApplicationProcessTree(app.pid)
   log.log(JSON.stringify({
@@ -277,10 +416,15 @@ try {
     providerRequests: requestCount, cancelledProviderRequests: cancelledRequests,
   }))
 } finally {
-  socket?.close()
-  terminateApp(app)
-  await delay(1000)
-  await new Promise((resolveClose) => server.close(resolveClose))
-  await rm(data, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 }).catch(() => undefined)
-  await rm(project, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 }).catch(() => undefined)
+  await closeRenderer?.()
+  try {
+    await terminateApp(app)
+  } finally {
+    server.closeAllConnections()
+    await new Promise((resolveClose, rejectClose) => server.close((error) => error ? rejectClose(error) : resolveClose()))
+  }
+  await Promise.all([
+    rm(data, { recursive: true, force: true }),
+    rm(project, { recursive: true, force: true }),
+  ])
 }

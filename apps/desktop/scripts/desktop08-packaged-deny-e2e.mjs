@@ -9,7 +9,7 @@ import { setTimeout as delay } from 'node:timers/promises'
 import { join, resolve } from 'node:path'
 
 const executable = resolve(process.env.DESKTOP_PACKAGED_EXE ?? '')
-assert.ok(process.env.DESKTOP_PACKAGED_EXE, 'DESKTOP_PACKAGED_EXE must point to the unpacked Pi Desktop executable')
+assert.ok(process.env.DESKTOP_PACKAGED_EXE, 'DESKTOP_PACKAGED_EXE must point to the unpacked FineCode Desktop executable')
 const data = await mkdtemp(join(tmpdir(), 'desktop08-deny-data-'))
 const finecodeData = join(data, 'finecode-agent')
 const project = await mkdtemp(join(tmpdir(), 'desktop08-deny-project-'))
@@ -135,14 +135,14 @@ try {
   let usable = false
   for (let attempt = 0; attempt < 120; attempt++) {
     try {
-      usable = await evaluate("document.title==='Pi Desktop' && document.body.innerText.includes('New Task') && window.outerWidth>0 && window.outerHeight>0 && document.visibilityState==='visible'")
+      usable = await evaluate("document.title==='FineCode Desktop' && document.body.innerText.includes('New Task') && window.outerWidth>0 && window.outerHeight>0 && document.visibilityState==='visible'")
       if (usable) break
     } catch {
       // Keep waiting while the renderer completes its startup navigation.
     }
     await delay(50)
   }
-  assert.equal(usable, true, 'packaged Pi Desktop window should become usable')
+  assert.equal(usable, true, 'packaged FineCode Desktop window should become usable')
   const workspace = JSON.parse(await evaluate(`(async()=>{const ws=await window.piDesktop.workspace.create('Desktop08 denial',${JSON.stringify(project)});await window.piDesktop.workspace.setActive(ws.id);const status=await window.piDesktop.workspace.startPi(ws.id,{provider:'local',model:'deterministic'});return JSON.stringify({id:ws.id,status})})()`))
   assert.equal(workspace.status.status, 'running', workspace.status.error ?? 'Packaged FineCode runtime failed to start')
   await evaluate('window.location.reload()')

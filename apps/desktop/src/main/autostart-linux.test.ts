@@ -46,7 +46,8 @@ test('buildLinuxDesktopEntry produces a valid, complete desktop entry', () => {
 
   assert.equal(lines[0], '[Desktop Entry]')
   assert.ok(lines.includes('Type=Application'))
-  assert.ok(lines.includes('Name=Pi Desktop'))
+  assert.ok(lines.includes('Name=FineCode Desktop'))
+  assert.ok(lines.includes('Comment=Automatically start FineCode Desktop at login'))
   assert.ok(lines.includes('Exec="/opt/Pi Desktop.AppImage"'))
   assert.ok(lines.includes('Icon=/opt/icon.png'))
   assert.ok(lines.includes('Terminal=false'))
