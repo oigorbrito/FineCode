@@ -20,7 +20,7 @@ This is an identity and engineering baseline. It is **not** a declaration that t
 | Historical reconciliation | PR #548 58-path review; independent historical tree investigation; PR #575 restores FineCode extension and share-viewer compatibility | Historical review completed within its documented scope |
 | Installed product execution | Windows NSIS/Electron E2E; separately installed FineCode CLI runtime confirmed by process path and bundle hashes; tool permissions, writes/diff, session restore, cancellation | Windows installed-product scenario demonstrated, not a general reliability guarantee |
 | CI | Main post-merge workflow run `39789118447`, four jobs passed for PR #575 integration | Build/check/test and configured CI jobs green at the pinned baseline |
-| Governance | Protected/manual merge workflow followed for identified integration PRs | Upstream changes do not automatically redefine FineCode |
+| Governance | Recorded integration PRs were merged manually; effective branch protection and required approvals/checks were not independently verified | Manual merge history does not establish enforceable protection rules |
 
 ## Identity contract
 
@@ -42,6 +42,6 @@ This is an identity and engineering baseline. It is **not** a declaration that t
 
 ## Milestone acceptance and follow-up
 
-Review that active naming and docs match actual behavior, verify SHA-specific CI and evidence, then **manually merge** this record. After merge, optionally create an **annotated, immutable Git tag** on the resulting documentation commit, for example `finecode-identity-established-2026-10-22`, with the reviewed source SHA in its message and no fabricated version bump. Tag creation is a separate controlled release/governance action, not automatically performed by this proposal.
+Review that active naming and docs match actual behavior, verify SHA-specific CI and evidence, then **manually merge** this record. After merge, optionally create an **annotated Git tag intended to remain stable** on the resulting documentation commit, for example `finecode-identity-established-2026-10-22`, with the reviewed source SHA in its message and no fabricated version bump. An annotated tag object is hash-addressed, but the `refs/tags/*` reference can be moved or deleted unless effective tag protection rules restrict those actions. Verify/enforce that protection separately before making any immutability claim. Tag creation is a separate controlled release/governance action, not automatically performed by this proposal.
 
 The accepted claim is strictly: **“FineCode has a documented, independently managed product identity and an operational Windows baseline at the pinned commit, with Pi ancestry retained and canonical-source authority expressly unresolved.”**
