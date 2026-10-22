@@ -52,6 +52,10 @@ export interface ResourceLoaderReloadOptions {
 
 const HOST_PROVIDED_EXTENSION_PACKAGES = new Set([
 	"finecode",
+	"@finecode/agent",
+	"@finecode/ai",
+	"@finecode/coding-agent",
+	"@finecode/tui",
 	"@earendil-works/pi-agent-core",
 	"@earendil-works/pi-ai",
 	"@earendil-works/pi-coding-agent",

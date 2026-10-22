@@ -84,6 +84,40 @@ describe("DefaultResourceLoader", () => {
 			]);
 		});
 
+		it("should warn about former FineCode host dependencies in an extension manifest", async () => {
+			const packageRoot = join(tempDir, "finecode-extension-package");
+			const extensionsDir = join(packageRoot, "extensions");
+			mkdirSync(extensionsDir, { recursive: true });
+			writeFileSync(
+				join(packageRoot, "package.json"),
+				JSON.stringify({
+					dependencies: {
+						"@finecode/agent": "1.2.0",
+						"@finecode/ai": "1.2.0",
+						"@finecode/coding-agent": "1.2.0",
+						"@finecode/tui": "1.2.0",
+					},
+				}),
+			);
+			writeFileSync(join(extensionsDir, "package-extension.ts"), "export default function() {}");
+
+			const loader = new DefaultResourceLoader({
+				cwd,
+				agentDir,
+				settingsManager: SettingsManager.inMemory({ packages: [packageRoot] }),
+			});
+			await loader.reload();
+
+			expect(loader.getExtensions().extensions).toHaveLength(1);
+			expect(loader.getExtensions().warnings).toEqual([
+				{
+					path: join(packageRoot, "package.json"),
+					warning:
+						'Host-provided extension packages must be declared in peerDependencies with a "*" range, not dependencies: @finecode/agent, @finecode/ai, @finecode/coding-agent, @finecode/tui. Installed copies can bypass the extension loader and create duplicate runtime modules.',
+				},
+			]);
+		});
+
 		it("should fail when an extension package manifest cannot be parsed", async () => {
 			const packageRoot = join(tempDir, "invalid-extension-package");
 			const extensionsDir = join(packageRoot, "extensions");
