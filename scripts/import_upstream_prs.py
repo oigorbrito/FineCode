@@ -1,0 +1,605 @@
+#!/usr/bin/env python3
+"""Import open upstream Pi pull-request patches as FineCode PRs.
+
+No merging, no code execution from patches, no force pushes.
+Conflicting patches are skipped and reported in the workflow log.
+"""
+import json
+import os
+import subprocess
+import urllib.request
+import urllib.error
+from pathlib import Path
+import re
+
+SOURCE = "earendil-works/pi"
+TARGET = os.environ["GITHUB_REPOSITORY"]
+TOKEN = os.environ["GITHUB_TOKEN"]
+MAX_NEW = int(os.environ.get("MAX_NEW_UPSTREAM_PRS", "3"))
+BASE = "main"
+
+
+def api(path, method="GET", data=None, accept="application/vnd.github+json"):
+    payload = None if data is None else json.dumps(data).encode()
+    req = urllib.request.Request(
+        "https://api.github.com" + path, data=payload, method=method,
+        headers={"Authorization": "Bearer " + TOKEN,
+                 "Accept": accept,
+                 "X-GitHub-Api-Version": "2022-11-28",
+                 "User-Agent": "FineCode-upstream-import",
+                 "Content-Type": "application/json"})
+    with urllib.request.urlopen(req, timeout=60) as response:
+        return json.load(response) if accept.endswith("+json") else response.read()
+
+
+def git(*args, ok=True, input_data=None):
+    result = subprocess.run(["git", *args], input=input_data, capture_output=True)
+    if ok and result.returncode:
+        raise RuntimeError(f"git {' '.join(args)} failed: {result.stderr.decode(errors='replace')[-1200:]}")
+    return result
+
+
+PR_LABELS = {
+    "upstream": ("Imported from the upstream Pi project", "2563eb"),
+    "bug": ("Bug fix", "d73a4a"),
+    "enhancement": ("Feature or enhancement", "a2eeef"),
+    "needs-review": ("Pending manual FineCode review", "fbca04"),
+    "upstream-conflict": ("Upstream change needs manual adaptation", "e11d48"),
+    "finecode-candidate": ("Manually selected for FineCode", "7057ff"),
+}
+
+CORE_PACKAGES = ("packages/", "src/")
+IGNORED_PREFIXES = (".github/", "docs/images/", "website/", "media/", ".discord")
+
+
+def parse_patch_paths(patch_bytes):
+    paths = set()
+    if not patch_bytes:
+        return paths
+    for line in patch_bytes.splitlines():
+        if line.startswith(b"diff --git a/"):
+            parts = line.split(b" ")
+            if len(parts) >= 4 and parts[2].startswith(b"a/"):
+                paths.add(parts[2][2:].decode(errors="replace"))
+    return paths
+
+
+def is_out_of_scope_patch(paths):
+    if not paths:
+        return False
+    return all(any(p.startswith(prefix) for prefix in IGNORED_PREFIXES) for p in paths)
+
+
+def is_candidate_pr(upstream, patch_paths=None):
+    title = (upstream.get("title") or "").lower()
+    labels = {x["name"].lower() for x in upstream.get("labels", [])}
+    is_code_type = (
+        "bug" in labels or "enhancement" in labels or "feature" in labels or
+        title.startswith(("fix:", "fix(", "feat:", "feat(", "perf:", "perf(", "refactor:"))
+    )
+    if patch_paths:
+        touches_core = any(p.startswith(CORE_PACKAGES) for p in patch_paths)
+        return touches_core or (is_code_type and not is_out_of_scope_patch(patch_paths))
+    return is_code_type
+
+
+def ensure_pr_labels():
+    known = set()
+    for page in range(1, 4):
+        entries = api(f"/repos/{TARGET}/labels?per_page=100&page={page}")
+        known.update(item["name"] for item in entries)
+        if len(entries) < 100:
+            break
+    for name, (description, color) in PR_LABELS.items():
+        if name not in known:
+            api(f"/repos/{TARGET}/labels", "POST",
+                {"name": name, "description": description, "color": color})
+
+
+def sync_pr_labels(number, upstream, local=None, conflict=False, patch_paths=None):
+    """Preserve local review decisions and unrelated labels."""
+    current = {x["name"] for x in (local or {}).get("labels", [])}
+    original = {x["name"].lower() for x in upstream.get("labels", [])}
+    desired = current | {"upstream"}
+    if "bug" in original or "type: bug" in original:
+        desired.add("bug")
+    elif ("enhancement" in original or "feature" in original
+          or "type: feature" in original):
+        desired.add("enhancement")
+    else:
+        # Use explicit conventional-commit prefixes only as fallback.
+        subject = upstream.get("title", "").lower().strip()
+        if subject.startswith(("fix:", "fix(", "bugfix:", "bug:")):
+            desired.add("bug")
+        elif subject.startswith(("feat:", "feat(", "feature:")):
+            desired.add("enhancement")
+    if local is None or not current:
+        desired.add("needs-review")
+    if conflict:
+        desired.add("upstream-conflict")
+    if is_candidate_pr(upstream, patch_paths):
+        desired.add("finecode-candidate")
+    # A cleared conflict is not automatically considered resolved.
+    if desired != current:
+        api(f"/repos/{TARGET}/issues/{number}/labels", "PUT",
+            {"labels": sorted(desired)})
+
+
+def existing_pr(branch):
+    q = f"/repos/{TARGET}/pulls?state=all&head={TARGET.split('/')[0]}:{branch}&per_page=20"
+    entries = api(q)
+    return next((p for p in entries if p.get("head", {}).get("ref") == branch), None)
+
+
+def git_sha(ref="HEAD"):
+    return git("rev-parse", ref).stdout.decode().strip()
+
+
+def metadata(upstream, source_sha, tip_sha):
+    state = "merged" if upstream.get("merged_at") else upstream["state"]
+    return (
+        f"**Upstream:** {upstream['html_url']}\n\n"
+        f"**Upstream status:** {state}; draft={upstream.get('draft', False)}\n\n"
+        "Imported for manual review; no automatic merge, close, or force push.\n\n"
+        f"<!-- finecode-upstream-source:{source_sha} tip:{tip_sha} -->"
+    )
+
+
+def update_metadata(local, upstream, body):
+    title = f"[upstream Pi #{upstream['number']}] {upstream['title']}"
+    changes = {}
+    if local.get("title") != title:
+        changes["title"] = title
+    if local.get("body") != body:
+        changes["body"] = body
+    if changes:
+        api(f"/repos/{TARGET}/pulls/{local['number']}", "PATCH", changes)
+
+
+def stable_patch_id(diff):
+    if not diff:
+        return None
+    result = git("patch-id", "--stable", input_data=diff)
+    tokens = result.stdout.decode().split()
+    return tokens[0] if tokens else None
+
+
+def verify_recovered_checkpoint(number, branch, local, upstream):
+    """Adopt legacy PRs only when exact normalized patch identity matches.
+
+    Comparing patch-id (not commit SHA) accounts for transplanting the change
+    onto a different FineCode base. Any mismatch remains manual-review only.
+    """
+    git("fetch", "origin", branch)
+    local_tip = git_sha("FETCH_HEAD")
+    legacy = __import__("re").search(r"Branch checkpoint:\s*`([0-9a-f]{40})`", local.get("body") or "")
+    if legacy and legacy.group(1) != local_tip:
+        print(f"REVIEW upstream #{number}: branch changed since recovery", flush=True)
+        return False
+    git("fetch", "--no-tags", "https://github.com/" + SOURCE + ".git",
+        f"refs/pull/{number}/head:refs/remotes/pi-upstream/pr-{number}")
+    upstream_base = upstream["base"]["sha"]
+    git("fetch", "--no-tags", "https://github.com/" + SOURCE + ".git", upstream_base)
+    common = git("merge-base", upstream_base, upstream["head"]["sha"]).stdout.decode().strip()
+    source_diff = git("diff", "--binary", common, upstream["head"]["sha"]).stdout
+    local_parent = git("rev-parse", f"{local_tip}^").stdout.decode().strip()
+    local_diff = git("diff", "--binary", local_parent, local_tip).stdout
+    source_id, local_id = stable_patch_id(source_diff), stable_patch_id(local_diff)
+    if not source_id or source_id != local_id:
+        print(f"REVIEW upstream #{number}: patch identity unverified ({str(source_id)[:12]} vs {str(local_id)[:12]})", flush=True)
+        return False
+    update_metadata(local, upstream, metadata(upstream, upstream["head"]["sha"], local_tip))
+    print(f"VERIFIED upstream #{number}: patch-id {source_id}", flush=True)
+    return True
+
+
+
+def review_only_body(upstream, tip):
+    """A draft review PR is not an imported code patch."""
+    sha = upstream["head"]["sha"]
+    return (
+        f"**REVIEW ONLY — CODE NOT APPLIED**\\n\\n"
+        f"Upstream proposal: {upstream['html_url']}\\n\\n"
+        "The Pi patch conflicts with FineCode. This draft only contains a "
+        "non-executable review manifest, not the upstream implementation. "
+        "Do not merge until a human has adapted the code and validated tests.\\n\\n"
+        f"<!-- finecode-upstream-review-only:{sha} tip:{tip} -->"
+    )
+
+
+def review_manifest(upstream):
+    return (
+        "# Upstream proposal awaiting adaptation\\n\\n"
+        f"- Source: {upstream['html_url']}\\n"
+        f"- Source SHA: `{upstream['head']['sha']}`\\n"
+        f"- Title: {upstream['title']}\\n\\n"
+        "No upstream code has been applied. Manually port and test the changes "
+        "before marking this draft ready for review.\\n"
+    )
+
+
+def stage_conflict_review(upstream, branch):
+    """Create a distinct draft PR with review metadata, never a code import."""
+    number = upstream["number"]
+    git("reset", "--hard", f"origin/{BASE}")
+    git("checkout", "-B", "finecode-upstream-working", f"origin/{BASE}")
+    import pathlib
+    dest = pathlib.Path("upstream-review") / f"pi-pr-{number}.md"
+    dest.parent.mkdir(exist_ok=True)
+    dest.write_text(review_manifest(upstream), encoding="utf-8")
+    git("add", "--", str(dest))
+    git("-c", "user.name=github-actions[bot]", "-c",
+        "user.email=41898282+github-actions[bot]@users.noreply.github.com",
+        "commit", "-m", f"docs(upstream): record incompatible Pi PR #{number}")
+    tip = git_sha()
+    git("push", "origin", f"HEAD:refs/heads/{branch}")
+    created = api(f"/repos/{TARGET}/pulls", "POST", {
+        "title": f"[review-only Pi #{number}] {upstream['title']}",
+        "head": branch, "base": BASE,
+        "body": review_only_body(upstream, tip), "draft": True})
+    sync_pr_labels(created["number"], upstream, conflict=True)
+    print(f"REVIEW_ONLY_CREATED upstream #{number}", flush=True)
+    return "review_only_created"
+
+
+def refresh_conflict_review(local, upstream, branch, saved_sha, expected_tip):
+    """Fast-forward manifest update only when our branch has not diverged."""
+    number = upstream["number"]
+    git("fetch", "origin", branch)
+    actual_tip = git_sha("FETCH_HEAD")
+    if actual_tip != expected_tip:
+        print(f"CONFLICT upstream #{number}: review branch diverged; left untouched", flush=True)
+        return "conflict"
+    if saved_sha == upstream["head"]["sha"]:
+        return "existing"
+    git("checkout", "-B", "finecode-upstream-working", actual_tip)
+    import pathlib
+    dest = pathlib.Path("upstream-review") / f"pi-pr-{number}.md"
+    dest.write_text(review_manifest(upstream), encoding="utf-8")
+    git("add", "--", str(dest))
+    git("-c", "user.name=github-actions[bot]", "-c",
+        "user.email=41898282+github-actions[bot]@users.noreply.github.com",
+        "commit", "-m", f"docs(upstream): refresh Pi PR #{number} review")
+    tip = git_sha()
+    git("push", "origin", f"HEAD:refs/heads/{branch}")
+    api(f"/repos/{TARGET}/pulls/{local['number']}", "PATCH", {
+        "title": f"[review-only Pi #{number}] {upstream['title']}",
+        "body": review_only_body(upstream, tip)})
+    print(f"REVIEW_ONLY_UPDATED upstream #{number}", flush=True)
+    return "review_only_updated"
+
+LAST_IMPORT_DECISION = {}
+
+
+def finish_import(result, reason):
+    LAST_IMPORT_DECISION.clear()
+    LAST_IMPORT_DECISION.update({"result": result, "reason": reason})
+    return result
+
+
+def import_one(pr):
+    LAST_IMPORT_DECISION.clear()
+    number = pr["number"]
+    branch = f"upstream/pi-pr-{number}"
+    local = existing_pr(branch)
+    full = api(f"/repos/{SOURCE}/pulls/{number}")
+    source_sha = full["head"]["sha"]
+    if local:
+        sync_pr_labels(local["number"], full, local)
+    # Resume a branch pushed by a previous run that failed before opening a PR.
+    # Do not rewrite it or claim its upstream SHA is verified.
+    if not local:
+        remote = git("ls-remote", "--heads", "origin", f"refs/heads/{branch}").stdout.decode().strip()
+        if remote:
+            tip = remote.split()[0]
+            if not __import__("re").fullmatch(r"[0-9a-f]{40}", tip):
+                raise RuntimeError("Unexpected remote branch SHA")
+            created_pr = api(f"/repos/{TARGET}/pulls", "POST", {
+                "title": f"[upstream Pi #{number}] {full['title']}",
+                "head": branch, "base": BASE,
+                "body": (f"**Upstream:** {full['html_url']}\\n\\n"
+                         "**Recovery:** Existing branch imported without rewriting it. "
+                         "Source commit mapping and compatibility are UNVERIFIED. "
+                         "Manual review required before enabling incremental updates.\\n\\n"
+                         f"**Branch checkpoint:** `{tip}`\\n\\n"
+                         "No automatic merge, closure or force push."),
+                "draft": True})
+            sync_pr_labels(created_pr["number"], full)
+            print(f"RECOVERED upstream #{number}: existing branch {tip}", flush=True)
+            return finish_import("created", "recovered existing remote branch without rewriting it")
+    # Do not disturb a locally closed PR.
+    if local and local["state"] != "open":
+        return finish_import("existing", "FineCode pull request is closed; left untouched")
+    git("reset", "--hard", f"origin/{BASE}")
+    git("checkout", "-B", "finecode-upstream-working", f"origin/{BASE}")
+    if local:
+        import re
+        review = re.search(r"finecode-upstream-review-only:([0-9a-f]{40}) tip:([0-9a-f]{40})", local.get("body") or "")
+        if review:
+            result = refresh_conflict_review(local, full, branch, *review.groups())
+            reason = "review branch diverged; left untouched" if result == "conflict" else "review-only manifest unchanged or refreshed"
+            return finish_import(result, reason)
+        found = re.search(r"finecode-upstream-source:([0-9a-f]{40}) tip:([0-9a-f]{40})", local.get("body") or "")
+        if not found:
+            if verify_recovered_checkpoint(number, branch, local, full):
+                return finish_import("verified", "legacy checkpoint patch identity verified")
+            return finish_import("review", "legacy checkpoint patch identity could not be verified")
+        old_source, expected_tip = found.groups()
+        git("fetch", "origin", branch)
+        actual_tip = git_sha("FETCH_HEAD")
+        if actual_tip != expected_tip:
+            print(f"CONFLICT upstream #{number}: FineCode branch diverged; left untouched", flush=True)
+            return finish_import("conflict", "FineCode branch HEAD differs from saved tip checkpoint")
+        if old_source == source_sha:
+            update_metadata(local, full, metadata(full, old_source, actual_tip))
+            return finish_import("existing", "upstream source HEAD matches saved checkpoint")
+        # Fetch the exact original PR history, then apply only new upstream commits.
+        git("fetch", "--no-tags", "https://github.com/" + SOURCE + ".git",
+            f"refs/pull/{number}/head:refs/remotes/pi-upstream/pr-{number}")
+        if git("merge-base", "--is-ancestor", old_source, source_sha, ok=False).returncode:
+            # A rewritten commit graph can be harmless when the resulting source
+            # tree is identical. Only advance the checkpoint if Git verifies
+            # tree equivalence; any content change or missing object fails closed.
+            equivalent = git("diff", "--quiet", old_source, source_sha, ok=False)
+            if equivalent.returncode == 0:
+                update_metadata(local, full, metadata(full, source_sha, actual_tip))
+                print(f"REBASE_EQUIVALENT upstream #{number}: source tree unchanged; branch preserved", flush=True)
+                return finish_import("rebase_equivalent", "upstream history rewritten but source trees are identical")
+            print(f"REBASE_REVIEW upstream #{number}: upstream history rewritten with changes or unverified tree; preserved FineCode branch", flush=True)
+            return finish_import("conflict", "upstream history rewritten and source trees differ or cannot be verified")
+        git("checkout", "-B", "finecode-upstream-working", actual_tip)
+        delta = git("diff", "--binary", old_source, source_sha).stdout
+        applied = git("apply", "--3way", "--index", "-", ok=False, input_data=delta)
+        if applied.returncode:
+            print(f"CONFLICT upstream #{number}: incremental patch incompatible", flush=True)
+            return finish_import("conflict", "linear upstream delta could not be applied cleanly")
+        changed = git("diff", "--cached", "--quiet", ok=False).returncode != 0
+        if changed:
+            git("-c", "user.name=github-actions[bot]", "-c",
+                "user.email=41898282+github-actions[bot]@users.noreply.github.com",
+                "commit", "-m", f"chore(upstream): update Pi PR #{number}")
+        tip = git_sha()
+        # No forced update; GitHub rejects non-fast-forward pushes.
+        git("push", "origin", f"HEAD:refs/heads/{branch}")
+        update_metadata(local, full, metadata(full, source_sha, tip))
+        print(f"UPDATED upstream #{number}", flush=True)
+        return finish_import("updated", "linear upstream delta applied and branch fast-forward push accepted")
+    git("fetch", "--no-tags", "https://github.com/" + SOURCE + ".git",
+        f"refs/pull/{number}/head:refs/remotes/pi-upstream/pr-{number}")
+    patch = api(f"/repos/{SOURCE}/pulls/{number}",
+                accept="application/vnd.github.v3.patch")
+    patch_paths = parse_patch_paths(patch)
+    if is_out_of_scope_patch(patch_paths):
+        print(f"SKIPPED upstream #{number}: out of scope changes ({', '.join(sorted(patch_paths))})", flush=True)
+        return finish_import("skipped", "patch only modifies ignored paths")
+    applied = git("apply", "--3way", "--index", "-", ok=False, input_data=patch)
+    if applied.returncode:
+        print(f"CONFLICT upstream #{number}: initial patch incompatible", flush=True)
+        result = stage_conflict_review(full, branch)
+        return finish_import(result, "initial patch incompatible; created review-only manifest without upstream code")
+    if git("diff", "--cached", "--quiet", ok=False).returncode == 0:
+        return finish_import("existing", "upstream patch produced no staged content change")
+    git("-c", "user.name=github-actions[bot]", "-c",
+        "user.email=41898282+github-actions[bot]@users.noreply.github.com",
+        "commit", "-m", f"chore(upstream): stage Pi PR #{number} for review")
+    tip = git_sha()
+    git("push", "origin", f"HEAD:refs/heads/{branch}")
+    created_pr = api(f"/repos/{TARGET}/pulls", "POST", {
+        "title": f"[upstream Pi #{number}] {full['title']}",
+        "head": branch, "base": BASE,
+        "body": metadata(full, source_sha, tip),
+        "draft": bool(full.get("draft", False))})
+    sync_pr_labels(created_pr["number"], full, patch_paths=patch_paths)
+    print(f"CREATED upstream #{number}", flush=True)
+    return finish_import("created", "initial upstream patch imported into a new FineCode branch")
+
+def choose_rotating(values, count, run_number):
+    if not values or count <= 0:
+        return []
+    offset = ((run_number - 1) * count) % len(values)
+    return values[offset:] + values[:offset]
+
+
+def checkpoint_from_body(body):
+    match = re.search(r"finecode-upstream-source:([0-9a-f]{40}) tip:([0-9a-f]{40})", body or "")
+    if match:
+        return {"source_sha": match.group(1), "finecode_tip": match.group(2)}
+    match = re.search(r"finecode-upstream-review-only:([0-9a-f]{40}) tip:([0-9a-f]{40})", body or "")
+    if match:
+        return {"source_sha": match.group(1), "finecode_tip": match.group(2)}
+    return None
+
+
+def write_manifest(manifest):
+    path = Path(os.environ.get("UPSTREAM_IMPORT_MANIFEST", "upstream-import-manifest.json"))
+    path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
+def classify_decision(result, reason):
+    if result == "conflict":
+        if "FineCode branch HEAD" in reason or "review branch diverged" in reason:
+            return "MIRROR_DIVERGED"
+        if "upstream history rewritten" in reason:
+            return "REBASE_CHANGED_TREE"
+        return "BLOCKED_CONFLICT"
+    return {
+        "updated": "LINEAR_UPDATE",
+        "rebase_equivalent": "REBASE_EQUIVALENT",
+        "existing": "UNCHANGED",
+        "review": "REVIEW_REQUIRED",
+        "created": "CREATED",
+        "review_only_created": "REVIEW_ONLY_CREATED",
+        "review_only_updated": "REVIEW_ONLY_UPDATED",
+        "verified": "CHECKPOINT_VERIFIED",
+        "skipped": "SKIPPED_OUT_OF_SCOPE",
+    }.get(result, "OTHER")
+
+
+def capture_after(event, number):
+    try:
+        source_after = api(f"/repos/{SOURCE}/pulls/{number}")
+        event["upstream_head_after"] = (source_after.get("head") or {}).get("sha")
+    except Exception as exc:
+        event["upstream_snapshot_error"] = str(exc)
+    try:
+        mirror_after = existing_pr(f"upstream/pi-pr-{number}")
+        event["finecode_pr"] = (mirror_after or {}).get("number", event["finecode_pr"])
+        event["finecode_head_after"] = ((mirror_after or {}).get("head") or {}).get("sha")
+        event["checkpoint_after"] = checkpoint_from_body((mirror_after or {}).get("body"))
+    except Exception as exc:
+        event["finecode_snapshot_error"] = str(exc)
+
+
+def main():
+    git("fetch", "origin", BASE)
+    # Do not import from a dirty checkout.
+    if git("status", "--porcelain").stdout.strip():
+        raise RuntimeError("Refusing to import into a dirty checkout")
+    ensure_pr_labels()
+    created = 0
+    review_only_created = 0
+    review_only_updated = 0
+    code_updated = 0
+    rebase_equivalent = 0
+    failures = 0
+    conflicts = 0
+    blocked = False
+    seen = 0
+    # Gather open upstream PRs and all still-open FineCode mirrors, including
+    # counterparts already closed or merged upstream.
+    items = []
+    for page in range(1, 4):
+        group = api(f"/repos/{SOURCE}/pulls?state=open&sort=updated&direction=desc&per_page=100&page={page}")
+        if not group:
+            break
+        items.extend(group)
+    known = {p["number"] for p in items}
+    local = []
+    for page in range(1, 101):
+        batch = api(f"/repos/{TARGET}/pulls?state=open&per_page=100&page={page}")
+        local.extend(batch)
+        if len(batch) < 100:
+            break
+    import re
+    for mirror in local:
+        match = re.match(r"upstream/pi-pr-([0-9]+)$", mirror.get("head", {}).get("ref", ""))
+        if match and int(match.group(1)) not in known:
+            original = api(f"/repos/{SOURCE}/pulls/{match.group(1)}")
+            items.append(original)
+            known.add(original["number"])
+    # Prioritize already-imported PRs before attempting additional imports.
+    existing_numbers = set()
+    for mirror in local:
+        match = re.match(r"upstream/pi-pr-([0-9]+)$", mirror.get("head", {}).get("ref", ""))
+        if match:
+            existing_numbers.add(int(match.group(1)))
+    pending_updates = [p for p in items if p["number"] in existing_numbers]
+    pending_new = [p for p in items if p["number"] not in existing_numbers]
+    max_checked = max(1, int(os.environ.get("MAX_UPSTREAM_PR_CHECKS", "10")))
+
+    run_number = int(os.environ.get("GITHUB_RUN_NUMBER", "1"))
+    update_count = min(len(pending_updates), max(1, max_checked // 3))
+    selected_updates = choose_rotating(pending_updates, update_count, run_number)[:update_count]
+    selected_new = choose_rotating(pending_new, max_checked - update_count, run_number)[:max_checked - update_count]
+    selected = selected_updates + selected_new
+    local_by_upstream = {}
+    for mirror in local:
+        match = re.match(r"upstream/pi-pr-([0-9]+)$", mirror.get("head", {}).get("ref", ""))
+        if match:
+            local_by_upstream[int(match.group(1))] = mirror
+    update_offset = ((run_number - 1) * update_count) % len(pending_updates) if pending_updates else 0
+    new_count = max_checked - update_count
+    new_offset = ((run_number - 1) * new_count) % len(pending_new) if pending_new and new_count > 0 else 0
+    manifest = {
+        "schema_version": 1,
+        "repository": TARGET,
+        "run_id": os.environ.get("GITHUB_RUN_ID"),
+        "run_number": run_number,
+        "main_sha": os.environ.get("GITHUB_SHA"),
+        "max_checks": max_checked,
+        "rotation": {"algorithm": "run_number_offset", "update_count": update_count,
+                     "updates_offset": update_offset,
+                     "updates_inventory_size": len(pending_updates),
+                     "new_count": new_count, "new_offset": new_offset,
+                     "new_inventory_size": len(pending_new)},
+        "eligible_inventory": {
+            "updates": [p["number"] for p in pending_updates],
+            "new": [p["number"] for p in pending_new],
+        },
+        "selected": [],
+    }
+    update_positions = {p["number"]: i for i, p in enumerate(pending_updates)}
+    new_positions = {p["number"]: i for i, p in enumerate(pending_new)}
+    write_manifest(manifest)
+    for pr in selected:
+        seen += 1
+        mirror_before = local_by_upstream.get(pr["number"])
+        before_checkpoint = checkpoint_from_body((mirror_before or {}).get("body"))
+        event = {
+            "upstream_pr": pr["number"],
+            "finecode_pr": (mirror_before or {}).get("number"),
+            "selection_group": "updates" if pr["number"] in update_positions else "new",
+            "inventory_position": (update_positions if pr["number"] in update_positions else new_positions).get(pr["number"]),
+            "upstream_head_before": before_checkpoint["source_sha"] if before_checkpoint else None,
+            "upstream_head_selected": (pr.get("head") or {}).get("sha"),
+            "finecode_head_before": ((mirror_before or {}).get("head") or {}).get("sha"),
+            "checkpoint_before": before_checkpoint,
+        }
+        try:
+            LAST_IMPORT_DECISION.clear()
+            result = import_one(pr)
+            event["result"] = result
+            event["reason"] = LAST_IMPORT_DECISION.get("reason", f"import_one returned {result}")
+            event["classification"] = classify_decision(result, event["reason"])
+            if result == "created":
+                created += 1
+            elif result == "review_only_created":
+                review_only_created += 1
+            elif result == "review_only_updated":
+                review_only_updated += 1
+            elif result == "updated":
+                code_updated += 1
+                print(f"Synced upstream #{pr['number']}", flush=True)
+            elif result == "rebase_equivalent":
+                rebase_equivalent += 1
+            elif result == "conflict":
+                conflicts += 1
+        except urllib.error.HTTPError as exc:
+            event["result"] = "api_error"
+            event["classification"] = "FAILED"
+            event["reason"] = f"HTTP {exc.code}"
+            failures += 1
+            detail = exc.read().decode(errors="replace")[:800]
+            print(f"API ERROR upstream #{pr['number']}: HTTP {exc.code}: {detail}", flush=True)
+            git("reset", "--hard", f"origin/{BASE}", ok=False)
+            if exc.code in (403, 429):
+                blocked = True
+        except RuntimeError as exc:
+            event["result"] = "runtime_error"
+            event["classification"] = "FAILED"
+            event["reason"] = str(exc)
+            failures += 1
+            print(f"FAILED upstream #{pr['number']}: {exc}", flush=True)
+            git("reset", "--hard", f"origin/{BASE}", ok=False)
+        capture_after(event, pr["number"])
+        manifest["selected"].append(event)
+        write_manifest(manifest)
+        if blocked:
+            break
+        if created + review_only_created >= MAX_NEW:
+            break
+    processed = {item["upstream_pr"] for item in manifest["selected"]}
+    manifest["not_processed_after_limit"] = [p["number"] for p in selected if p["number"] not in processed]
+    manifest["summary"] = {"reviewed": seen, "created": created, "review_only_created": review_only_created,
+                           "review_only_updated": review_only_updated, "code_updated": code_updated,
+                           "rebase_equivalent": rebase_equivalent, "conflicts": conflicts,
+                           "failures": failures, "blocked": blocked}
+    write_manifest(manifest)
+    print(f"Reviewed {seen}; created {created} code PRs; review-only created {review_only_created}; review-only updated {review_only_updated}; code updated {code_updated}; rebase equivalent {rebase_equivalent}; conflicts {conflicts}; failures {failures}; blocked {blocked}", flush=True)
+    if failures or blocked:
+        raise SystemExit("Upstream synchronization encountered operational failures; review logs.")
+
+
+
+if __name__ == "__main__":
+    main()
