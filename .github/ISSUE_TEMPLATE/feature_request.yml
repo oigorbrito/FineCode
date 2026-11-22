@@ -1,0 +1,40 @@
+name: "Proposta de Funcionalidade / Mudança"
+description: "Propor uma nova capacidade ou melhoria técnica com critérios mensuráveis."
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Toda proposta de funcionalidade deve definir critérios claros e verificáveis de aceitação.
+  - type: textarea
+    id: problem
+    attributes:
+      label: "Problema ou Caso de Uso"
+      description: "Qual problema essa melhoria resolve ou qual capacidade adiciona?"
+    validations:
+      required: true
+  - type: textarea
+    id: solution
+    attributes:
+      label: "Solução Proposta"
+      description: "Descrição técnica da abordagem sugerida."
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance_criteria
+    attributes:
+      label: "Critérios de Aceitação Verificáveis"
+      description: "Como saberemos com evidência que a tarefa está concluída e correta?"
+      placeholder: |
+        - [ ] Suíte de testes unitários executa e passa 100%.
+        - [ ] Comando de verificação do harness não introduz novos GAPs.
+        - [ ] Benchmark ou telemetria confirma ausência de regressões.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: "Alternativas Consideradas"
+      description: "Outras soluções avaliadas e motivos de descarte."
+    validations:
+      required: false

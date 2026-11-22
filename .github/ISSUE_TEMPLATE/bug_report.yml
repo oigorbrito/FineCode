@@ -1,0 +1,50 @@
+name: "Relato de Defeito (Bug Report)"
+description: "Relatar um defeito acompanhado de evidência observável e reprodutível."
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **Regra de Evidência:** *IMPLEMENTED != EXECUTED, EXECUTED != VERIFIED*.
+        Descreva o defeito com evidências concretas (logs, comandos executados, saídas do terminal).
+  - type: textarea
+    id: description
+    attributes:
+      label: "Descrição do Problema"
+      description: "Uma explicação clara e concisa do comportamento anômalo observado."
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: "Passos para Reproduzir"
+      description: "Passo a passo exato com comandos ou chamadas executadas."
+      placeholder: |
+        1. Executar comando '...'
+        2. Enviar payload '...'
+        3. Observar erro '...'
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: "Evidência Observada (Logs / Saídas)"
+      description: "Cole logs do terminal, stack traces ou saídas de harness."
+      render: shell
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: "Comportamento Esperado"
+      description: "O que deveria ter acontecido segundo as especificações do sistema."
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: "Ambiente e Versões"
+      description: "SO, versão do runtime (Python, .NET, Node), branch ou commit SHA."
+      placeholder: "Windows 11, Python 3.12, commit abc1234"
+    validations:
+      required: false
