@@ -67,7 +67,7 @@ Use [`models.json`](configuration.md#agent-directory) quando um endpoint oferece
 
 A chave fictícia disponibiliza o modelo para o FineCode; o Ollama a ignora. Para um endpoint que exige autenticação, `apiKey` e os valores dos cabeçalhos podem usar interpolação de variáveis de ambiente com `$NAME` ou `${NAME}`, um valor literal ou um comando iniciado por `!`. Os comandos em `models.json` são executados a cada solicitação e não são armazenados em cache pelo FineCode.
 
-Ao abrir `/model`, o arquivo é recarregado. Uma entrada em `models` adiciona ou substitui um modelo com o mesmo ID naquele provedor. Use `modelOverrides` para alterar metadados de um modelo integrado ou fornecido por uma extensão sem substituir a lista de modelos do provedor. IDs desconhecidos em `modelOverrides` são ignorados.
+Ao abrir `/model`, o arquivo é recarregado. Uma entrada em `models` adiciona ou substitui um modelo com o mesmo ID naquele provedor. Use `modelOverrides` para alterar metadados de um modelo integrado ou fornecido por uma extensão sem substituir a lista de modelos do provedor. IDs desconhecidos em `modelOverrides` são ignorados. O guia de [Configuração de Modelos](models-configuration.md) lista todos os campos aceitos em detalhes.
 
 ### Descreva a entrada de modelos e o cache
 
