@@ -8,7 +8,10 @@ export default mergeConfig(
 			include: ["test/**/*.test.ts"],
 		},
 		resolve: {
-			alias: [{ find: /^finecode$/, replacement: workspaceSourcePaths.codingAgentIndex }],
+			alias: [
+				{ find: /^@earendil-works\/pi-coding-agent$/, replacement: workspaceSourcePaths.codingAgentIndex },
+				{ find: /^finecode$/, replacement: workspaceSourcePaths.codingAgentIndex },
+			],
 		},
 	}),
 );

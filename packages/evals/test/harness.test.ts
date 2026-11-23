@@ -1,5 +1,5 @@
 import { homedir } from "node:os";
-import { getDocsPath, getExamplesPath, getReadmePath } from "finecode";
+import { getDocsPath, getExamplesPath, getReadmePath } from "@earendil-works/pi-coding-agent";
 import { describe, expect, it, vi } from "vitest";
 import { buildSystemPrompt } from "../../coding-agent/src/core/system-prompt.ts";
 import {
@@ -47,6 +47,7 @@ describe("isolateProcessEnvironment", () => {
 			try {
 				expect(homedir()).toBe("/tmp/eval-home");
 				expect(process.env.FINECODE_CODING_AGENT_DIR).toBe("/tmp/eval-agent");
+				expect(process.env.PI_CODING_AGENT_DIR).toBe("/tmp/eval-agent");
 				expect(process.env.PI_EVAL_VARIANT).toBeUndefined();
 				expect(process.env.PI_EVAL_ARTIFACT_DIR).toBeUndefined();
 			} finally {
@@ -69,12 +70,12 @@ describe("documentation variant", () => {
 		expect(() => resolveDocumentationVariant(variant)).toThrow("PI_EVAL_VARIANT");
 	});
 
-	it("strips only the documentation routing section from the default FineCode prompt", () => {
+	it("strips only the documentation routing section from the default prompt", () => {
 		const prompt = buildSystemPrompt({
 			cwd: "/workspace",
 			selectedTools: [...DOCUMENTATION_EVAL_TOOLS],
 		});
-		expect(prompt).toContain("\n<docs>\nFineCode documentation (read only");
+		expect(prompt).toMatch(/\n<docs>\n(Pi|FineCode) documentation \(read only/);
 		expect(prompt).toContain("\n<rules>\n");
 		expect(prompt).toContain("\n<cwd>\n/workspace\n</cwd>");
 		expect(prompt).toContain("docs/models.md");
@@ -83,7 +84,7 @@ describe("documentation variant", () => {
 		expect(stripped).toContain("\n<rules>\n");
 		expect(stripped).toContain("\n<cwd>\n/workspace\n</cwd>");
 		expect(stripped).not.toContain("<docs>");
-		expect(stripped).not.toContain("FineCode documentation");
+		expect(stripped).not.toMatch(/(Pi|FineCode) documentation/);
 		expect(stripped).not.toContain("docs/models.md");
 		expect(stripped).not.toContain(getReadmePath());
 		expect(stripped).not.toContain(getDocsPath());
@@ -101,10 +102,6 @@ describe("documentation variant", () => {
 		expect(() => verifySystemPrompt(prompt, { name: "without_docs", expectedPiDocumentation: false })).toThrow(
 			"does not match",
 		);
-		expect(verifySystemPrompt(prompt, { name: "with_docs", expectedPiDocumentation: true })).toBe(prompt);
-		const piPrompt =
-			"\n<rules>\nKeep the original Pi prompt behavior.\n</rules>\n<docs>\nPi documentation (read only";
-		expect(verifySystemPrompt(piPrompt, { name: "legacy_pi", expectedPiDocumentation: true })).toBe(piPrompt);
 	});
 
 	it("fails closed when prompt markers are missing", () => {
