@@ -1,7 +1,7 @@
 /**
  * Gondolin Tool Routing Example
  *
- * Runs FineCode's built-in tools inside a local Gondolin micro-VM. The host working
+ * Runs pi's built-in tools inside a local Gondolin micro-VM. The host working
  * directory is mounted at /workspace in the guest. File changes under
  * /workspace write through to the host; other guest filesystem changes are
  * isolated to the VM.
@@ -12,7 +12,7 @@
  *
  * Usage:
  *   cd /path/to/project
- *   finecode -e /path/to/finecode/packages/coding-agent/examples/extensions/gondolin
+ *   pi -e /path/to/pi/packages/coding-agent/examples/extensions/gondolin
  *
  * Requirements:
  *   - Node.js >= 23.6.0 for @earendil-works/gondolin
@@ -21,7 +21,7 @@
 
 import path from "node:path";
 import { RealFSProvider, VM } from "@earendil-works/gondolin";
-import type { ExtensionAPI, ExtensionContext } from "finecode";
+import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import {
 	type BashOperations,
 	createBashTool,
@@ -42,7 +42,7 @@ import {
 	truncateHead,
 	truncateLine,
 	type WriteOperations,
-} from "finecode";
+} from "@earendil-works/pi-coding-agent";
 
 const GUEST_WORKSPACE = "/workspace";
 const DEFAULT_GREP_LIMIT = 100;
@@ -169,14 +169,11 @@ async function walkGuestFiles(
 	return walkDirectory(root, "");
 }
 
+// Like the built-in find and grep: a pattern with '/' is relative to the search root, one without
+// '/' matches file names at any depth.
 function matchesToolGlob(relativePath: string, pattern: string): boolean {
-	const normalizedPattern = toPosix(pattern);
-	if (normalizedPattern.includes("/")) {
-		return (
-			path.posix.matchesGlob(relativePath, normalizedPattern) ||
-			path.posix.matchesGlob(relativePath, `**/${normalizedPattern}`)
-		);
-	}
+	const normalizedPattern = toPosix(pattern).replace(/^(?:\.\/)+/, "");
+	if (normalizedPattern.includes("/")) return path.posix.matchesGlob(relativePath, normalizedPattern);
 	return path.posix.matchesGlob(path.posix.basename(relativePath), normalizedPattern);
 }
 
@@ -379,7 +376,7 @@ export default function (pi: ExtensionAPI) {
 	async function startVm(ctx?: ExtensionContext): Promise<VM> {
 		ctx?.ui.setStatus("gondolin", ctx.ui.theme.fg("accent", `Gondolin: starting ${GUEST_WORKSPACE}`));
 		const created = await VM.create({
-			sessionLabel: `finecode ${path.basename(localCwd)}`,
+			sessionLabel: `pi ${path.basename(localCwd)}`,
 			vfs: {
 				mounts: {
 					[GUEST_WORKSPACE]: new RealFSProvider(localCwd),

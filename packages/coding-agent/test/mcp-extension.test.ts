@@ -5,6 +5,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { renderToolOutputType } from "@earendil-works/pi-codemode/declarations";
 import {
+	createMcpResultSchema,
+	createMcpToolName,
 	type JsonRpcMessage,
 	LATEST_PROTOCOL_VERSION,
 	McpAuthRequiredError,
@@ -14,8 +16,8 @@ import {
 import { createInMemoryTransportPair, type InMemoryTransport } from "@earendil-works/pi-mcp/testing";
 import { afterEach, describe, expect, it } from "vitest";
 import { InMemoryAuthStorageBackend } from "../src/core/auth-storage.ts";
-import { truncateMiddle } from "../src/core/tools/truncate.ts";
 import {
+	addMcpServerConfig,
 	getMcpToolExposure,
 	loadMcpConfig,
 	type McpServerEntry,
@@ -28,7 +30,7 @@ import {
 	McpServerConnection,
 	McpServerLog,
 } from "../src/extensions/mcp/runtime.ts";
-import { convertMcpResult, createMcpResultSchema, createMcpToolName } from "../src/extensions/mcp/tools.ts";
+import { convertMcpResult } from "../src/extensions/mcp/tools.ts";
 
 // Config values are resolved at connect time, so the literal reference must survive loading.
 // biome-ignore lint/suspicious/noTemplateCurlyInString: literal config value reference
@@ -115,6 +117,28 @@ describe("MCP config", () => {
 		expect(JSON.parse(readFileSync(project, "utf8")).mcpServers.tools).toEqual({ enabled: true });
 	});
 
+	// Regression: #11191.
+	it("reads and edits mcp.json files that start with a UTF-8 BOM", () => {
+		const paths = setup({}, {});
+		const global = join(paths.agentDir, "mcp.json");
+		const project = join(paths.cwd, ".pi", "mcp.json");
+		writeFileSync(global, '\uFEFF{"mcpServers":{"demo":{"command":"echo","enabled":false}}}\n');
+		writeFileSync(project, '\uFEFF{"mcpServers":{"local":{"command":"local-cmd"}}}\n');
+
+		const loaded = loadMcpConfig({ ...paths, projectTrusted: true });
+		expect(loaded.errors).toEqual([]);
+		expect(loaded.servers.map((server) => [server.name, server.scope])).toEqual([
+			["demo", "global"],
+			["local", "project"],
+		]);
+
+		expect(addMcpServerConfig(global, "other", { command: "other-cmd" })).toBe(false);
+		expect(JSON.parse(readFileSync(global, "utf8")).mcpServers).toEqual({
+			demo: { command: "echo", enabled: false },
+			other: { command: "other-cmd" },
+		});
+	});
+
 	// Regression: #10239.
 	it("rejects server names that differ only in - and _", () => {
 		const paths = setup({ mcpServers: { "work-files": { command: "a" }, work_files: { command: "b" } } }, {});
@@ -185,7 +209,8 @@ describe("MCP config", () => {
 						url: "https://a.example/mcp",
 						oauth: { clientRegistration: "cimd", callbackUrl: "http://localhost/callback" },
 					},
-					badRegistration: { url: "https://a.example/mcp", oauth: { clientRegistration: "auto" } },
+					auto: { url: "https://a.example/mcp", oauth: { clientRegistration: "auto", clientName: "x" } },
+					badRegistration: { url: "https://a.example/mcp", oauth: { clientRegistration: "oidc" } },
 					cimdClient: { url: "https://a.example/mcp", oauth: { clientRegistration: "cimd", clientId: "x" } },
 					cimdPath: {
 						url: "https://a.example/mcp",
@@ -196,14 +221,14 @@ describe("MCP config", () => {
 			{},
 		);
 		const { servers, errors } = loadMcpConfig({ ...paths, projectTrusted: false });
-		expect(servers.map((server) => server.name)).toEqual(["ok", "ipv6", "same", "named", "metadata", "cimd"]);
+		expect(servers.map((server) => server.name)).toEqual(["ok", "ipv6", "same", "named", "metadata", "cimd", "auto"]);
 		expect(errors).toEqual([
 			expect.stringContaining('server "remote": oauth.callbackUrl must be an http URI on localhost'),
 			expect.stringContaining('server "both": oauth.callbackUrl and oauth.callbackPort name different ports'),
 			expect.stringContaining('server "scope": oauth.scope must be a string'),
 			expect.stringContaining('server "unnamed": oauth.clientName must be a non-empty string'),
 			expect.stringContaining('server "plainMetadata": oauth.authServerMetadataUrl must be an https URL'),
-			expect.stringContaining('server "badRegistration": oauth.clientRegistration must be "dcr" or "cimd"'),
+			expect.stringContaining('server "badRegistration": oauth.clientRegistration must be "auto", "dcr", or "cimd"'),
 			expect.stringContaining('server "cimdClient": oauth.clientRegistration "cimd" cannot be combined'),
 			expect.stringContaining('server "cimdPath": oauth.clientRegistration "cimd" requires oauth.callbackUrl'),
 		]);
@@ -424,18 +449,6 @@ describe("MCP tools", () => {
 		await convertMcpResult("docs", "small", { content: [{ type: "text", text: "ok" }] }, { saveOutput });
 		expect(saved).toHaveLength(1);
 	});
-
-	it("cuts multi-byte text only at character boundaries", () => {
-		const text = `${"é".repeat(20_000)}end`;
-		const result = truncateMiddle(text, 1001);
-		expect(result.truncated).toBe(true);
-		expect(result.content).not.toContain("\uFFFD");
-		expect(result.content.endsWith("end")).toBe(true);
-		const [head, tail] = result.content.split(/…\d+ chars truncated…/);
-		expect(Buffer.byteLength(head)).toBeLessThanOrEqual(500);
-		expect(Buffer.byteLength(tail)).toBeLessThanOrEqual(501);
-		expect(Array.from(head).length + Array.from(tail).length + result.removedChars).toBe(Array.from(text).length);
-	});
 });
 
 describe("MCP connections", () => {
@@ -443,20 +456,13 @@ describe("MCP connections", () => {
 
 	/** In-memory server that answers initialize, tools/list, and tools/call with "ok". */
 	function createTransport(
-		options: {
-			expireFirstCall?: boolean;
-			methods?: string[];
-			noTools?: boolean;
-			onInitialize?: (message: JsonRpcMessage) => void;
-			resources?: boolean;
-		} = {},
+		options: { expireFirstCall?: boolean; methods?: string[]; noTools?: boolean; resources?: boolean } = {},
 	) {
 		const pair = createInMemoryTransportPair();
 		servers.push(pair.server);
 		pair.server.onMessage((message) => {
 			if (!("id" in message) || !("method" in message)) return;
 			options.methods?.push(message.method);
-			if (message.method === "initialize") options.onInitialize?.(message);
 			const response: JsonRpcMessage =
 				message.method === "initialize"
 					? {
@@ -567,17 +573,15 @@ for await (const line of createInterface({ input: process.stdin })) {
 		},
 	);
 
-	it("identifies FineCode to MCP servers and handles servers without tools", async () => {
+	it("connects to servers without the tools capability without listing tools", async () => {
 		const methods: string[] = [];
-		const initializeMessages: JsonRpcMessage[] = [];
 		const { connection } = connect({ name: "fake", config: { command: "unused" }, source: "test" }, [
-			() => createTransport({ noTools: true, methods, onInitialize: (message) => initializeMessages.push(message) }),
+			() => createTransport({ noTools: true, methods }),
 		]);
 		await connection.getClient();
 		expect(connection.state).toBe("connected");
 		expect(connection.tools).toEqual([]);
 		expect(methods).toEqual(["initialize"]);
-		expect(initializeMessages[0]).toMatchObject({ params: { clientInfo: { name: "finecode" } } });
 		await connection.close();
 	});
 

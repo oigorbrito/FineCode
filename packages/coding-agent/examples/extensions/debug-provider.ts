@@ -6,8 +6,8 @@
  * as expandable custom entries.
  */
 
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Box, Text } from "@earendil-works/pi-tui";
-import { type ExtensionAPI, keyHint } from "finecode";
 
 const ENTRY_TYPE = "debug-provider-events";
 const STATUS_KEY = "debug-provider";
@@ -24,7 +24,7 @@ export default function (pi: ExtensionAPI) {
 	let activeEvents: unknown[] | undefined;
 	let completedEntry: ProviderDebugEntry | undefined;
 
-	pi.registerEntryRenderer<ProviderDebugEntry>(ENTRY_TYPE, (entry, { expanded }, theme) => {
+	pi.registerEntryRenderer<ProviderDebugEntry>(ENTRY_TYPE, (entry, { expanded, keyHint }, theme) => {
 		const data = entry.data;
 		if (!data) return new Text(theme.fg("warning", "[provider debug] Missing event data"), 0, 0);
 

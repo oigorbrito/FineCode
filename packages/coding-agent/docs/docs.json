@@ -12,7 +12,7 @@
           "path": "quickstart.md"
         },
         {
-          "title": "How FineCode Works",
+          "title": "How Pi Works",
           "path": "how-pi-works.md"
         }
       ]
@@ -21,10 +21,10 @@
       "title": "Guides",
       "items": [
         {
-          "title": "Run FineCode",
+          "title": "Run Pi",
           "items": [
             {
-              "title": "Use FineCode in the Terminal",
+              "title": "Use Pi in the Terminal",
               "path": "usage.md"
             },
             {
@@ -36,11 +36,11 @@
               "path": "sessions.md"
             },
             {
-              "title": "Run FineCode Safely",
+              "title": "Run Pi Safely",
               "path": "security.md"
             },
             {
-              "title": "Isolate FineCode",
+              "title": "Isolate Pi",
               "path": "containerization.md"
             },
             {
@@ -60,24 +60,24 @@
               "path": "shell-aliases.md"
             },
             {
-              "title": "Run FineCode in tmux",
+              "title": "Run Pi in tmux",
               "path": "tmux.md"
             },
             {
-              "title": "Run FineCode on Windows",
+              "title": "Run Pi on Windows",
               "path": "windows.md"
             },
             {
-              "title": "Run FineCode on Android",
+              "title": "Run Pi on Android",
               "path": "termux.md"
             }
           ]
         },
         {
-          "title": "Customize FineCode",
+          "title": "Customize Pi",
           "items": [
             {
-              "title": "Configure FineCode",
+              "title": "Configure Pi",
               "path": "configuration.md"
             },
             {
@@ -93,7 +93,7 @@
               "path": "themes.md"
             },
             {
-              "title": "Use FineCode Packages",
+              "title": "Use Pi Packages",
               "path": "packages.md"
             },
             {
@@ -103,7 +103,7 @@
           ]
         },
         {
-          "title": "Build on FineCode",
+          "title": "Build on Pi",
           "items": [
             {
               "title": "Build Extensions",
@@ -196,52 +196,6 @@
           "title": "Message Types",
           "path": "message-types.md"
         }
-      ]
-    },
-    {
-      "title": "Português (Brasil)",
-      "items": [
-        { "title": "Visão geral", "path": "pt-BR/index.md" },
-        { "title": "Como o FineCode funciona", "path": "pt-BR/how-pi-works.md" },
-        { "title": "Guia rápido", "path": "pt-BR/quickstart.md" },
-        { "title": "Uso no terminal", "path": "pt-BR/usage.md" },
-        { "title": "Configuração", "path": "pt-BR/configuration.md" },
-        { "title": "Segurança", "path": "pt-BR/security.md" },
-        { "title": "Modelos", "path": "pt-BR/models.md" },
-        { "title": "Modelos locais com llama.cpp", "path": "pt-BR/llama-cpp.md" },
-        { "title": "FineCode com NVIDIA RTX", "path": "pt-BR/nvidia-rtx-llama-cpp.md" },
-        { "title": "Provedores", "path": "pt-BR/providers.md" },
-        { "title": "Servidores MCP", "path": "pt-BR/mcp.md" },
-        { "title": "Contêineres e isolamento", "path": "pt-BR/containerization.md" },
-        { "title": "Windows", "path": "pt-BR/windows.md" },
-        { "title": "Android com Termux", "path": "pt-BR/termux.md" },
-        { "title": "tmux", "path": "pt-BR/tmux.md" },
-        { "title": "Sessões e contexto", "path": "pt-BR/sessions.md" },
-        { "title": "Configuração do terminal", "path": "pt-BR/terminal-setup.md" },
-        { "title": "Comandos de shell", "path": "pt-BR/shell-aliases.md" },
-        { "title": "Atalhos de teclado", "path": "pt-BR/keybindings.md" },
-        { "title": "Temas", "path": "pt-BR/themes.md" },
-        { "title": "Variáveis de ambiente", "path": "pt-BR/environment-variables.md" },
-        { "title": "Configurações", "path": "pt-BR/settings.md" },
-        { "title": "Provedores personalizados", "path": "pt-BR/custom-provider.md" },
-        { "title": "CLI", "path": "pt-BR/cli.md" },
-        { "title": "Codemode", "path": "pt-BR/codemode.md" },
-        { "title": "Extensões", "path": "pt-BR/extensions.md" },
-        { "title": "Interface de terminal", "path": "pt-BR/tui.md" },
-        { "title": "Modelos virtuais", "path": "pt-BR/virtual-models.md" },
-        { "title": "Skills", "path": "pt-BR/skills.md" },
-        { "title": "Modelos de prompt", "path": "pt-BR/prompt-templates.md" },
-        { "title": "Pacotes FineCode", "path": "pt-BR/packages.md" },
-        { "title": "Integração com a CLI", "path": "pt-BR/cli-integration.md" },
-        { "title": "SDK", "path": "pt-BR/sdk.md" },
-        { "title": "Modo RPC", "path": "pt-BR/rpc.md" },
-        { "title": "Comandos RPC", "path": "pt-BR/rpc-commands.md" },
-        { "title": "Fluxo de eventos JSON", "path": "pt-BR/json.md" },
-        { "title": "Tipos de mensagem", "path": "pt-BR/message-types.md" },
-        { "title": "Formato dos arquivos de sessão", "path": "pt-BR/session-format.md" },
-        { "title": "Compactação e resumos de ramificação", "path": "pt-BR/compaction.md" },
-        { "title": "Interface RPC de extensões", "path": "pt-BR/rpc-extension-ui.md" },
-        { "title": "Comandos de barra", "path": "pt-BR/slash-commands.md" }
       ]
     }
   ],

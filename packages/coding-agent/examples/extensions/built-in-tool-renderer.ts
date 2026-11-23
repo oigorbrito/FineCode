@@ -22,17 +22,17 @@
  *   toggled the tool output open (via ctrl+e or clicking)
  *
  * Usage:
- *   finecode -e ./built-in-tool-renderer.ts
+ *   pi -e ./built-in-tool-renderer.ts
  */
 
-import { Text } from "@earendil-works/pi-tui";
-import type { BashToolDetails, EditToolDetails, ExtensionAPI, ReadToolDetails } from "finecode";
+import type { BashToolDetails, EditToolDetails, ExtensionAPI, ReadToolDetails } from "@earendil-works/pi-coding-agent";
 import {
 	createBashToolDefinition,
 	createEditToolDefinition,
 	createReadToolDefinition,
 	createWriteToolDefinition,
-} from "finecode";
+} from "@earendil-works/pi-coding-agent";
+import { Text } from "@earendil-works/pi-tui";
 
 export default function (pi: ExtensionAPI) {
 	const cwd = process.cwd();

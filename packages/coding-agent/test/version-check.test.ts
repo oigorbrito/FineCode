@@ -2,9 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
 	checkForNewPiVersion,
 	comparePackageVersions,
-	FINECODE_RUNTIME_RELEASE_MARKER,
 	formatVersionCheckError,
-	getLatestPackageRelease,
 	getLatestPiRelease,
 	getLatestPiVersion,
 	isNewerPackageVersion,
@@ -37,55 +35,11 @@ describe("version checks", () => {
 	});
 
 	it("returns only newer versions", async () => {
-		const fetchMock = vi.fn(async () =>
-			Response.json({
-				name: "finecode",
-				version: "1.2.3",
-				finecodeRuntimeRelease: FINECODE_RUNTIME_RELEASE_MARKER,
-			}),
-		);
+		const fetchMock = vi.fn(async () => Response.json({ version: "1.2.3" }));
 		vi.stubGlobal("fetch", fetchMock);
 
 		await expect(checkForNewPiVersion("1.2.3")).resolves.toBeUndefined();
 		await expect(checkForNewPiVersion("1.2.2")).resolves.toEqual({ version: "1.2.3" });
-	});
-
-	it("checks the FineCode npm package registry for its latest release", async () => {
-		const fetchMock = vi.fn(async () =>
-			Response.json({
-				name: "finecode",
-				version: "1.2.4",
-				finecodeRuntimeRelease: FINECODE_RUNTIME_RELEASE_MARKER,
-			}),
-		);
-		vi.stubGlobal("fetch", fetchMock);
-
-		await expect(getLatestPackageRelease("1.2.3")).resolves.toEqual({ version: "1.2.4" });
-		expect(fetchMock).toHaveBeenCalledWith(
-			"https://registry.npmjs.org/finecode/latest",
-			expect.objectContaining({ headers: expect.objectContaining({ accept: "application/json" }) }),
-		);
-	});
-
-	it("rejects FineCode bootstrap packages and invalid release metadata", async () => {
-		const fetchMock = vi
-			.fn()
-			.mockResolvedValueOnce(Response.json({ name: "finecode", version: "0.0.3" }))
-			.mockResolvedValueOnce(
-				Response.json({
-					name: "finecode",
-					version: "not-a-version",
-					finecodeRuntimeRelease: FINECODE_RUNTIME_RELEASE_MARKER,
-				}),
-			)
-			.mockResolvedValueOnce(Response.json(null))
-			.mockResolvedValueOnce(new Response(null, { status: 404 }));
-		vi.stubGlobal("fetch", fetchMock);
-
-		await expect(getLatestPackageRelease("0.0.3")).resolves.toBeUndefined();
-		await expect(getLatestPackageRelease("0.0.3")).resolves.toBeUndefined();
-		await expect(getLatestPackageRelease("0.0.3")).resolves.toBeUndefined();
-		await expect(getLatestPackageRelease("0.0.3")).resolves.toBeUndefined();
 	});
 
 	it("uses the pi.dev version check api with a pi user agent", async () => {

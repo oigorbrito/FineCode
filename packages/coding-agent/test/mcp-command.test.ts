@@ -2,7 +2,9 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "no
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { ProjectTrustStore } from "../src/core/trust-manager.ts";
 import { runMcpCommand } from "../src/extensions/mcp/cli.ts";
+import { startOAuthMcpServer } from "./suite/mcp-oauth-server.ts";
 
 const FIXTURE = resolve(import.meta.dirname, "../../mcp/test/fixtures/stdio-server.mjs");
 
@@ -13,7 +15,12 @@ describe("pi mcp", () => {
 		while (dirs.length > 0) rmSync(dirs.pop() ?? "", { recursive: true, force: true });
 	});
 
-	async function run(args: string[], servers: Record<string, unknown> | undefined, dir?: string) {
+	async function run(
+		args: string[],
+		servers: Record<string, unknown> | undefined,
+		dir?: string,
+		providerToken?: (provider: string) => Promise<string | undefined>,
+	) {
 		const agentDir = dir ?? mkdtempSync(join(tmpdir(), "pi-mcp-command-"));
 		if (!dir) dirs.push(agentDir);
 		if (servers) writeFileSync(join(agentDir, "mcp.json"), JSON.stringify({ mcpServers: servers }));
@@ -21,6 +28,7 @@ describe("pi mcp", () => {
 		const exitCode = await runMcpCommand(args, {
 			cwd: agentDir,
 			agentDir,
+			providerToken,
 			log: (line) => output.push(line),
 			error: (line) => output.push(line),
 		});
@@ -41,9 +49,8 @@ describe("pi mcp", () => {
 		expect(exitCode).toBe(1);
 		expect(output).toContain("fixture: connected, 1 tool (codemode, global)\n");
 		expect(output).toContain("  tools: echo");
-		expect(output).toContain("broken: failed (codemode, global)\n  pi-test-missing-mcp-server");
 		expect(output).toContain(
-			process.platform === "win32" ? "MCP connection closed" : "spawn pi-test-missing-mcp-server ENOENT",
+			"broken: failed (codemode, global)\n  pi-test-missing-mcp-server\n  spawn pi-test-missing-mcp-server ENOENT",
 		);
 		expect(output).toContain("parked: disabled (codemode, global)");
 		expect(output).toContain("config error: ");
@@ -73,6 +80,60 @@ describe("pi mcp", () => {
 			output: 'MCP server "fixture" does not use OAuth. Only HTTP servers without an Authorization header do.',
 		});
 		expect((await run(["frobnicate"], servers)).exitCode).toBe(1);
+	});
+
+	it("suggests a configured server for a mistyped name", async () => {
+		expect((await run(["login", "fixtures"], servers)).output).toBe(
+			'No MCP server named "fixtures". Did you mean "fixture"? Configured: fixture, broken, parked.',
+		);
+	});
+
+	it("sends the token of the provider named by auth.provider", async () => {
+		const server = await startOAuthMcpServer();
+		try {
+			const radius = { radius: { url: server.url, auth: { provider: "radius" } } };
+			const token = server.issueAccessToken();
+			const requested: string[] = [];
+			const signedIn = await run(["list"], radius, undefined, async (provider) => {
+				requested.push(provider);
+				return token;
+			});
+			expect(signedIn).toMatchObject({ exitCode: 0, output: expect.stringContaining("radius: connected, 1 tool") });
+			expect(requested).toContain("radius");
+
+			// Without the provider's credentials the hint names the provider's /login, not `pi mcp login`.
+			const signedOut = await run(["list"], radius, undefined, async () => undefined);
+			expect(signedOut.exitCode).toBe(1);
+			expect(signedOut.output).toContain("radius: needs sign-in (codemode, global)");
+			expect(signedOut.output).toContain("  sign in with: /login radius in pi");
+
+			for (const command of ["login", "logout"]) {
+				expect(await run([command, "radius"], radius)).toMatchObject({
+					exitCode: 1,
+					output: `MCP server "radius" uses the credentials of provider "radius". Run "pi auth ${command} radius".`,
+				});
+			}
+		} finally {
+			await server.close();
+		}
+	});
+
+	it("reports options as typed", async () => {
+		expect((await run(["list", "-l"], servers)).output).toContain("Unknown option -l.");
+	});
+
+	it("restricts login and logout to project servers with --local", async () => {
+		const { agentDir } = await run(["add", "-l", "local", "--", "node", "server.js"], servers);
+		new ProjectTrustStore(agentDir).set(agentDir, true);
+
+		expect(await run(["logout", "-l", "local"], undefined, agentDir)).toMatchObject({
+			exitCode: 1,
+			output: 'MCP server "local" does not use OAuth. Only HTTP servers without an Authorization header do.',
+		});
+		expect(await run(["login", "-l", "fixture"], undefined, agentDir)).toMatchObject({
+			exitCode: 1,
+			output: `MCP server "fixture" is defined in ${join(agentDir, "mcp.json")}, not in the project; omit --local.`,
+		});
 	});
 
 	it("adds stdio servers and passes options after the command through", async () => {
@@ -143,9 +204,18 @@ describe("pi mcp", () => {
 			undefined,
 			agentDir,
 		);
-		expect(oauth.output).toContain("If it requires sign-in: finecode mcp login sentry");
+		expect(oauth.output).toContain("If it requires sign-in: pi mcp login sentry");
 		expect(readConfig(join(agentDir, "mcp.json")).mcpServers).toMatchObject({
 			sentry: { url: "https://mcp.sentry.dev/mcp", oauth: { clientId: "pi", clientName: "Claude Code" } },
+		});
+
+		await run(
+			["add", "linear", "--url", "https://mcp.linear.app/mcp", "--oauth-client-registration", "dcr"],
+			undefined,
+			agentDir,
+		);
+		expect(readConfig(join(agentDir, "mcp.json")).mcpServers).toMatchObject({
+			linear: { url: "https://mcp.linear.app/mcp", oauth: { clientRegistration: "dcr" } },
 		});
 	});
 
@@ -159,6 +229,7 @@ describe("pi mcp", () => {
 			["add", "x", "--header", "A=1", "--", "cmd"],
 			["add", "x", "--env", "NOVALUE", "--", "cmd"],
 			["add", "x", "--exposure", "loud", "--", "cmd"],
+			["add", "x", "--url", "https://example.com", "--oauth-client-registration", "maybe"],
 		];
 		for (const args of cases) {
 			const result = await run(args, undefined);

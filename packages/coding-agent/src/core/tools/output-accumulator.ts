@@ -1,6 +1,5 @@
 import type { WriteStream } from "node:fs";
 import { open } from "node:fs/promises";
-import { APP_NAME } from "../../config.ts";
 import { createOutputFileStream } from "../../utils/output-files.ts";
 import { DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES, type TruncationResult, truncateTail } from "./truncate.ts";
 
@@ -59,7 +58,7 @@ export class OutputAccumulator {
 		this.maxLines = options.maxLines ?? DEFAULT_MAX_LINES;
 		this.maxBytes = options.maxBytes ?? DEFAULT_MAX_BYTES;
 		this.maxRollingBytes = Math.max(this.maxBytes * 2, 1);
-		this.tempFilePrefix = options.tempFilePrefix ?? `${APP_NAME}-output`;
+		this.tempFilePrefix = options.tempFilePrefix ?? "pi-output";
 	}
 
 	append(data: Buffer): void {
@@ -90,7 +89,11 @@ export class OutputAccumulator {
 	}
 
 	snapshot(options: { persistIfTruncated?: boolean } = {}): OutputSnapshot {
-		const tailTruncation = truncateTail(this.getSnapshotText(), {
+		// Clipping drops the partial first line of the retained tail. When the tail is only the end of
+		// one over-long line (plus blank lines), nothing is left, so show the end of that line instead.
+		const clippedText = this.getSnapshotText();
+		const snapshotText = clippedText.trim().length === 0 ? this.tailText : clippedText;
+		const tailTruncation = truncateTail(snapshotText, {
 			maxLines: this.maxLines,
 			maxBytes: this.maxBytes,
 		});

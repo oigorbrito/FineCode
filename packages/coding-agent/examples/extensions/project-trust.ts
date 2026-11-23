@@ -8,12 +8,12 @@
  *
  * Or:
  *
- *   finecode -e packages/coding-agent/examples/extensions/project-trust.ts
+ *   pi -e packages/coding-agent/examples/extensions/project-trust.ts
  *
  * Try it in a project containing .pi, AGENTS.md/CLAUDE.md, or .agents/skills.
  */
 
-import type { ExtensionAPI, ProjectTrustEventResult } from "finecode";
+import type { ExtensionAPI, ProjectTrustEventResult } from "@earendil-works/pi-coding-agent";
 
 export default function (pi: ExtensionAPI) {
 	let loadCount = 0;
