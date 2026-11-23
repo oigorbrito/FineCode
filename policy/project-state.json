@@ -7,9 +7,9 @@
   "maintainers_count": 1,
   "consistent_users": "unknown",
   "release": {
-    "made": false,
-    "version": null,
-    "evidence": null
+    "made": true,
+    "version": "0.0.3",
+    "evidence": "Git tags v0.0.1, v0.0.2, v0.0.3"
   },
   "production_deployed": false,
   "notes": "Record observable facts only. Product stage does not determine OSPS maturity.",

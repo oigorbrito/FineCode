@@ -27,7 +27,12 @@ class HarnessTests(unittest.TestCase):
         s = self.base_state()
         s["release"]["made"] = True
         fs = h.findings(s, ROOT)
-        self.assertTrue(any(x.control == "OSPS-DO-01.01" and x.status == h.GAP for x in fs))
+        self.assertTrue(any(x.control == "OSPS-DO-01.01" and x.status != h.NA for x in fs))
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            (tmp / "README.md").write_text("STATUS: NOT_RELEASED", encoding="utf-8")
+            fs_tmp = h.findings(s, tmp)
+            self.assertTrue(any(x.control == "OSPS-DO-01.01" and x.status == h.GAP for x in fs_tmp))
 
     def test_level_two_reassessment_is_signal_not_auto_promotion(self):
         s = self.base_state()
