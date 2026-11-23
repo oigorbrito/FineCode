@@ -13,5 +13,5 @@
   },
   "production_deployed": false,
   "notes": "Record observable facts only. Product stage does not determine OSPS maturity.",
-  "enforce_local_gaps": false
+  "enforce_local_gaps": true
 }
