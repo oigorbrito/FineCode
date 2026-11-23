@@ -106,4 +106,5 @@ pi-*.html
 out.html
 .pi/hf-sessions/
 .pi/hf-sessions-backup/
+upstream-import-manifest.json
 
