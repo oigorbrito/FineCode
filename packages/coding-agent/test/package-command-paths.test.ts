@@ -10,10 +10,11 @@ import {
 	writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { delimiter, join, sep } from "node:path";
+import { delimiter, join } from "node:path";
+import { ModelsError } from "@earendil-works/pi-ai";
 import lockfile from "proper-lockfile";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { APP_NAME, ENV_AGENT_DIR, PACKAGE_NAME, VERSION } from "../src/config.ts";
+import { ENV_AGENT_DIR, PACKAGE_NAME, VERSION } from "../src/config.ts";
 import { ModelRuntime } from "../src/core/model-runtime.ts";
 import { DefaultPackageManager, type ResolvedPaths } from "../src/core/package-manager.ts";
 import { InMemorySettingsStorage, SettingsManager } from "../src/core/settings-manager.ts";
@@ -22,11 +23,9 @@ import { main } from "../src/main.ts";
 import { ConfigSelectorComponent } from "../src/modes/interactive/components/config-selector.ts";
 import { initTheme } from "../src/modes/interactive/theme/theme.ts";
 import { handlePackageCommand } from "../src/package-manager-cli.ts";
-import { FINECODE_RUNTIME_RELEASE_MARKER } from "../src/utils/version-check.ts";
 import { allowNetwork } from "./test-network-env.ts";
 
 describe("package commands", () => {
-	const itForPiInstall = it.skipIf(PACKAGE_NAME === "finecode");
 	let tempDir: string;
 	let agentDir: string;
 	let projectDir: string;
@@ -46,7 +45,8 @@ describe("package commands", () => {
 	function prepareManagedInstall(
 		targetVersion: string,
 		npmExitCode = 0,
-	): { managedRoot: string; npmRecordPath: string; fakeNpmPath: string } {
+		stagedPiUsesNode = false,
+	): { managedRoot: string; npmRecordPath: string } {
 		const managedRoot = join(agentDir, "install");
 		const activeRelease = join(managedRoot, "releases", VERSION);
 		const selfPackageDir = join(activeRelease, "node_modules", ...PACKAGE_NAME.split("/"));
@@ -67,10 +67,6 @@ describe("package commands", () => {
 			`const fs = require("node:fs");
 const path = require("node:path");
 const args = process.argv.slice(2);
-if (args.includes("root")) {
-	console.log(path.dirname(process.env.PI_PACKAGE_DIR));
-	process.exit(0);
-}
 fs.writeFileSync(${JSON.stringify(npmRecordPath)}, JSON.stringify(args));
 if (${npmExitCode} !== 0) process.exit(${npmExitCode});
 const binDir = path.join(process.cwd(), "node_modules", ".bin");
@@ -80,7 +76,9 @@ fs.writeFileSync(
 	piPath,
 	process.platform === "win32"
 		? "@echo off\\r\\necho ${targetVersion}\\r\\n"
-		: "#!/bin/sh\\nprintf '%s\\n' ${targetVersion}\\n",
+		: ${stagedPiUsesNode}
+			? "#!/usr/bin/env node\\nconsole.log('${targetVersion}')\\n"
+			: "#!/bin/sh\\nprintf '%s\\n' ${targetVersion}\\n",
 );
 if (process.platform !== "win32") fs.chmodSync(piPath, 0o755);
 `,
@@ -98,7 +96,7 @@ if (process.platform !== "win32") fs.chmodSync(piPath, 0o755);
 		vi.stubEnv("PI_MANAGED_INSTALL_ROOT", managedRoot);
 		process.env.PI_PACKAGE_DIR = selfPackageDir;
 		process.env.PATH = `${binDir}${delimiter}${originalPath ?? ""}`;
-		return { managedRoot, npmRecordPath, fakeNpmPath };
+		return { managedRoot, npmRecordPath };
 	}
 
 	function mockManagedUpdate(targetVersion: string): void {
@@ -375,6 +373,54 @@ if (process.platform !== "win32") fs.chmodSync(piPath, 0o755);
 		}
 	});
 
+	/** Install `npm:fake-package` at `installedVersion` with an npm whose registry reports `registryVersion`. */
+	function prepareStaleNpmPackage(installedVersion: string, registryVersion: string): void {
+		const installedPath = join(agentDir, "npm", "node_modules", "fake-package");
+		mkdirSync(installedPath, { recursive: true });
+		writeFileSync(
+			join(installedPath, "package.json"),
+			JSON.stringify({ name: "fake-package", version: installedVersion }),
+		);
+		// `npm view` reports the newer version, but `npm install` succeeds without changing anything.
+		const fakeNpmPath = join(tempDir, "fake-stale-npm.cjs");
+		writeFileSync(
+			fakeNpmPath,
+			`if (process.argv.includes("view")) console.log(${JSON.stringify(JSON.stringify(registryVersion))});`,
+		);
+		writeFileSync(
+			join(agentDir, "settings.json"),
+			JSON.stringify({ packages: ["npm:fake-package"], npmCommand: [originalExecPath, fakeNpmPath] }),
+		);
+	}
+
+	it("does not report packages as up to date when npm left an older version installed", async () => {
+		prepareStaleNpmPackage("1.2.0", "1.3.0");
+		const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+		const stdoutSpy = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+
+		await expect(main(["update", "--extensions"])).resolves.toBeUndefined();
+
+		const progress = stdoutSpy.mock.calls.map(([chunk]) => String(chunk)).join("");
+		const stdout = logSpy.mock.calls.map(([message]) => String(message)).join("\n");
+		expect(progress).toContain("npm:fake-package is still 1.2.0 (registry reports 1.3.0)");
+		expect(stdout).toContain("No packages were updated, see the warnings above");
+		expect(stdout).not.toContain("up to date");
+	});
+
+	it("does not report packages as up to date in offline mode", async () => {
+		prepareStaleNpmPackage("1.2.0", "1.3.0");
+		// main() writes both variables in offline mode; stubbing them lets afterEach restore them.
+		vi.stubEnv("PI_OFFLINE", "1");
+		vi.stubEnv("PI_SKIP_VERSION_CHECK", "1");
+		const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+
+		await expect(main(["update", "--extensions"])).resolves.toBeUndefined();
+
+		const stdout = logSpy.mock.calls.map(([message]) => String(message)).join("\n");
+		expect(stdout).toContain("Skipped package updates (offline mode)");
+		expect(stdout).not.toContain("up to date");
+	});
+
 	it("uses saved project trust during update", async () => {
 		mkdirSync(join(projectDir, ".pi"), { recursive: true });
 		const fakeNpmPath = join(tempDir, "fake-trusted-project-npm.cjs");
@@ -455,7 +501,7 @@ if (process.platform !== "win32") fs.chmodSync(piPath, 0o755);
 
 			const stdout = logSpy.mock.calls.map(([message]) => String(message)).join("\n");
 			expect(stdout).toContain("Usage:");
-			expect(stdout).toContain("finecode install <source> [-l]");
+			expect(stdout).toContain("pi install <source> [-l]");
 			expect(errorSpy).not.toHaveBeenCalled();
 			expect(process.exitCode).toBeUndefined();
 		} finally {
@@ -486,6 +532,46 @@ if (process.platform !== "win32") fs.chmodSync(piPath, 0o755);
 		expect(logSpy.mock.calls.map(([message]) => String(message)).join("\n")).toContain("Model catalogs refreshed");
 		expect(errorSpy).not.toHaveBeenCalled();
 		expect(process.exitCode).toBeUndefined();
+	});
+
+	it("warns about a stale provider login during update --models and keeps the refresh successful", async () => {
+		const errors = new Map<string, Error>([
+			["radius", new ModelsError("oauth", "OAuth refresh failed for radius", { cause: new Error("invalid_grant") })],
+		]);
+		const refresh = vi.fn(async () => ({ aborted: false, errors }));
+		vi.spyOn(ModelRuntime, "create").mockResolvedValue({ refresh } as unknown as ModelRuntime);
+		const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+		const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+		const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+		await expect(runPackageCommandDirectly(["update", "--models"])).resolves.toBeUndefined();
+
+		const warnings = warnSpy.mock.calls.map(([message]) => String(message)).join("\n");
+		expect(warnings).toContain("skipped model catalog for radius: OAuth refresh failed for radius: invalid_grant");
+		expect(warnings).toContain("pi auth login radius");
+		expect(logSpy.mock.calls.map(([message]) => String(message)).join("\n")).toContain("Model catalogs refreshed");
+		expect(errorSpy).not.toHaveBeenCalled();
+		expect(process.exitCode).toBeUndefined();
+	});
+
+	it("fails update --models when a catalog refresh fails for a reason other than a stale login", async () => {
+		const errors = new Map<string, Error>([
+			["radius", new ModelsError("oauth", "OAuth refresh failed for radius")],
+			["openrouter", new Error("OpenRouter model list request failed: 500")],
+		]);
+		const refresh = vi.fn(async () => ({ aborted: false, errors }));
+		vi.spyOn(ModelRuntime, "create").mockResolvedValue({ refresh } as unknown as ModelRuntime);
+		vi.spyOn(console, "warn").mockImplementation(() => {});
+		const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+		await expect(runPackageCommandDirectly(["update", "--models"])).resolves.toBeUndefined();
+
+		const stderr = errorSpy.mock.calls.map(([message]) => String(message)).join("\n");
+		expect(stderr).toContain(
+			"Could not refresh model catalogs: openrouter: OpenRouter model list request failed: 500",
+		);
+		expect(stderr).not.toContain("radius");
+		expect(process.exitCode).toBe(1);
 	});
 
 	it("rejects update --models combined with another update target", async () => {
@@ -520,12 +606,12 @@ if (process.platform !== "win32") fs.chmodSync(piPath, 0o755);
 
 		selector.getResourceList().handleInput(" ");
 		expect(settingsManager.getProjectSettings().packages).toEqual([
-			{ source: "npm:pi-tools", autoload: false, extensions: [`-extensions${sep}bar.ts`] },
+			{ source: "npm:pi-tools", autoload: false, extensions: ["-extensions/bar.ts"] },
 		]);
 
 		selector.getResourceList().handleInput(" ");
 		expect(settingsManager.getProjectSettings().packages).toEqual([
-			{ source: "npm:pi-tools", autoload: false, extensions: [`+extensions${sep}bar.ts`] },
+			{ source: "npm:pi-tools", autoload: false, extensions: ["+extensions/bar.ts"] },
 		]);
 
 		selector.getResourceList().handleInput(" ");
@@ -601,9 +687,7 @@ if (process.platform !== "win32") fs.chmodSync(piPath, 0o755);
 
 			const stderr = errorSpy.mock.calls.map(([message]) => String(message)).join("\n");
 			expect(stderr).toContain('Unknown option --unknown for "install".');
-			expect(stderr).toContain(
-				'Use "finecode --help" or "finecode install <source> [-l] [--approve|--no-approve]".',
-			);
+			expect(stderr).toContain('Use "pi --help" or "pi install <source> [-l] [--approve|--no-approve]".');
 			expect(process.exitCode).toBe(1);
 		} finally {
 			errorSpy.mockRestore();
@@ -618,7 +702,7 @@ if (process.platform !== "win32") fs.chmodSync(piPath, 0o755);
 
 			const stderr = errorSpy.mock.calls.map(([message]) => String(message)).join("\n");
 			expect(stderr).toContain("Missing install source.");
-			expect(stderr).toContain("Usage: finecode install <source> [-l]");
+			expect(stderr).toContain("Usage: pi install <source> [-l]");
 			expect(stderr).not.toContain("at ");
 			expect(process.exitCode).toBe(1);
 		} finally {
@@ -629,9 +713,7 @@ if (process.platform !== "win32") fs.chmodSync(piPath, 0o755);
 	it("allows explicit self-update checks when automatic version checks are disabled", async () => {
 		const previousSkipVersionCheck = process.env.PI_SKIP_VERSION_CHECK;
 		process.env.PI_SKIP_VERSION_CHECK = "1";
-		const fetchMock = vi.fn(async () =>
-			Response.json({ name: "finecode", version: VERSION, finecodeRuntimeRelease: FINECODE_RUNTIME_RELEASE_MARKER }),
-		);
+		const fetchMock = vi.fn(async () => Response.json({ version: VERSION }));
 		vi.stubGlobal("fetch", fetchMock);
 		const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
 		const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
@@ -641,7 +723,7 @@ if (process.platform !== "win32") fs.chmodSync(piPath, 0o755);
 
 			expect(fetchMock).toHaveBeenCalledOnce();
 			expect(logSpy.mock.calls.map(([message]) => String(message)).join("\n")).toContain(
-				`${APP_NAME} is already up to date (v${VERSION})`,
+				`pi is already up to date (v${VERSION})`,
 			);
 			expect(errorSpy).not.toHaveBeenCalled();
 			expect(process.exitCode).toBeUndefined();
@@ -661,13 +743,7 @@ if (process.platform !== "win32") fs.chmodSync(piPath, 0o755);
 			.fn()
 			.mockRejectedValueOnce(new Error("fetch failed"))
 			.mockRejectedValueOnce(new Error("fetch failed"))
-			.mockResolvedValueOnce(
-				Response.json({
-					name: "finecode",
-					version: VERSION,
-					finecodeRuntimeRelease: FINECODE_RUNTIME_RELEASE_MARKER,
-				}),
-			);
+			.mockResolvedValueOnce(Response.json({ version: VERSION }));
 		vi.stubGlobal("fetch", fetchMock);
 		const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
 		const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
@@ -684,91 +760,7 @@ if (process.platform !== "win32") fs.chmodSync(piPath, 0o755);
 		}
 	});
 
-	it.skipIf(PACKAGE_NAME !== "finecode")("keeps FineCode on npm under a Pi managed-install environment", async () => {
-		const targetVersion = getNewerPatchVersion();
-		const { managedRoot, npmRecordPath, fakeNpmPath } = prepareManagedInstall(targetVersion);
-		writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ npmCommand: [originalExecPath, fakeNpmPath] }));
-		Object.defineProperty(process, "execPath", {
-			value: join(managedRoot, "releases", VERSION, "node_modules", ...PACKAGE_NAME.split("/"), "dist", "cli.js"),
-			configurable: true,
-		});
-		const fetchMock = vi.fn(async (input: string | URL | Request) => {
-			const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
-			if (url === "https://registry.npmjs.org/finecode/latest") {
-				return Response.json({
-					name: "finecode",
-					version: targetVersion,
-					finecodeRuntimeRelease: FINECODE_RUNTIME_RELEASE_MARKER,
-				});
-			}
-			throw new Error(`Unexpected fetch: ${url}`);
-		});
-		vi.stubGlobal("fetch", fetchMock);
-		const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
-		const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
-
-		await expect(runPackageCommandDirectly(["update", "--self"])).resolves.toBeUndefined();
-
-		expect(readFileSync(join(managedRoot, "current-version"), "utf8")).toBe(`${VERSION}\n`);
-		expect(existsSync(join(managedRoot, "releases", targetVersion))).toBe(false);
-		expect(JSON.parse(readFileSync(npmRecordPath, "utf8")) as string[]).toEqual(
-			expect.arrayContaining(["install", "-g", `finecode@${targetVersion}`]),
-		);
-		expect(fetchMock).toHaveBeenCalledOnce();
-		expect(logSpy.mock.calls.map(([message]) => String(message)).join("\n")).toContain(
-			`Updated finecode from ${VERSION} to ${targetVersion}`,
-		);
-		expect(errorSpy).not.toHaveBeenCalled();
-	});
-
-	it.each([
-		["finecode update", ["update"]],
-		["finecode update --force", ["update", "--force"]],
-	] as const)("rejects the unmarked FineCode bootstrap from %s", async (_label, args) => {
-		const { npmRecordPath } = prepareManagedInstall(VERSION);
-		const installedManifestPath = join(process.env.PI_PACKAGE_DIR!, "package.json");
-		writeFileSync(
-			installedManifestPath,
-			JSON.stringify({
-				name: "finecode",
-				version: VERSION,
-				finecodeRuntimeRelease: FINECODE_RUNTIME_RELEASE_MARKER,
-			}),
-		);
-		const fetchMock = vi.fn(async () => Response.json({ name: "finecode", version: VERSION }));
-		vi.stubGlobal("fetch", fetchMock);
-		const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
-
-		await expect(runPackageCommandDirectly([...args])).resolves.toBeUndefined();
-
-		expect(process.exitCode).toBe(1);
-		expect(fetchMock).toHaveBeenCalledOnce();
-		expect(existsSync(npmRecordPath)).toBe(false);
-		expect(JSON.parse(readFileSync(installedManifestPath, "utf8"))).toMatchObject({ version: VERSION });
-		expect(errorSpy.mock.calls.map(([message]) => String(message)).join("\n")).toContain(
-			"the npm registry did not return a recognized FineCode runtime release",
-		);
-	});
-
-	it("fails closed when FineCode release metadata is unavailable", async () => {
-		const { npmRecordPath } = prepareManagedInstall(VERSION);
-		const installedManifestPath = join(process.env.PI_PACKAGE_DIR!, "package.json");
-		writeFileSync(installedManifestPath, JSON.stringify({ name: "finecode", version: VERSION }));
-		const fetchMock = vi.fn(async () => new Response(null, { status: 404 }));
-		vi.stubGlobal("fetch", fetchMock);
-		const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
-
-		await expect(runPackageCommandDirectly(["update"])).resolves.toBeUndefined();
-
-		expect(process.exitCode).toBe(1);
-		expect(existsSync(npmRecordPath)).toBe(false);
-		expect(JSON.parse(readFileSync(installedManifestPath, "utf8"))).toMatchObject({ version: VERSION });
-		expect(errorSpy.mock.calls.map(([message]) => String(message)).join("\n")).toContain(
-			"the npm registry did not return a recognized FineCode runtime release",
-		);
-	});
-
-	itForPiInstall("updates installer-managed Pi through a staged immutable release", async () => {
+	it("updates installer-managed Pi through a staged immutable release", async () => {
 		const targetVersion = getNewerPatchVersion();
 		const { managedRoot, npmRecordPath } = prepareManagedInstall(targetVersion);
 		const abandonedStage = join(managedRoot, "staging", "update-abandoned");
@@ -797,7 +789,25 @@ if (process.platform !== "win32") fs.chmodSync(piPath, 0o755);
 		expect(process.exitCode).toBeUndefined();
 	});
 
-	itForPiInstall("removes older managed releases after an update", async () => {
+	it("accepts a managed install marker with a UTF-8 BOM", async () => {
+		const targetVersion = getNewerPatchVersion();
+		const { managedRoot } = prepareManagedInstall(targetVersion);
+		writeFileSync(
+			join(managedRoot, "managed-install.json"),
+			`\uFEFF${JSON.stringify({ kind: "pi-managed-install", schemaVersion: 1, layout: "releases-v1" })}\r\n`,
+		);
+		mockManagedUpdate(targetVersion);
+		vi.spyOn(console, "log").mockImplementation(() => {});
+		const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+		await expect(runPackageCommandDirectly(["update", "--self"])).resolves.toBeUndefined();
+
+		expect(readFileSync(join(managedRoot, "current-version"), "utf8")).toBe(`${targetVersion}\n`);
+		expect(errorSpy).not.toHaveBeenCalled();
+		expect(process.exitCode).toBeUndefined();
+	});
+
+	it("removes older managed releases after an update", async () => {
 		// https://github.com/earendil-works/pi/issues/10392
 		const targetVersion = getNewerPatchVersion();
 		const { managedRoot } = prepareManagedInstall(targetVersion);
@@ -816,7 +826,30 @@ if (process.platform !== "win32") fs.chmodSync(piPath, 0o755);
 		expect(process.exitCode).toBeUndefined();
 	});
 
-	itForPiInstall("rejects a concurrent managed update", async () => {
+	it.skipIf(process.platform === "win32")(
+		"verifies a managed update with the running Node when an older node is first on PATH",
+		async () => {
+			// https://github.com/earendil-works/pi/issues/12048
+			const targetVersion = getNewerPatchVersion();
+			const { managedRoot } = prepareManagedInstall(targetVersion, 0, true);
+			const oldNodeDir = join(tempDir, "old-node");
+			mkdirSync(oldNodeDir, { recursive: true });
+			const oldNodePath = join(oldNodeDir, "node");
+			writeFileSync(oldNodePath, "#!/bin/sh\necho 'unsupported old node' >&2\nexit 1\n");
+			chmodSync(oldNodePath, 0o755);
+			process.env.PATH = `${oldNodeDir}${delimiter}${process.env.PATH ?? ""}`;
+			mockManagedUpdate(targetVersion);
+			vi.spyOn(console, "log").mockImplementation(() => {});
+			const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+			await expect(runPackageCommandDirectly(["update", "--self"])).resolves.toBeUndefined();
+
+			expect(errorSpy).not.toHaveBeenCalled();
+			expect(readFileSync(join(managedRoot, "current-version"), "utf8")).toBe(`${targetVersion}\n`);
+		},
+	);
+
+	it("rejects a concurrent managed update", async () => {
 		const targetVersion = getNewerPatchVersion();
 		const { managedRoot, npmRecordPath } = prepareManagedInstall(targetVersion);
 		const releaseLock = await lockfile.lock(join(managedRoot, "update"), { realpath: false });
@@ -839,7 +872,7 @@ if (process.platform !== "win32") fs.chmodSync(piPath, 0o755);
 		expect(process.exitCode).toBe(1);
 	});
 
-	itForPiInstall("rejects forced managed reinstalls", async () => {
+	it("rejects forced managed reinstalls", async () => {
 		const targetVersion = getNewerPatchVersion();
 		const { npmRecordPath } = prepareManagedInstall(targetVersion);
 		const fetchMock = vi.fn();
@@ -856,7 +889,141 @@ if (process.platform !== "win32") fs.chmodSync(piPath, 0o755);
 		expect(process.exitCode).toBe(1);
 	});
 
-	itForPiInstall("keeps the managed release active when its update fails", async () => {
+	function writeNodeShim(binDir: string, name: string, scriptPath: string): void {
+		const shimPath = join(binDir, process.platform === "win32" ? `${name}.cmd` : name);
+		writeFileSync(
+			shimPath,
+			process.platform === "win32"
+				? `@echo off\r\n"${originalExecPath}" "${scriptPath}" %*\r\n`
+				: `#!/bin/sh\nexec "${originalExecPath}" "${scriptPath}" "$@"\n`,
+		);
+		chmodSync(shimPath, 0o755);
+	}
+
+	/** Put a `pi-wrapper` update command and a `pi` that prints `piVersion` first on PATH. */
+	function prepareSelfUpdateCommand(piVersion: string, exitCode = 0): { scriptPath: string; recordPath: string } {
+		const binDir = join(tempDir, "self-update-bin");
+		const scriptPath = join(tempDir, "self-update.cjs");
+		const piScriptPath = join(tempDir, "fake-pi.cjs");
+		const recordPath = join(tempDir, "self-update-record.json");
+		mkdirSync(binDir, { recursive: true });
+		writeFileSync(
+			scriptPath,
+			`require("node:fs").writeFileSync(${JSON.stringify(recordPath)}, JSON.stringify(process.argv.slice(2)));
+process.exit(${exitCode});
+`,
+		);
+		writeFileSync(piScriptPath, `console.log(${JSON.stringify(piVersion)});\n`);
+		writeNodeShim(binDir, "pi-wrapper", scriptPath);
+		writeNodeShim(binDir, "pi", piScriptPath);
+		process.env.PATH = `${binDir}${delimiter}${originalPath ?? ""}`;
+		return { scriptPath, recordPath };
+	}
+
+	it("runs PI_SELF_UPDATE_COMMAND instead of the managed update and the selfUpdateCommand setting", async () => {
+		const targetVersion = getNewerPatchVersion();
+		const { npmRecordPath } = prepareManagedInstall(targetVersion);
+		const { scriptPath, recordPath } = prepareSelfUpdateCommand(targetVersion);
+		const settingRecordPath = join(tempDir, "setting-record.json");
+		writeFileSync(
+			join(agentDir, "settings.json"),
+			JSON.stringify({ selfUpdateCommand: [originalExecPath, scriptPath, settingRecordPath] }),
+		);
+		vi.stubEnv("PI_SELF_UPDATE_COMMAND", "pi-wrapper upgrade {installSpec} {version}");
+		vi.stubGlobal(
+			"fetch",
+			vi.fn(async () => Response.json({ packageName: "@new-scope/pi", version: targetVersion, note: "Read me" })),
+		);
+		const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+		const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+		await expect(runPackageCommandDirectly(["update", "--self"])).resolves.toBeUndefined();
+
+		expect(JSON.parse(readFileSync(recordPath, "utf8")) as string[]).toEqual([
+			"upgrade",
+			`@new-scope/pi@${targetVersion}`,
+			targetVersion,
+		]);
+		expect(existsSync(npmRecordPath)).toBe(false);
+		const stdout = logSpy.mock.calls.map(([message]) => String(message)).join("\n");
+		expect(stdout).toContain("Read me");
+		// Like mise, the command leaves this installation untouched; the pi on PATH reports the new version.
+		expect(stdout).toContain(`Updated pi from ${VERSION} to ${targetVersion}`);
+		expect(errorSpy).not.toHaveBeenCalled();
+		expect(process.exitCode).toBeUndefined();
+	});
+
+	it("runs the global selfUpdateCommand setting only when a newer release exists", async () => {
+		const targetVersion = getNewerPatchVersion();
+		const { scriptPath, recordPath } = prepareSelfUpdateCommand(targetVersion);
+		const projectRecordPath = join(tempDir, "project-record.json");
+		writeFileSync(
+			join(agentDir, "settings.json"),
+			JSON.stringify({ selfUpdateCommand: [originalExecPath, scriptPath, "{packageName}"] }),
+		);
+		mkdirSync(join(projectDir, ".pi"), { recursive: true });
+		writeFileSync(
+			join(projectDir, ".pi", "settings.json"),
+			JSON.stringify({ selfUpdateCommand: [originalExecPath, scriptPath, projectRecordPath] }),
+		);
+		vi.stubEnv("PI_SELF_UPDATE_COMMAND", "");
+		const fetchMock = vi.fn(async () => Response.json({ version: VERSION }));
+		vi.stubGlobal("fetch", fetchMock);
+		const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+		vi.spyOn(console, "error").mockImplementation(() => {});
+
+		await expect(runPackageCommandDirectly(["update", "--self"])).resolves.toBeUndefined();
+		expect(existsSync(recordPath)).toBe(false);
+		expect(logSpy.mock.calls.map(([message]) => String(message)).join("\n")).toContain(
+			`pi is already up to date (v${VERSION})`,
+		);
+
+		fetchMock.mockImplementation(async () => Response.json({ version: targetVersion }));
+		await expect(runPackageCommandDirectly(["update", "--self"])).resolves.toBeUndefined();
+		expect(JSON.parse(readFileSync(recordPath, "utf8")) as string[]).toEqual([PACKAGE_NAME]);
+		expect(process.exitCode).toBeUndefined();
+	});
+
+	it("warns when the pi on PATH does not report the new version", async () => {
+		const targetVersion = getNewerPatchVersion();
+		prepareSelfUpdateCommand(VERSION);
+		vi.stubEnv("PI_SELF_UPDATE_COMMAND", "pi-wrapper upgrade");
+		vi.stubGlobal(
+			"fetch",
+			vi.fn(async () => Response.json({ version: targetVersion })),
+		);
+		const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+
+		await expect(runPackageCommandDirectly(["update", "--self"])).resolves.toBeUndefined();
+
+		const stdout = logSpy.mock.calls.map(([message]) => String(message)).join("\n");
+		expect(stdout).toContain(
+			`Ran pi-wrapper upgrade, but \`pi --version\` reports ${VERSION}, not ${targetVersion}.`,
+		);
+		expect(stdout).not.toContain("Updated pi from");
+		expect(process.exitCode).toBeUndefined();
+	});
+
+	it("fails when the configured self-update command fails", async () => {
+		prepareSelfUpdateCommand(VERSION, 23);
+		vi.stubEnv("PI_SELF_UPDATE_COMMAND", "pi-wrapper upgrade");
+		vi.stubGlobal(
+			"fetch",
+			vi.fn(async () => Response.json({ version: getNewerPatchVersion() })),
+		);
+		const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+		const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+		await expect(runPackageCommandDirectly(["update", "--self"])).resolves.toBeUndefined();
+
+		expect(errorSpy.mock.calls.map(([message]) => String(message)).join("\n")).toContain(
+			"pi-wrapper upgrade exited with code 23",
+		);
+		expect(logSpy.mock.calls.map(([message]) => String(message)).join("\n")).not.toContain("Ran pi-wrapper");
+		expect(process.exitCode).toBe(1);
+	});
+
+	it("keeps the managed release active when its update fails", async () => {
 		const targetVersion = getNewerPatchVersion();
 		const { managedRoot } = prepareManagedInstall(targetVersion, 23);
 		mkdirSync(join(managedRoot, "releases", "0.0.1"), { recursive: true });
@@ -910,9 +1077,7 @@ else fs.writeFileSync(${JSON.stringify(recordPath)},JSON.stringify(args));
 			value: join(selfPackageDir, "dist", "cli.js"),
 			configurable: true,
 		});
-		const fetchMock = vi.fn(async () =>
-			Response.json({ name: "finecode", version: VERSION, finecodeRuntimeRelease: FINECODE_RUNTIME_RELEASE_MARKER }),
-		);
+		const fetchMock = vi.fn(async () => Response.json({ version: VERSION }));
 		vi.stubGlobal("fetch", fetchMock);
 
 		const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
@@ -930,7 +1095,7 @@ else fs.writeFileSync(${JSON.stringify(recordPath)},JSON.stringify(args));
 			expect(recordedArgs).toContain(`${PACKAGE_NAME}@${VERSION}`);
 			expect(recordedArgs).not.toContain(PACKAGE_NAME);
 			expect(recordedArgs).not.toContain(projectPrefix);
-			expect(stdout).toContain(`Updated ${APP_NAME} from ${VERSION} to ${VERSION}`);
+			expect(stdout).toContain(`Updated pi from ${VERSION} to ${VERSION}`);
 		} finally {
 			logSpy.mockRestore();
 			errorSpy.mockRestore();
@@ -960,13 +1125,7 @@ else fs.writeFileSync(${JSON.stringify(recordPath)},JSON.stringify(args));
 			configurable: true,
 		});
 		const targetVersion = getNewerPatchVersion();
-		const fetchMock = vi.fn(async () =>
-			Response.json({
-				name: "finecode",
-				version: targetVersion,
-				finecodeRuntimeRelease: FINECODE_RUNTIME_RELEASE_MARKER,
-			}),
-		);
+		const fetchMock = vi.fn(async () => Response.json({ version: targetVersion }));
 		vi.stubGlobal("fetch", fetchMock);
 
 		const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
@@ -982,14 +1141,14 @@ else fs.writeFileSync(${JSON.stringify(recordPath)},JSON.stringify(args));
 			const recordedArgs = JSON.parse(readFileSync(recordPath, "utf-8")) as string[];
 			expect(recordedArgs).toContain(`${PACKAGE_NAME}@${targetVersion}`);
 			expect(recordedArgs).not.toContain(PACKAGE_NAME);
-			expect(stdout).toContain(`Updated ${APP_NAME} from ${VERSION} to ${targetVersion}`);
+			expect(stdout).toContain(`Updated pi from ${VERSION} to ${targetVersion}`);
 		} finally {
 			logSpy.mockRestore();
 			errorSpy.mockRestore();
 		}
 	});
 
-	itForPiInstall("installs the active package name from the update check during self-update", async () => {
+	it("installs the active package name from the update check during self-update", async () => {
 		const globalPrefix = join(tempDir, "global-prefix");
 		const selfPackageDir = join(globalPrefix, "lib", "node_modules", "@mariozechner", "pi-coding-agent");
 		const fakeNpmPath = join(tempDir, "fake-npm.cjs");
@@ -1042,14 +1201,7 @@ else {
 
 	it("prints a pnpm metadata hint when self-update fails", async () => {
 		const globalRoot = join(tempDir, "pnpm", "global", "v11");
-		const selfPackageDir = join(
-			globalRoot,
-			".pnpm",
-			"pi-coding-agent@1.0.0",
-			"node_modules",
-			"@earendil-works",
-			"pi-coding-agent",
-		);
+		const selfPackageDir = join(globalRoot, "node_modules", "@earendil-works", "pi-coding-agent");
 		const fakeBinDir = join(tempDir, "bin");
 		const fakePnpmPath = join(fakeBinDir, process.platform === "win32" ? "pnpm.cmd" : "pnpm");
 		mkdirSync(selfPackageDir, { recursive: true });
@@ -1069,13 +1221,7 @@ else {
 		});
 		vi.stubGlobal(
 			"fetch",
-			vi.fn(async () =>
-				Response.json({
-					name: "finecode",
-					version: getNewerPatchVersion(),
-					finecodeRuntimeRelease: FINECODE_RUNTIME_RELEASE_MARKER,
-				}),
-			),
+			vi.fn(async () => Response.json({ version: getNewerPatchVersion() })),
 		);
 
 		const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
@@ -1087,17 +1233,17 @@ else {
 			expect(process.exitCode).toBe(1);
 			const stdout = logSpy.mock.calls.map(([message]) => String(message)).join("\n");
 			const stderr = errorSpy.mock.calls.map(([message]) => String(message)).join("\n");
-			expect(stdout).not.toContain(`Updated ${APP_NAME}`);
+			expect(stdout).not.toContain("Updated pi");
 			expect(stderr).toContain("exited with code 23");
 			expect(stderr).toContain("If pnpm reports missing package versions");
-			expect(stderr).toContain("Run `pnpm store prune` and retry `finecode update --self`.");
+			expect(stderr).toContain("Run `pnpm store prune` and retry `pi update --self`.");
 		} finally {
 			logSpy.mockRestore();
 			errorSpy.mockRestore();
 		}
 	});
 
-	itForPiInstall("fails self-update when renamed npm package installation fails", async () => {
+	it("fails self-update when renamed npm package installation fails", async () => {
 		const globalPrefix = join(tempDir, "global-prefix");
 		const selfPackageDir = join(globalPrefix, "lib", "node_modules", "@mariozechner", "pi-coding-agent");
 		const fakeNpmPath = join(tempDir, "fake-npm-fail.cjs");
@@ -1140,7 +1286,7 @@ if(args.includes("install")) process.exit(23);
 			expect(process.exitCode).toBe(1);
 			const stdout = logSpy.mock.calls.map(([message]) => String(message)).join("\n");
 			const stderr = errorSpy.mock.calls.map(([message]) => String(message)).join("\n");
-			expect(stdout).not.toContain(`Updated ${APP_NAME}`);
+			expect(stdout).not.toContain(`Updated pi`);
 			expect(stderr).toContain("exited with code 23");
 			const recordedCalls = JSON.parse(readFileSync(recordPath, "utf-8")) as string[][];
 			expect(recordedCalls).toEqual([

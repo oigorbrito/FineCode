@@ -1,15 +1,15 @@
 /**
  * Input Transform Example - demonstrates the `input` event for intercepting user input.
  *
- * Start FineCode with this extension:
- *   finecode -e ./examples/extensions/input-transform.ts
+ * Start pi with this extension:
+ *   pi -e ./examples/extensions/input-transform.ts
  *
- * Then type these inside FineCode:
+ * Then type these inside pi:
  *   ?quick What is TypeScript?  → "Respond briefly: What is TypeScript?"
  *   ping                        → "pong" (instant, no LLM)
  *   time                        → current time (instant, no LLM)
  */
-import type { ExtensionAPI } from "finecode";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 export default function (pi: ExtensionAPI) {
 	pi.on("input", async (event, ctx) => {

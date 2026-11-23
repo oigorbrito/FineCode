@@ -334,6 +334,32 @@ export function getSelfUpdateCommand(
 	return command;
 }
 
+/**
+ * The self-update command configured by the user: `PI_SELF_UPDATE_COMMAND` (whitespace-separated
+ * argv, no quoting), else the global `selfUpdateCommand` setting. Overrides install-method detection.
+ */
+export function getConfiguredSelfUpdateArgv(setting: string[] | undefined): string[] | undefined {
+	const fromEnv = process.env.PI_SELF_UPDATE_COMMAND?.trim().split(/\s+/).filter(Boolean);
+	if (fromEnv?.length) return fromEnv;
+	return setting?.length ? setting : undefined;
+}
+
+/** Fill the `{packageName}`, `{version}`, and `{installSpec}` placeholders of a configured self-update command. */
+export function makeConfiguredSelfUpdateCommand(
+	argv: string[],
+	release: { packageName: string; version: string },
+): SelfUpdateCommand {
+	const values: Record<string, string> = {
+		packageName: release.packageName,
+		version: release.version,
+		installSpec: `${release.packageName}@${release.version}`,
+	};
+	const [command = "", ...args] = argv.map((arg) =>
+		arg.replace(/\{(packageName|version|installSpec)\}/g, (_, name: string) => values[name]),
+	);
+	return makeSelfUpdateCommandStep(command, args);
+}
+
 export function getSelfUpdateUnavailableInstruction(
 	packageName: string,
 	npmCommand?: string[],
@@ -348,11 +374,10 @@ export function getSelfUpdateUnavailableInstruction(
 		return `Download from: https://github.com/earendil-works/pi/releases/latest`;
 	}
 	const command = getSelfUpdateCommandForMethod(method, packageName, target, npmCommand);
-	if (command) {
-		if (isManagedByGlobalPackageManager(method, packageName, npmCommand) && !isSelfUpdatePathWritable()) {
-			return `This installation is managed by a global ${method} install, but the install path is not writable. Update it yourself with: ${command.display}`;
-		}
-		return `This installation is not managed by a global ${method} install. Update it with the package manager, wrapper, or source checkout that provides it.`;
+	// Path-based detection also matches installs that only live under a package manager's directory,
+	// such as a wrapper under PNPM_HOME, so name the package manager only when it owns the install.
+	if (command && isManagedByGlobalPackageManager(method, packageName, npmCommand) && !isSelfUpdatePathWritable()) {
+		return `This installation is managed by a global ${method} install, but the install path is not writable. Update it yourself with: ${command.display}`;
 	}
 	return `Update ${target.installSpec} using the package manager, wrapper, or source checkout that provides this installation.`;
 }
@@ -463,6 +488,26 @@ export function getChangelogPath(): string {
 	return resolve(join(getPackageDir(), "CHANGELOG.md"));
 }
 
+/**
+ * Get path to built-in interactive assets directory.
+ * - For Bun binary: assets/ next to executable
+ * - For Node.js (dist/): dist/modes/interactive/assets/
+ * - For source (src/): src/modes/interactive/assets/
+ */
+export function getInteractiveAssetsDir(): string {
+	if (isBunBinary) {
+		return join(getPackageDir(), "assets");
+	}
+	const packageDir = getPackageDir();
+	const srcOrDist = existsSync(join(packageDir, "src")) ? "src" : "dist";
+	return join(packageDir, srcOrDist, "modes", "interactive", "assets");
+}
+
+/** Get path to a bundled interactive asset */
+export function getBundledInteractiveAssetPath(name: string): string {
+	return join(getInteractiveAssetsDir(), name);
+}
+
 let quickJSWasmPath: string | undefined;
 
 /** Called by the Bun entry with the path of the QuickJS wasm file embedded in the compiled executable. */
@@ -512,7 +557,7 @@ export function getCodemodeWorkerSpecifier(): string | URL | undefined {
 export type InstallChange = { kind: "updated"; version: string } | { kind: "removed" };
 
 /**
- * Detect that the package this process runs from changed on disk, for example after `finecode update`
+ * Detect that the package this process runs from changed on disk, for example after `pi update`
  * in another terminal. Code loaded on demand can then be missing or from another version.
  *
  * Checks the package.json read at startup. Resolving it again would walk up past a deleted install

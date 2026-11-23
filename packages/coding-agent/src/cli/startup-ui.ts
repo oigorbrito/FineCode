@@ -6,14 +6,7 @@ import {
 	TuiMainScreen,
 } from "@earendil-works/pi-tui";
 import { existsSync } from "fs";
-import {
-	APP_NAME,
-	CONFIG_DIR_NAME,
-	getAgentDir,
-	getSettingsPath,
-	hasAgentDirEnvOverride,
-	PACKAGE_NAME,
-} from "../config.ts";
+import { APP_NAME, CONFIG_DIR_NAME, ENV_AGENT_DIR, getAgentDir, getSettingsPath, PACKAGE_NAME } from "../config.ts";
 import { areExperimentalFeaturesEnabled } from "../core/experimental.ts";
 import { KeybindingsManager } from "../core/keybindings.ts";
 import { DefaultPackageManager, type ResolvedResource } from "../core/package-manager.ts";
@@ -37,6 +30,7 @@ import {
 	type Theme,
 } from "../modes/interactive/theme/theme.ts";
 import { requestTerminalColors } from "../modes/interactive/theme/theme-controller.ts";
+import { flushStdout } from "../utils/flush-stdout.ts";
 
 const OFFICIAL_PACKAGE_NAME = "@earendil-works/pi-coding-agent";
 const OFFICIAL_APP_NAME = "pi";
@@ -148,7 +142,7 @@ export function shouldRunFirstTimeSetup(settingsPath: string = getSettingsPath()
 	if (!areExperimentalFeaturesEnabled()) {
 		return false;
 	}
-	if (hasAgentDirEnvOverride()) {
+	if (process.env[ENV_AGENT_DIR]) {
 		return false;
 	}
 	return !existsSync(settingsPath);
@@ -169,6 +163,7 @@ export async function showStartupSelector<T>(
 			settled = true;
 			await clearStartupTui(ui);
 			ui.stop();
+			await flushStdout();
 			resolve(result);
 		};
 
@@ -202,6 +197,7 @@ export async function showFirstTimeSetup(settingsManager: SettingsManager): Prom
 			}
 			await clearStartupTui(ui);
 			ui.stop();
+			await flushStdout();
 			resolve();
 		};
 
@@ -241,6 +237,7 @@ export async function showStartupInput(
 			input.dispose();
 			await clearStartupTui(ui);
 			ui.stop();
+			await flushStdout();
 			resolve(result);
 		};
 

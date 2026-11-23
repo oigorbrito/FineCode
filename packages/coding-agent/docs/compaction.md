@@ -1,5 +1,3 @@
-[**English**](compaction.md) | [Português (Brasil)](pt-BR/compaction.md)
-
 # Compaction Reference
 
 This reference describes automatic compaction, branch summarization, persisted entries, and extension hooks. For the user workflow, see [Sessions and Context](sessions.md#manage-conversation-context).
@@ -11,11 +9,11 @@ This reference describes automatic compaction, branch summarization, persisted e
 - [`packages/coding-agent/src/core/session-manager.ts`](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/src/core/session-manager.ts) - Entry types (`CompactionEntry`, `BranchSummaryEntry`)
 - [`packages/coding-agent/src/core/extensions/types.ts`](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/src/core/extensions/types.ts) - Extension event types
 
-For TypeScript definitions in your project, inspect `node_modules/finecode/dist/`.
+For TypeScript definitions in your project, inspect `node_modules/@earendil-works/pi-coding-agent/dist/`.
 
 ## Overview
 
-FineCode has two summarization mechanisms:
+Pi has two summarization mechanisms:
 
 | Mechanism | Trigger | Purpose |
 |-----------|---------|---------|
@@ -36,7 +34,7 @@ contextTokens > contextWindow - reserveTokens
 
 By default, `reserveTokens` is 16384 tokens (configurable in `~/.pi/agent/settings.json` or `<project-dir>/.pi/settings.json`). It only decides when compaction starts. Summary requests use the model's output limit, reduced when needed so input and output fit the context window.
 
-During a multi-turn agent run, FineCode checks the canonical projected context after tools finish and their results are appended, before starting the next assistant response. If the threshold is crossed, FineCode compacts during `prepareNextTurn`, then performs the existing catch-up steering poll before `turn_start`. It skips this between-turn check when the completed tool batch terminates the run and no queued message requires another response. FineCode also checks before a new user prompt and performs final-attempt overflow recovery after the low-level run ends.
+During a multi-turn agent run, Pi checks the canonical projected context after tools finish and their results are appended, before starting the next assistant response. If the threshold is crossed, Pi compacts during `prepareNextTurn`, then performs the existing catch-up steering poll before `turn_start`. It skips this between-turn check when the completed tool batch terminates the run and no queued message requires another response. Pi also checks before a new user prompt and performs final-attempt overflow recovery after the low-level run ends.
 
 A provider context-overflow error or an early final `stopReason: "length"` can select one compact-and-retry recovery attempt. Length responses with tool calls retain their synthetic failed tool results and follow the ordinary tool/queue scheduler rather than forcing the run to end.
 
@@ -82,7 +80,7 @@ What the LLM sees:
     prompt   from cmp          messages from firstKeptEntryId
 ```
 
-On repeated compactions, the summarized span starts at the previous compaction's kept boundary (`firstKeptEntryId`), not at the compaction entry itself, falling back to the entry after the previous compaction if that kept entry cannot be found in the path. A retain-none compaction records its own ID as `firstKeptEntryId`; repeated compaction starts after that entry. This preserves messages that survived the earlier compaction by including them in the next summarization pass as well. FineCode also recalculates `tokensBefore` from the rebuilt, context-edited session projection before writing the new `CompactionEntry`, so the token count reflects the actual pre-compaction context being replaced. Omitted raw entries remain stored but do not affect cut selection, summaries, checkpoints, or token estimates.
+On repeated compactions, the summarized span starts at the previous compaction's kept boundary (`firstKeptEntryId`), not at the compaction entry itself, falling back to the entry after the previous compaction if that kept entry cannot be found in the path. A retain-none compaction records its own ID as `firstKeptEntryId`; repeated compaction starts after that entry. This preserves messages that survived the earlier compaction by including them in the next summarization pass as well. Pi also recalculates `tokensBefore` from the rebuilt, context-edited session projection before writing the new `CompactionEntry`, so the token count reflects the actual pre-compaction context being replaced. Omitted raw entries remain stored but do not affect cut selection, summaries, checkpoints, or token estimates.
 
 ### Overflow and Length Recovery Ordering
 
@@ -97,7 +95,7 @@ persist final assistant response
 → start the retry as a fresh run
 ```
 
-If recovery compaction fails or is cancelled, FineCode keeps the omission edits, appends no compaction, and schedules no internal retry. Existing queued work remains governed by ordinary steering and follow-up rules. `agent_before_settle` sees the repaired projection after recovery processing. Raw transcript history, exports, billing totals, and history-search extensions can still inspect the omitted attempt.
+If recovery compaction fails or is cancelled, Pi keeps the omission edits, appends no compaction, and schedules no internal retry. Existing queued work remains governed by ordinary steering and follow-up rules. `agent_before_settle` sees the repaired projection after recovery processing. Raw transcript history, exports, billing totals, and history-search extensions can still inspect the omitted attempt.
 
 ### Split user-message spans
 
@@ -123,7 +121,7 @@ Split user-message span (one span exceeds budget):
   turnPrefixMessages = [usr, ass, tool, ass, tool, tool]
 ```
 
-For split user-message spans, FineCode generates two summaries and merges them:
+For split user-message spans, Pi generates two summaries and merges them:
 1. **History summary**: Previous context (if any)
 2. **User-message-span prefix summary**: The early part of the split user-message span
 
@@ -172,7 +170,7 @@ See [`prepareCompaction()`](https://github.com/earendil-works/pi/blob/main/packa
 
 ### When It Triggers
 
-When you use `/tree` to navigate to a different branch, FineCode offers to summarize the work you're leaving. This injects context from the left branch into the new branch.
+When you use `/tree` to navigate to a different branch, Pi offers to summarize the work you're leaving. This injects context from the left branch into the new branch.
 
 ### How It Works
 
@@ -201,9 +199,9 @@ After navigation with summary:
 
 ### Cumulative File Tracking
 
-Default compaction and branch summarization track files cumulatively. Both extract file operations from tool calls in the messages being summarized. Compaction also carries file lists from the previous FineCode-generated compaction. Branch summarization carries file lists from FineCode-generated branch summaries in the entries it summarizes.
+Default compaction and branch summarization track files cumulatively. Both extract file operations from tool calls in the messages being summarized. Compaction also carries file lists from the previous Pi-generated compaction. Branch summarization carries file lists from Pi-generated branch summaries in the entries it summarizes.
 
-File tracking therefore accumulates across default compactions and nested default branch summaries. FineCode does not automatically carry file lists from extension-generated summaries whose `fromHook` field is `true`; extensions manage their own `details` format.
+File tracking therefore accumulates across default compactions and nested default branch summaries. Pi does not automatically carry file lists from extension-generated summaries whose `fromHook` field is `true`; extensions manage their own `details` format.
 
 ### BranchSummaryEntry Structure
 
@@ -235,7 +233,7 @@ See [`collectEntriesForBranchSummary()`](https://github.com/earendil-works/pi/bl
 
 ## Summary Format
 
-Both formats include Goal, Constraints & Preferences, Progress, Key Decisions, and Next Steps. Compaction summaries also include Critical Context. Branch summaries stop after Next Steps. FineCode appends file lists to either format when relevant.
+Both formats include Goal, Constraints & Preferences, Progress, Key Decisions, and Next Steps. Compaction summaries also include Critical Context. Branch summaries stop after Next Steps. Pi appends file lists to either format when relevant.
 
 Compaction summaries use this format:
 
@@ -338,7 +336,7 @@ pi.on("session_before_compact", async (event, ctx) => {
 To generate a summary with your own model, convert messages to text using `serializeConversation`:
 
 ```typescript
-import { convertToLlm, serializeConversation } from "finecode";
+import { convertToLlm, serializeConversation } from "@earendil-works/pi-coding-agent";
 
 pi.on("session_before_compact", async (event, ctx) => {
   const { preparation } = event;

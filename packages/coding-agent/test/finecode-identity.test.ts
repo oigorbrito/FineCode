@@ -1,7 +1,6 @@
 import { readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { Api, Model } from "@earendil-works/pi-ai";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import {
 	APP_NAME,
@@ -13,7 +12,7 @@ import {
 	PACKAGE_NAME,
 	VERSION,
 } from "../src/config.ts";
-import { mergeProviderAttributionHeaders } from "../src/core/provider-attribution.ts";
+import { FINECODE_ATTRIBUTION, getClientIdentity } from "../src/core/client-identity.ts";
 import type { SettingsManager } from "../src/core/settings-manager.ts";
 import { shouldReportPiInstallTelemetry } from "../src/core/telemetry.ts";
 import { FINECODE_RUNTIME_RELEASE_MARKER } from "../src/utils/version-check.ts";
@@ -41,11 +40,11 @@ describe("FineCode identity compatibility", () => {
 		expect(manifest.version).toBe(VERSION);
 		expect(manifest.finecodeRuntimeRelease).toBe(FINECODE_RUNTIME_RELEASE_MARKER);
 		expect(manifest.dependencies).toMatchObject({
-			"@earendil-works/pi-agent-core": "1.3.0",
-			"@earendil-works/pi-ai": "1.3.0",
-			"@earendil-works/pi-codemode": "1.3.0",
-			"@earendil-works/pi-mcp": "1.3.0",
-			"@earendil-works/pi-tui": "1.3.0",
+			"@earendil-works/pi-agent-core": "1.6.0",
+			"@earendil-works/pi-ai": "1.6.0",
+			"@earendil-works/pi-codemode": "1.6.0",
+			"@earendil-works/pi-mcp": "1.6.0",
+			"@earendil-works/pi-tui": "1.6.0",
 		});
 	});
 
@@ -54,46 +53,15 @@ describe("FineCode identity compatibility", () => {
 		expect(shouldReportPiInstallTelemetry("@earendil-works/pi-coding-agent")).toBe(true);
 	});
 
-	test("uses FineCode attribution headers for external providers", () => {
+	test("uses FineCode attribution in client identity", () => {
 		const settings = { getEnableInstallTelemetry: () => true } as unknown as SettingsManager;
-		const model = (provider: string, baseUrl: string) =>
-			({
-				id: "test-model",
-				name: "Test Model",
-				api: "openai-completions",
-				provider,
-				baseUrl,
-				reasoning: false,
-				input: ["text"],
-				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-				contextWindow: 1000,
-				maxTokens: 100,
-			}) as Model<Api>;
+		const identity = getClientIdentity(settings);
+		expect(identity.version).toBe(VERSION);
+		expect(identity.attribution).toEqual(FINECODE_ATTRIBUTION);
+		expect(identity.attribution?.name).toBe("FineCode");
 
-		const openRouter = mergeProviderAttributionHeaders(
-			model("openrouter", "https://openrouter.ai/api/v1"),
-			settings,
-			undefined,
-		);
-		expect(openRouter).toMatchObject({ "X-OpenRouter-Title": "FineCode", "X-OpenRouter-Categories": "cli-agent" });
-		expect(openRouter?.["HTTP-Referer"]).toBeUndefined();
-		expect(
-			mergeProviderAttributionHeaders(model("nvidia", "https://integrate.api.nvidia.com/v1"), settings, undefined)?.[
-				"X-BILLING-INVOKE-ORIGIN"
-			],
-		).toBe("FineCode");
-		expect(
-			mergeProviderAttributionHeaders(
-				model("cloudflare-workers-ai", "https://api.cloudflare.com"),
-				settings,
-				undefined,
-			)?.["User-Agent"],
-		).toBe("finecode-coding-agent");
-		expect(
-			mergeProviderAttributionHeaders(model("opencode", "https://opencode.ai/zen/v1"), settings, "session-id")?.[
-				"x-opencode-client"
-			],
-		).toBe("finecode");
+		const disabledSettings = { getEnableInstallTelemetry: () => false } as unknown as SettingsManager;
+		expect(getClientIdentity(disabledSettings).attribution).toBeNull();
 	});
 
 	test("prefers the FineCode agent-dir variable and accepts the legacy Pi variable", () => {

@@ -51,8 +51,8 @@ describe("generated configuration schemas", () => {
 		const accent = schema.properties.colors.properties.accent;
 		const colorValue = accent.$ref ? schema.$defs.ColorValue : accent;
 		expect(schema).toMatchObject({
-			title: "FineCode Theme",
-			description: "Theme schema for FineCode",
+			title: "Pi Coding Agent Theme",
+			description: "Theme schema for Pi coding agent",
 			properties: {
 				colors: {
 					description: expect.stringContaining("use compatible fallbacks"),
@@ -252,7 +252,7 @@ describe("generated configuration schemas", () => {
 			path,
 			JSON.stringify({
 				$schema: schemaUrl("models"),
-				providers: { demo: { baseUrl: "http://localhost:8080/v1", models: [{ id: "demo" }] } },
+				providers: { demo: { baseUrl: "http://localhost:9931/v1", models: [{ id: "demo" }] } },
 			}),
 		);
 

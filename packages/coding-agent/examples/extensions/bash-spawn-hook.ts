@@ -4,11 +4,11 @@
  * Adjusts command, cwd, and env before execution.
  *
  * Usage:
- *   finecode -e ./bash-spawn-hook.ts
+ *   pi -e ./bash-spawn-hook.ts
  */
 
-import type { ExtensionAPI } from "finecode";
-import { createBashTool } from "finecode";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { createBashTool } from "@earendil-works/pi-coding-agent";
 
 export default function (pi: ExtensionAPI) {
 	const cwd = process.cwd();
