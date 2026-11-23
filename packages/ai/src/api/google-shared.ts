@@ -6,6 +6,7 @@ import {
 	type Content,
 	FinishReason,
 	FunctionCallingConfigMode,
+	type GenerateContentResponsePromptFeedback,
 	ThinkingLevel as GoogleSdkThinkingLevel,
 	type Part,
 	type ThinkingConfig,
@@ -76,7 +77,7 @@ export function usesGoogleThinkingLevel<T extends GoogleApiType>(model: Model<T>
 		// gemini-3-flash-preview, gemini-3.1-pro-preview, and gemini-3.8-flash.
 		/gemini-3(?:\.\d+)?-(?:pro|flash)/.test(id) ||
 		// Match Gemini 4 and later, such as gemini-4-argon (#10890).
-		/gemini-(?:[4-9]|[1-9]\d)/.test(id) ||
+		(getGeminiMajorVersion(id) ?? 0) >= 4 ||
 		id === "gemini-flash-latest" ||
 		id === "gemini-flash-lite-latest" ||
 		// Match both hosted Gemma 4 naming forms: gemma-4-* and gemma4-*.
@@ -174,7 +175,8 @@ export function requiresToolCallId(modelId: string): boolean {
 }
 
 function getGeminiMajorVersion(modelId: string): number | undefined {
-	const match = modelId.toLowerCase().match(/^gemini(?:-live)?-(\d+)/);
+	// Unanchored like usesGoogleThinkingLevel: some hosts prefix the ID, e.g. randomprefix-gemini-4-argon (#12321).
+	const match = modelId.toLowerCase().match(/gemini(?:-live)?-(\d+)/);
 	if (!match) return undefined;
 	return Number.parseInt(match[1], 10);
 }
@@ -371,11 +373,68 @@ function sanitizeForOpenApi(schema: unknown): unknown {
 	return result;
 }
 
+/** Schema keywords whose values map names to subschemas, so their keys are not schema keywords. */
+const JSON_SCHEMA_NAME_MAPS = new Set([
+	"properties",
+	"patternProperties",
+	"$defs",
+	"definitions",
+	"dependentSchemas",
+	"dependencies",
+]);
+
+/** Keywords containing a subschema or an array of subschemas, not literal data. */
+const JSON_SCHEMA_SUBSCHEMAS = new Set([
+	"additionalProperties",
+	"unevaluatedProperties",
+	"propertyNames",
+	"items",
+	"prefixItems",
+	"additionalItems",
+	"unevaluatedItems",
+	"contains",
+	"allOf",
+	"anyOf",
+	"oneOf",
+	"not",
+	"if",
+	"then",
+	"else",
+	"contentSchema",
+]);
+
+/**
+ * Rewrite string and number `const` values to single-value `enum`s.
+ * Gemini ignores `const` in `parametersJsonSchema` but honors `enum`.
+ */
+function rewriteConstAsEnum(schema: unknown, isNameMap = false): unknown {
+	if (Array.isArray(schema)) return schema.map((item) => rewriteConstAsEnum(item));
+	if (typeof schema !== "object" || schema === null) return schema;
+
+	// fromEntries preserves names such as __proto__ as own properties.
+	const result: Record<string, unknown> = Object.fromEntries(
+		Object.entries(schema).map(([key, value]) => {
+			if (isNameMap || JSON_SCHEMA_SUBSCHEMAS.has(key)) return [key, rewriteConstAsEnum(value)];
+			if (JSON_SCHEMA_NAME_MAPS.has(key)) return [key, rewriteConstAsEnum(value, true)];
+			return [key, value];
+		}),
+	);
+	if (!isNameMap && "const" in result && result.enum === undefined) {
+		const value = result.const;
+		if (typeof value === "string" || typeof value === "number") {
+			delete result.const;
+			result.enum = [value];
+		}
+	}
+	return result;
+}
+
 /**
  * Convert tools to Gemini function declarations format.
  *
  * By default uses `parametersJsonSchema` which supports full JSON Schema (including
- * anyOf, oneOf, const, etc.). Set `useParameters` to true to use the legacy `parameters`
+ * anyOf, oneOf, etc.). Gemini ignores `const` there, so string and number `const`
+ * values are sent as single-value `enum`s. Set `useParameters` to true to use the legacy `parameters`
  * field instead (OpenAPI 3.03 Schema). This is needed for Cloud Code Assist with Claude
  * models, where the API translates `parameters` into Anthropic's `input_schema`.
  */
@@ -395,17 +454,20 @@ export function convertTools(
 					description: tool.description,
 					...(useParameters
 						? { parameters: sanitizeForOpenApi(parameters as unknown) }
-						: { parametersJsonSchema: parameters }),
+						: { parametersJsonSchema: rewriteConstAsEnum(parameters) }),
 				};
 			}),
 		},
 	];
 }
 
-/** Gemini 3+ enforces required function parameters in validated tool-calling modes. */
-export function supportsGoogleStrictToolSampling(modelId: string): boolean {
-	const majorVersion = getGeminiMajorVersion(modelId);
-	return majorVersion !== undefined && majorVersion >= 3;
+/**
+ * Gemini 3+ enforces required function parameters in validated tool-calling modes.
+ * `compat.supportsStrictMode` overrides the model ID detection, e.g. for Gemini models served under IDs without the version.
+ */
+export function supportsGoogleStrictToolSampling<T extends GoogleApiType>(model: Model<T>): boolean {
+	const majorVersion = getGeminiMajorVersion(model.id);
+	return model.compat?.supportsStrictMode ?? (majorVersion !== undefined && majorVersion >= 3);
 }
 
 /** Map tool choice string to Gemini FunctionCallingConfigMode. */
@@ -437,6 +499,24 @@ export function resolveGoogleFunctionCallingMode(
 	return toolChoice ? mapToolChoice(toolChoice) : undefined;
 }
 
+/** Format prompt-block metadata returned instead of response candidates. */
+export function formatGooglePromptBlockError(
+	providerName: string,
+	feedback: GenerateContentResponsePromptFeedback,
+): string {
+	const details = [`${providerName} prompt blocked: ${feedback.blockReason ?? "unknown reason"}`];
+	if (feedback.blockReasonMessage) details.push(feedback.blockReasonMessage);
+	if (feedback.safetyRatings?.length) {
+		const ratings = feedback.safetyRatings.flatMap((rating) =>
+			rating.category ? [`${rating.category}${rating.probability ? ` (${rating.probability})` : ""}`] : [],
+		);
+		if (ratings.length > 0) {
+			details.push(`Safety rating${ratings.length === 1 ? "" : "s"}: ${ratings.join(", ")}`);
+		}
+	}
+	return details.join(". ");
+}
+
 /**
  * Map Gemini FinishReason to our StopReason.
  */
@@ -445,6 +525,8 @@ export function mapStopReason(reason: FinishReason): StopReason {
 		case FinishReason.STOP:
 			return "stop";
 		case FinishReason.MAX_TOKENS:
+		// Per-request token limit reached before generation completed; pi does not resume with the continuation token.
+		case FinishReason.CONTINUATION:
 			return "length";
 		case FinishReason.BLOCKLIST:
 		case FinishReason.PROHIBITED_CONTENT:
@@ -467,20 +549,6 @@ export function mapStopReason(reason: FinishReason): StopReason {
 			const _exhaustive: never = reason;
 			throw new Error(`Unhandled stop reason: ${_exhaustive}`);
 		}
-	}
-}
-
-/**
- * Map string finish reason to our StopReason (for raw API responses).
- */
-export function mapStopReasonString(reason: string): StopReason {
-	switch (reason) {
-		case "STOP":
-			return "stop";
-		case "MAX_TOKENS":
-			return "length";
-		default:
-			return "error";
 	}
 }
 

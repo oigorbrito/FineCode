@@ -1,6 +1,7 @@
 import { calculateCost } from "../models.ts";
 import type { ClassifierApi, ClassifierModel, ClassifierOptions, ProviderHeaders, Usage } from "../types.ts";
 import { headersToRecord, providerHeadersToRecord } from "../utils/headers.ts";
+import { type ClientIdentity, getIdentityHeaders } from "../utils/identity.ts";
 import { retryProviderRequest } from "../utils/provider-retry.ts";
 
 /** An HTTP failure in the shape `retryProviderRequest` and `normalizeProviderError` understand. */
@@ -42,9 +43,11 @@ function requestHeaders(
 	model: ClassifierModel<ClassifierApi>,
 	apiKey: string,
 	optionsHeaders?: ProviderHeaders,
+	identity?: ClientIdentity,
 ): Record<string, string> {
 	return (
 		providerHeadersToRecord(
+			getIdentityHeaders(model, identity),
 			{ authorization: `Bearer ${apiKey}`, "content-type": "application/json" },
 			model.headers,
 			optionsHeaders,
@@ -81,7 +84,7 @@ export async function postClassifierRequest(
 			try {
 				const next = await requestFetch(url, {
 					method: "POST",
-					headers: requestHeaders(model, apiKey, options.headers),
+					headers: requestHeaders(model, apiKey, options.headers, options.identity),
 					body: JSON.stringify(payload),
 					signal,
 				});
@@ -110,17 +113,22 @@ function tokenCount(value: unknown): number {
 /**
  * Usage from a `{ input_tokens, output_tokens }` object, priced from the model catalog like chat
  * usage. A missing or malformed usage object leaves the result without usage instead of failing it.
+ * `input_tokens_details.cached_tokens` and `cache_write_tokens` are included in `input_tokens`, as
+ * in the Responses API, so they are split out of `input`.
  */
 export function parseClassifierUsage(value: unknown, model: ClassifierModel<ClassifierApi>): Usage | undefined {
 	if (!isRecord(value) || (value.input_tokens === undefined && value.output_tokens === undefined)) return undefined;
-	const input = tokenCount(value.input_tokens);
+	const totalInput = tokenCount(value.input_tokens);
 	const output = tokenCount(value.output_tokens);
+	const details = isRecord(value.input_tokens_details) ? value.input_tokens_details : undefined;
+	const cacheRead = Math.min(tokenCount(details?.cached_tokens), totalInput);
+	const cacheWrite = Math.min(tokenCount(details?.cache_write_tokens), totalInput - cacheRead);
 	const usage: Usage = {
-		input,
+		input: totalInput - cacheRead - cacheWrite,
 		output,
-		cacheRead: 0,
-		cacheWrite: 0,
-		totalTokens: input + output,
+		cacheRead,
+		cacheWrite,
+		totalTokens: totalInput + output,
 		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
 	};
 	calculateCost(model, usage);
