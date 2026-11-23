@@ -25,7 +25,7 @@ function environment(): { env: RemoteExecutionEnv; connection: Connection } {
 }
 
 describe("RemoteExecutionEnv", () => {
-	it("transfers only about a window of output a caller keeps, with exact counts", async () => {
+	it.skipIf(process.platform === "win32")("transfers only about a window of output a caller keeps, with exact counts", async () => {
 		const { env } = environment();
 		const total = 5_000_000;
 		let delivered = 0;
@@ -56,7 +56,7 @@ describe("RemoteExecutionEnv", () => {
 		expect(tail.length > 1000 || tail.split("\n").length - 1 > 20).toBe(true);
 	}, 60_000);
 
-	it("aborts commands cancelled right after they are sent", async () => {
+	it.skipIf(process.platform === "win32")("aborts commands cancelled right after they are sent", async () => {
 		const { env } = environment();
 		const started = Date.now();
 		for (let attempt = 0; attempt < 20; attempt++) {
@@ -109,12 +109,37 @@ describe("RemoteExecutionEnv", () => {
 		// Creating 10,000 files takes several seconds on Windows CI.
 	}, 30_000);
 
-	it("times out a command that produces no output", async () => {
+	it.skipIf(process.platform === "win32")("times out a command that produces no output", async () => {
 		const { env } = environment();
 		const started = Date.now();
 		const result = await env.exec(["sleep", "5"], { timeout: 0.3 }, context);
 		expect(result.ok ? "ok" : result.error.code).toBe("timeout");
 		expect(Date.now() - started).toBeLessThan(3000);
+	});
+
+	// The daemon used to die on Connection.close()'s SIGTERM before killing its commands.
+	it.skipIf(process.platform === "win32")("kills running commands when the connection closes", async () => {
+		const { env, connection } = environment();
+		const pid = Promise.withResolvers<number>();
+		const running = env.exec(
+			["sh", "-c", "echo $$; exec sleep 30"],
+			{ onOutput: (text: string) => pid.resolve(Number.parseInt(text, 10)) },
+			context,
+		);
+		const command = await pid.promise;
+		connection.close();
+		await running;
+		const alive = () => {
+			try {
+				process.kill(command, 0);
+				return true;
+			} catch {
+				return false;
+			}
+		};
+		const deadline = Date.now() + 5000;
+		while (alive() && Date.now() < deadline) await new Promise((done) => setTimeout(done, 50));
+		expect(alive()).toBe(false);
 	});
 
 	it("fails requests on handles of a lost connection instead of reaching the new daemon", async () => {
@@ -153,7 +178,8 @@ describe("RemoteExecutionEnv", () => {
 			"unknown",
 			"ssh gpu-box failed: Network is unreachable",
 		]);
-		const command = await env.exec(["sh", "-c", "exit 0"], undefined, context);
+		const exitZero = process.platform === "win32" ? ["cmd.exe", "/c", "exit 0"] : ["sh", "-c", "exit 0"];
+		const command = await env.exec(exitZero, undefined, context);
 		expect(command.ok ? command.value.exitCode : command.error.code).toBe(0);
 		expect(starts).toBe(2);
 	});
