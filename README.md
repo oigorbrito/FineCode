@@ -35,15 +35,33 @@ Ou seguir os passos manuais:
 
 ## Finalidade do projeto
 
-**STATUS: UNDEFINED**
-
-Descreva o projeto aqui antes que a implementação seja considerada estabelecida.
+O **FineCode** é uma distribuição de agente de desenvolvimento autônomo e assistente de codificação no terminal (TUI e RPC), fornecendo ferramentas de leitura, edição de arquivos, execução de comandos e integração com dezenas de provedores de modelos de linguagem (Anthropic, OpenAI, Google Gemini, Ollama, DeepSeek, Minimax, etc.), com documentação e localização em Português (pt-BR).
 
 ## Uso básico
 
-**STATUS: NOT_RELEASED**
+### Pré-requisitos
+- Node.js 22 ou superior
+- npm 10 ou superior
 
-Antes do primeiro release oficial, substitua esta seção por instruções de instalação, configuração e uso básico.
+### Instalação e Execução
+
+```bash
+# 1. Instalar dependências do monorepo e compilar pacotes
+npm install
+npm run build
+
+# 2. Executar o binário diretamente via Node.js
+node packages/coding-agent/dist/cli.js --help
+
+# 3. Ou registrar o binário globalmente
+npm --prefix packages/coding-agent link
+finecode --help
+
+# 4. Iniciar a interface interativa no terminal
+finecode
+```
+
+Para detalhes sobre atalhos, comandos slash, templates e configuração de provedores, consulte o [Guia Rápido](packages/coding-agent/docs/pt-BR/quickstart.md) e a [Documentação de Modelos](packages/coding-agent/docs/pt-BR/models.md).
 
 ## Relato de defeitos
 
