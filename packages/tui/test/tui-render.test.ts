@@ -146,7 +146,7 @@ describe("TUI debug logging", () => {
 	it("writes redraw logs to the provided directory", async () => {
 		const logDir = mkdtempSync(join(tmpdir(), "pi-tui-log-"));
 		try {
-			await withEnv({ PI_TUI_DEBUG_REDRAW: "1", AI_AGENT: undefined }, async () => {
+			await withEnv({ PI_TUI_DEBUG_REDRAW: "1" }, async () => {
 				const terminal = new VirtualTerminal(40, 10);
 				const tui: TUI = new TuiMainScreen(terminal, undefined, logDir);
 				const component = new TestComponent();
@@ -162,29 +162,43 @@ describe("TUI debug logging", () => {
 			rmSync(logDir, { recursive: true, force: true });
 		}
 	});
-
-	it("uses FineCode branding for redraw logs when launched by FineCode", async () => {
-		const logDir = mkdtempSync(join(tmpdir(), "finecode-tui-log-"));
-		try {
-			await withEnv({ PI_TUI_DEBUG_REDRAW: "1", AI_AGENT: "finecode" }, async () => {
-				const terminal = new VirtualTerminal(40, 10);
-				const tui: TUI = new TuiMainScreen(terminal, undefined, logDir);
-				const component = new TestComponent();
-				tui.addChild(component);
-				component.lines = ["test"];
-				tui.start();
-				await terminal.waitForRender();
-
-				assert.match(readFileSync(join(logDir, "finecode-tui-debug.log"), "utf-8"), /fullRender: first render/);
-				tui.stop();
-			});
-		} finally {
-			rmSync(logDir, { recursive: true, force: true });
-		}
-	});
 });
 
 describe("TUI bounded render output", () => {
+	it("does not write duplicate cursor markers to the terminal", () => {
+		const terminal = new BoundedWriteTerminal();
+		const tui = new TuiMainScreen(terminal);
+		const component = new TestComponent();
+		// Regression for #9257: terminals may render the payload of a leaked APC marker.
+		component.lines = [`\x1b[31m界🙂\x1b[0m${CURSOR_MARKER} world${CURSOR_MARKER}`];
+		tui.addChild(component);
+
+		tui.renderNow();
+
+		const output = terminal.writes.join("");
+		assert.ok(output.includes("\x1b[31m界🙂\x1b[0m world"), "visible styled text should be preserved");
+		assert.ok(!output.includes(CURSOR_MARKER), "internal cursor markers must not reach the terminal");
+		assert.ok(output.includes("\x1b[5G"), "the first marker should keep the cursor at visible column 4");
+	});
+
+	it("does not write cursor markers from other visible or scrollback lines", () => {
+		const terminal = new BoundedWriteTerminal();
+		terminal.rows = 2;
+		const tui = new TuiMainScreen(terminal);
+		const component = new TestComponent();
+		// Regression for #9257: cursor extraction must not leave markers on other rendered lines.
+		component.lines = [`offscreen${CURSOR_MARKER}`, `a${CURSOR_MARKER}`, `visible-b${CURSOR_MARKER}`];
+		tui.addChild(component);
+
+		tui.renderNow();
+
+		const output = terminal.writes.join("");
+		assert.ok(output.includes("offscreen"), "full renders should preserve scrollback content");
+		assert.ok(output.includes("a"), "full renders should preserve other visible lines");
+		assert.ok(!output.includes(CURSOR_MARKER), "internal cursor markers must not reach the terminal");
+		assert.ok(output.includes("\x1b[10G"), "the bottom visible marker should determine the cursor column");
+	});
+
 	it("splits a large full render without changing its output", () => {
 		const terminal = new BoundedWriteTerminal();
 		const tui = new TuiMainScreen(terminal);
@@ -229,6 +243,24 @@ describe("TUI bounded render output", () => {
 	});
 });
 
+describe("TUI OSC 133 markers", () => {
+	it("does not write OSC 133 prompt markers to the terminal", () => {
+		// Terminals read 133;A as a new shell prompt and drop the OSC 7501 program status.
+		const terminal = new BoundedWriteTerminal();
+		const tui = new TuiMainScreen(terminal);
+		const component = new TestComponent();
+		tui.addChild(component);
+		component.lines = ["\x1b]133;A\x07prompt", "\x1b]133;B\x07\x1b]133;C\x07output"];
+		tui.renderNow();
+		component.lines = [...component.lines, "\x1b]133;A\x1b\\reply", "\x1b]133;B\x1b\\\x1b]133;C\x1b\\done"];
+		tui.renderNow();
+
+		const output = terminal.writes.join("");
+		assert.ok(!output.includes("\x1b]133;"), "regular mode must not emit OSC 133 markers");
+		for (const text of ["prompt", "output", "reply", "done"]) assert.ok(output.includes(text));
+	});
+});
+
 /** Set each environment variable to `value`, returning a function that restores the previous state. */
 function overrideEnv(names: readonly string[], value: string): () => void {
 	const previousValues = names.map((name) => [name, process.env[name]] as const);
@@ -250,9 +282,8 @@ describe("TUI crash dump without configured log directory", () => {
 		// than sharing the real one with concurrent test runs. os.tmpdir() reads
 		// TMPDIR on POSIX and TEMP/TMP on Windows, so override all three.
 		const crashDir = mkdtempSync(join(tmpdir(), "pi-tui-crash-"));
-		const crashLogPath = join(crashDir, "finecode-tui-crash.log");
+		const crashLogPath = join(crashDir, "pi-tui-crash.log");
 		const restoreTmpdirEnv = overrideEnv(["TMPDIR", "TEMP", "TMP"], crashDir);
-		const restoreAI_AGENT = overrideEnv(["AI_AGENT"], "finecode");
 		try {
 			const terminal = new VirtualTerminal(40, 10);
 			const tui: TUI = new TuiMainScreen(terminal);
@@ -274,7 +305,6 @@ describe("TUI crash dump without configured log directory", () => {
 			);
 			assert.match(readFileSync(crashLogPath, "utf-8"), /Terminal width: 40/);
 		} finally {
-			restoreAI_AGENT();
 			restoreTmpdirEnv();
 			rmSync(crashDir, { recursive: true, force: true });
 		}
