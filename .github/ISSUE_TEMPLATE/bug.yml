@@ -1,0 +1,43 @@
+name: Bug Report
+description: Report something that's broken
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **Before you start:** Review the repository's `CONTRIBUTING.md` for current guidance.
+
+        Keep this short, specific, and reproducible. Include error messages and minimal steps when applicable.
+
+        **Important:** before reporting an issue in core, validate with `finecode -ne` that it is not caused by an extension you loaded.
+
+  - type: textarea
+    id: description
+    attributes:
+      label: What happened?
+      description: Be specific. Include error messages if any.
+    validations:
+      required: true
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      description: Minimal steps to trigger the bug.
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: false
+
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: e.g. 0.49.0
+    validations:
+      required: false
