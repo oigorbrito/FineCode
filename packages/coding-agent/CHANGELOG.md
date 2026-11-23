@@ -18,6 +18,7 @@
 - Fixed `/tree` navigation adding the branch's prompts to Up-arrow history again on every navigation; prompts already in history now move to the most recent position instead of repeating ([#12279](https://github.com/earendil-works/pi/issues/12279))
 - Fixed closing the console window or terminal tab on Windows skipping `session_shutdown` and leaving commands started by the bash tool running, for example `sleep 300` from `bash -c "sleep 300"`. pi now handles SIGHUP on Windows like on POSIX and waits for `taskkill` to finish before it exits. Quitting with Ctrl+D or `/quit` while a `!` command runs, or ending RPC mode while a `bash` command runs, no longer leaves that command running on Windows either
 - Fixed the `AuthStorage` coalesced-reload test failing intermittently on systems with coarse file timestamps ([#12190](https://github.com/earendil-works/pi/issues/12190))
+- Fixed bash commands running only partly, with exit code 0, under Git Bash and other Cygwin-based `bash.exe` on Windows when longer than about 8 KB or made of newline-separated words without spaces; commands now reach bash in the `PI_BASH_COMMAND` environment variable. Extensions that spawn the shell from `getShellConfig()` must handle `commandTransport: "env"` by setting `SHELL_COMMAND_ENV_VAR` instead of appending the command to `args` ([#12340](https://github.com/earendil-works/pi/issues/12340))
 
 ## [1.6.0] - 2026-11-20
 
