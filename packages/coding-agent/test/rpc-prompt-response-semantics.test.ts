@@ -17,7 +17,7 @@ import { SessionManager } from "../src/core/session-manager.ts";
 import { SettingsManager } from "../src/core/settings-manager.ts";
 import { runRpcMode } from "../src/modes/rpc/rpc-mode.ts";
 import type * as Shell from "../src/utils/shell.ts";
-import { killTrackedDetachedChildren } from "../src/utils/shell.ts";
+import { killTrackedProcessTrees } from "../src/utils/shell.ts";
 import { createInMemoryModelRegistry, getModelRuntime } from "./model-runtime-test-utils.ts";
 import { createTestExtensionsResult, createTestResourceLoader } from "./utilities.ts";
 
@@ -39,7 +39,7 @@ vi.mock("../src/modes/interactive/theme/theme.js", () => ({ theme: {} }));
 
 vi.mock("../src/utils/shell.js", async (importOriginal) => {
 	const actual = await importOriginal<typeof Shell>();
-	return { ...actual, killTrackedDetachedChildren: vi.fn(actual.killTrackedDetachedChildren) };
+	return { ...actual, killTrackedProcessTrees: vi.fn(actual.killTrackedProcessTrees) };
 });
 
 vi.mock("../src/modes/rpc/jsonl.js", () => ({
@@ -638,16 +638,16 @@ describe("RPC shutdown triggers", () => {
 	// On Windows, dispose() kills a running `bash` command with an asynchronous taskkill, which lost the
 	// race with process.exit and left the command's processes running.
 	it("kills tracked shell trees after dispose on stdin EOF", async () => {
-		vi.mocked(killTrackedDetachedChildren).mockClear();
+		vi.mocked(killTrackedProcessTrees).mockClear();
 		const { runtimeHost, exitSpy, finishDispose, cleanup } = await startWithSlowDispose();
 		try {
 			process.stdin.emit("end");
 			await vi.waitFor(() => expect(runtimeHost.dispose).toHaveBeenCalledTimes(1));
-			expect(killTrackedDetachedChildren).not.toHaveBeenCalled();
+			expect(killTrackedProcessTrees).not.toHaveBeenCalled();
 
 			finishDispose();
 			await vi.waitFor(() => expect(exitSpy).toHaveBeenCalledWith(0));
-			expect(killTrackedDetachedChildren).toHaveBeenCalledTimes(1);
+			expect(killTrackedProcessTrees).toHaveBeenCalledTimes(1);
 		} finally {
 			await cleanup();
 		}

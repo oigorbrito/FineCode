@@ -1,6 +1,6 @@
 import type * as ChildProcess from "node:child_process";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { killProcessTree, killTrackedDetachedChildren, trackDetachedChildPid } from "../src/utils/shell.ts";
+import { killProcessTree, killTrackedProcessTrees, trackProcessTree } from "../src/utils/shell.ts";
 
 const { spawnMock, spawnSyncMock } = vi.hoisted(() => ({
 	spawnMock: vi.fn(),
@@ -86,9 +86,8 @@ describe("killProcessTree", () => {
 	});
 });
 
-// Shutdown paths exit right after killing the tracked shells. On Windows an asynchronous taskkill lost
-// that race: libuv's job object killed the shell first, and taskkill /T then missed its descendants.
-describe("killTrackedDetachedChildren", () => {
+// Shutdown paths exit right after killing the tracked process trees.
+describe("killTrackedProcessTrees", () => {
 	afterEach(() => {
 		vi.restoreAllMocks();
 		spawnMock.mockReset();
@@ -96,33 +95,20 @@ describe("killTrackedDetachedChildren", () => {
 		if (platformDescriptor) Object.defineProperty(process, "platform", platformDescriptor);
 	});
 
-	it("waits for one taskkill of all tracked trees on Windows", () => {
-		Object.defineProperty(process, "platform", { configurable: true, value: "win32" });
-		trackDetachedChildPid(1234);
-		trackDetachedChildPid(5678);
+	it("kills each tracked process tree on shutdown", () => {
+		const killA = vi.fn();
+		const killB = vi.fn();
+		trackProcessTree({ child: {} as any, kill: killA });
+		trackProcessTree({ child: {} as any, kill: killB });
 
-		killTrackedDetachedChildren();
+		killTrackedProcessTrees();
 
-		expect(spawnMock).not.toHaveBeenCalled();
-		expect(spawnSyncMock).toHaveBeenCalledTimes(1);
-		expect(spawnSyncMock).toHaveBeenCalledWith(
-			expect.stringMatching(/taskkill.exe$/),
-			["/F", "/T", "/PID", "1234", "/PID", "5678"],
-			expect.objectContaining({ timeout: 2000, windowsHide: true }),
-		);
+		expect(killA).toHaveBeenCalledTimes(1);
+		expect(killB).toHaveBeenCalledTimes(1);
 
-		killTrackedDetachedChildren();
-		expect(spawnSyncMock).toHaveBeenCalledTimes(1);
-	});
-
-	it("kills each tracked process group on POSIX", () => {
-		Object.defineProperty(process, "platform", { configurable: true, value: "linux" });
-		vi.spyOn(process, "kill").mockReturnValue(true);
-		trackDetachedChildPid(1234);
-
-		killTrackedDetachedChildren();
-
-		expect(spawnSyncMock).not.toHaveBeenCalled();
-		expect(vi.mocked(process.kill).mock.calls).toEqual([[-1234, "SIGKILL"]]);
+		// Subsequent calls do nothing as tracked set is cleared
+		killTrackedProcessTrees();
+		expect(killA).toHaveBeenCalledTimes(1);
+		expect(killB).toHaveBeenCalledTimes(1);
 	});
 });

@@ -1,17 +1,16 @@
 import { constants } from "node:fs";
 import { access as fsAccess } from "node:fs/promises";
 import { constants as osConstants } from "node:os";
-import { spawn } from "child_process";
 import { type Static, Type } from "typebox";
 import { waitForChildProcess } from "../../utils/child-process.ts";
 import {
 	getShellConfig,
 	getShellEnv,
-	killProcessTree,
 	SHELL_COMMAND_ENV_VAR,
 	type ShellConfig,
-	trackDetachedChildPid,
-	untrackDetachedChildPid,
+	spawnProcessTree,
+	trackProcessTree,
+	untrackProcessTree,
 } from "../../utils/shell.ts";
 import type { ExtensionContext, ToolDefinition } from "../extensions/types.ts";
 import { OutputAccumulator } from "./output-accumulator.ts";
@@ -125,22 +124,22 @@ export function createLocalShellOperations(shellName: string, resolveShellConfig
 			const transport = shellConfig.commandTransport ?? "argv";
 			const commandFromStdin = transport === "stdin";
 			const shellEnv = env ?? getShellEnv();
-			const child = spawn(
+			const tree = spawnProcessTree(
 				shellConfig.shell,
 				transport === "argv" ? [...shellConfig.args, command] : shellConfig.args,
 				{
 					cwd,
-					detached: process.platform !== "win32",
 					env: transport === "env" ? { ...shellEnv, [SHELL_COMMAND_ENV_VAR]: command } : shellEnv,
 					stdio: [commandFromStdin ? "pipe" : "ignore", "pipe", "pipe"],
 					windowsHide: true,
 				},
 			);
+			const child = tree.child;
 			if (commandFromStdin) {
 				child.stdin?.on("error", () => {});
 				child.stdin?.end(command);
 			}
-			if (child.pid) trackDetachedChildPid(child.pid);
+			trackProcessTree(tree);
 			const startedAt = performance.now();
 			let shellExitedAfterMs: number | undefined;
 			child.once("exit", () => {
@@ -149,9 +148,7 @@ export function createLocalShellOperations(shellName: string, resolveShellConfig
 			let timedOut = false;
 			let exitedBeforeDeadlineAfterMs: number | undefined;
 			let timeoutHandle: NodeJS.Timeout | undefined;
-			const onAbort = () => {
-				if (child.pid) killProcessTree(child.pid);
-			};
+			const onAbort = () => tree.kill();
 
 			try {
 				// Set timeout if provided.
@@ -159,9 +156,9 @@ export function createLocalShellOperations(shellName: string, resolveShellConfig
 					timeoutHandle = setTimeout(() => {
 						timedOut = true;
 						exitedBeforeDeadlineAfterMs = shellExitedAfterMs;
-						// Also when the shell already exited: on Unix the group kill still reaches background
-						// processes holding the pipes. Windows cannot find them once the shell pid is gone.
-						if (child.pid) killProcessTree(child.pid);
+						// Also when the shell already exited: the process group (Unix) or job object (Windows) still
+						// reaches background processes holding the pipes.
+						tree.kill();
 					}, timeoutMs);
 				}
 				// Stream stdout and stderr.
@@ -192,7 +189,7 @@ export function createLocalShellOperations(shellName: string, resolveShellConfig
 				}
 				return { exitCode: resolvedExitCode };
 			} finally {
-				if (child.pid) untrackDetachedChildPid(child.pid);
+				untrackProcessTree(tree);
 				if (timeoutHandle) clearTimeout(timeoutHandle);
 				if (signal) signal.removeEventListener("abort", onAbort);
 			}
