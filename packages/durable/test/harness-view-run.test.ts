@@ -542,7 +542,7 @@ describe("streamed partials", () => {
 			}
 		}
 		await harness.close(context);
-	}, 20_000);
+	});
 
 	it("commits a growing text and tool call at a cost that follows the new text, not the string lengths", async () => {
 		/** Bytes allocated while streaming one answer of `size` characters of text and as much tool-call content. */

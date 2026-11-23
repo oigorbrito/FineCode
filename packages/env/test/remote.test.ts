@@ -25,50 +25,58 @@ function environment(): { env: RemoteExecutionEnv; connection: Connection } {
 }
 
 describe("RemoteExecutionEnv", () => {
-	it.skipIf(process.platform === "win32")("transfers only about a window of output a caller keeps, with exact counts", async () => {
-		const { env } = environment();
-		const total = 5_000_000;
-		let delivered = 0;
-		let skipped = 0;
-		let tail = "";
-		const result = await env.exec(
-			["sh", "-c", `yes 0123456789abcdef | head -c ${total}`],
-			{
-				window: { maxBytes: 1000, maxLines: 20, minIntervalMs: 20, bytesPerSecond: 1_000_000 },
-				onOutput: (text: string, _context, info: ShellOutputInfo) => {
-					delivered += Buffer.byteLength(text);
-					if (info.skipped) {
-						skipped += info.skipped.bytes;
-						tail = "";
-					}
-					tail += text;
+	it.skipIf(process.platform === "win32")(
+		"transfers only about a window of output a caller keeps, with exact counts",
+		async () => {
+			const { env } = environment();
+			const total = 5_000_000;
+			let delivered = 0;
+			let skipped = 0;
+			let tail = "";
+			const result = await env.exec(
+				["sh", "-c", `yes 0123456789abcdef | head -c ${total}`],
+				{
+					window: { maxBytes: 1000, maxLines: 20, minIntervalMs: 20, bytesPerSecond: 1_000_000 },
+					onOutput: (text: string, _context, info: ShellOutputInfo) => {
+						delivered += Buffer.byteLength(text);
+						if (info.skipped) {
+							skipped += info.skipped.bytes;
+							tail = "";
+						}
+						tail += text;
+					},
 				},
-			},
-			context,
-		);
-		expect(getOrThrow(result).exitCode).toBe(0);
-		expect(delivered + skipped).toBe(total);
-		expect(skipped).toBeGreaterThan(0);
-		expect(delivered).toBeLessThan(total / 10);
-		// After the last skip comes everything to the end, more than the window.
-		const full = "0123456789abcdef\n".repeat(Math.ceil(total / 17)).slice(0, total);
-		expect(full.endsWith(tail)).toBe(true);
-		expect(tail.length > 1000 || tail.split("\n").length - 1 > 20).toBe(true);
-	}, 60_000);
+				context,
+			);
+			expect(getOrThrow(result).exitCode).toBe(0);
+			expect(delivered + skipped).toBe(total);
+			expect(skipped).toBeGreaterThan(0);
+			expect(delivered).toBeLessThan(total / 10);
+			// After the last skip comes everything to the end, more than the window.
+			const full = "0123456789abcdef\n".repeat(Math.ceil(total / 17)).slice(0, total);
+			expect(full.endsWith(tail)).toBe(true);
+			expect(tail.length > 1000 || tail.split("\n").length - 1 > 20).toBe(true);
+		},
+		60_000,
+	);
 
-	it.skipIf(process.platform === "win32")("aborts commands cancelled right after they are sent", async () => {
-		const { env } = environment();
-		const started = Date.now();
-		for (let attempt = 0; attempt < 20; attempt++) {
-			const controller = new AbortController();
-			const running = env.exec(["sleep", "5"], undefined, withAbortSignal(controller.signal, context));
-			if (attempt % 2 === 0) controller.abort();
-			else setTimeout(() => controller.abort(), attempt % 5);
-			const result = await running;
-			expect(result.ok ? "ok" : result.error.code).toBe("aborted");
-		}
-		expect(Date.now() - started).toBeLessThan(10_000);
-	}, 30_000);
+	it.skipIf(process.platform === "win32")(
+		"aborts commands cancelled right after they are sent",
+		async () => {
+			const { env } = environment();
+			const started = Date.now();
+			for (let attempt = 0; attempt < 20; attempt++) {
+				const controller = new AbortController();
+				const running = env.exec(["sleep", "5"], undefined, withAbortSignal(controller.signal, context));
+				if (attempt % 2 === 0) controller.abort();
+				else setTimeout(() => controller.abort(), attempt % 5);
+				const result = await running;
+				expect(result.ok ? "ok" : result.error.code).toBe("aborted");
+			}
+			expect(Date.now() - started).toBeLessThan(10_000);
+		},
+		30_000,
+	);
 
 	it("reports the remote system in Node's names", async () => {
 		const { connection } = environment();

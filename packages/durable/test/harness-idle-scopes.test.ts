@@ -262,7 +262,7 @@ describe("idle waiters by scope", () => {
 		await end("held", held);
 		await idleBusy;
 		await harness.close(context);
-	}, 20_000);
+	});
 });
 
 describe("kept context ranges", () => {
@@ -470,7 +470,7 @@ describe("kept context ranges", () => {
 		await quiet();
 		expect(idleState(harness)).toMatchObject({ contexts: 0, idleMismatches: 0 });
 		await harness.close(context);
-	}, 20_000);
+	});
 });
 
 /** A random source with a fixed seed. */
@@ -558,7 +558,7 @@ describe("incremental idle state", () => {
 		expect(fullChecks).toBe(0);
 		for (const gate of gates.values()) gate.resolve();
 		await harness.close(context);
-	}, 20_000);
+	});
 });
 
 describe("wake()", () => {
@@ -637,5 +637,5 @@ describe("wake()", () => {
 		await quiet();
 		expect(harness.wake()).toEqual({ active: false, at: 5_000 });
 		await harness.close(context);
-	}, 20_000);
+	});
 });

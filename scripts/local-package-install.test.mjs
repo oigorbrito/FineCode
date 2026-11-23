@@ -7,7 +7,6 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { parse } from "yaml";
 import { installConsumer, smokeTestNpmConsumer, wireConsumer } from "./local-package-install.mjs";
-import { execNpmSync } from "./npm-command.mjs";
 import { produceArtifactSet } from "./package-artifacts.mjs";
 
 function writePackage(directory, manifest, files) {
@@ -100,10 +99,7 @@ test("wires multiple direct packages without registry fallbacks", (t) => {
 		consumerDirectory,
 		packageNames: ["@pi-package-test/target", "@pi-package-test/second"],
 	});
-	execNpmSync(["install", "--ignore-scripts", "--no-audit", "--no-fund"], {
-		cwd: consumerDirectory,
-		stdio: "pipe",
-	});
+	execFileSync("npm", ["install", "--ignore-scripts", "--no-audit", "--no-fund"], { cwd: consumerDirectory, stdio: "pipe" });
 
 	const manifest = JSON.parse(readFileSync(join(consumerDirectory, "package.json"), "utf8"));
 	assert.match(manifest.dependencies["@pi-package-test/target"], /^file:/);
