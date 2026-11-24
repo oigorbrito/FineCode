@@ -5,6 +5,7 @@
 ### Added
 
 - Added `compat.supportsStrictMode` for `google-generative-ai` and `google-vertex` models in `models.json`, so Gemini 3+ models served under IDs without the version can use strict tools ([#12321](https://github.com/earendil-works/pi/issues/12321))
+- Added the SDK option `resolveScopedModels`, which `AgentSession.reload()` calls to resolve `scopedModels` again ([#12277](https://github.com/earendil-works/pi/issues/12277), [#12278](https://github.com/earendil-works/pi/pull/12278))
 
 ### Changed
 
@@ -12,6 +13,7 @@
 
 ### Fixed
 
+- Fixed `/reload` and extension `ctx.reload()` leaving the scoped models stale after `enabledModels` changed, in interactive, print and RPC modes; `--models` still takes precedence ([#12277](https://github.com/earendil-works/pi/issues/12277), [#12278](https://github.com/earendil-works/pi/pull/12278))
 - Fixed `--mode json` exiting 0 when the final assistant response failed, was aborted, or was truncated at the output token limit; it now writes the error to stderr and exits 1 like text print mode ([#12208](https://github.com/earendil-works/pi/issues/12208), [#12356](https://github.com/earendil-works/pi/pull/12356))
 - Fixed sessions with very many entries after the last compaction (about 120k or more) failing to load with `RangeError: Maximum call stack size exceeded` when building the context ([#12154](https://github.com/earendil-works/pi/issues/12154))
 - Fixed `ctx.ui.pasteToEditor()` and `ctx.ui.setEditorText()` not repainting the editor when called outside terminal input handling, such as after an `await` in a command handler ([#12295](https://github.com/earendil-works/pi/issues/12295))
@@ -31,6 +33,7 @@
 ### Breaking Changes
 
 - Extension components: `render()` now returns `readonly string[]`, and `Container` returns the same cached array while its children are unchanged. Extensions that modify render output in place, including `super.render()` in a `Container` subclass or an embedded component's output, must copy it first ([#9549](https://github.com/earendil-works/pi/issues/9549))
+- SDK: `AgentSession.reload()` now returns `{ modelScopeDiagnostics }` instead of `void`. Callbacks typed to return `Promise<void>`, such as an extension `reload` binding, must await it instead of returning it ([#12277](https://github.com/earendil-works/pi/issues/12277))
 
 ### Added
 
