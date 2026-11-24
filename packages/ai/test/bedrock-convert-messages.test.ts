@@ -500,4 +500,48 @@ describe("bedrock convertMessages skips unknown content types", () => {
 		});
 		expect(toolArguments.edits[1]).toEqual({ oldText: "second", newText: "updated second", "": "" });
 	});
+
+	it('normalizes malformed tool arguments like {"":""} or non-objects to valid json object input', async () => {
+		const messages: Message[] = [
+			{
+				role: "assistant",
+				content: [
+					{
+						type: "toolCall",
+						id: "tool-codemode-1",
+						name: "codemode",
+						arguments: { "": "" },
+					},
+				],
+				api: "bedrock-converse-stream",
+				provider: "amazon-bedrock",
+				model: baseModel.id,
+				usage: {
+					input: 0,
+					output: 0,
+					cacheRead: 0,
+					cacheWrite: 0,
+					totalTokens: 0,
+					cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+				},
+				stopReason: "toolUse",
+				timestamp: Date.now(),
+			},
+			{
+				role: "toolResult",
+				toolCallId: "tool-codemode-1",
+				toolName: "codemode",
+				content: [{ type: "text", text: "Validation failed" }],
+				isError: true,
+				timestamp: Date.now(),
+			},
+			{ role: "user", content: "Retry with code", timestamp: Date.now() },
+		];
+
+		const payload = await capturePayload({ messages });
+		const p = payload as {
+			messages: Array<{ content: Array<{ toolUse?: { input: unknown } }> }>;
+		};
+		expect(p.messages[0].content[0].toolUse?.input).toEqual({});
+	});
 });

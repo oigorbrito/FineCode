@@ -1012,6 +1012,13 @@ function sanitizeBedrockDocument(value: JsonValue): DocumentType {
 	return value;
 }
 
+function sanitizeBedrockToolInput(value: unknown): DocumentType {
+	if (value === null || typeof value !== "object" || Array.isArray(value)) {
+		return {};
+	}
+	return sanitizeBedrockDocument(value as JsonValue);
+}
+
 function convertToolResultContent(content: (TextContent | ImageContent)[]): ToolResultContentBlock[] {
 	const result: ToolResultContentBlock[] = [];
 	for (const c of content) {
@@ -1085,7 +1092,7 @@ function convertMessages(
 						}
 						case "toolCall":
 							contentBlocks.push({
-								toolUse: { toolUseId: c.id, name: c.name, input: sanitizeBedrockDocument(c.arguments) },
+								toolUse: { toolUseId: c.id, name: c.name, input: sanitizeBedrockToolInput(c.arguments) },
 							});
 							break;
 						case "thinking": {
