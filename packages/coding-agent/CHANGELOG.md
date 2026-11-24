@@ -151,6 +151,10 @@
 - The `/login` and `/logout` provider lists and `/login <provider>` completions now show the preferred partners Radius and OpenRouter first, then all other providers alphabetically. In the provider lists, partners are marked with `✦`, the selected Radius row shimmers in the Radius logo colors and the selected OpenRouter row glows in OpenRouter's brand color (lime on dark themes, violet on light themes)
 - Upgraded terminal Mermaid rendering to support more diagram types, including pie charts, author-defined styles, and clickable labels on terminals with hyperlink support ([#8158](https://github.com/earendil-works/pi/pull/8158) by [@xl0](https://github.com/xl0))
 
+### Changed
+
+- Changed the `ant-ling` default model to `Ling-3.1-flash`, replacing the removed Ling 2.6 and Ring 2.6 models ([#10943](https://github.com/earendil-works/pi/pull/10943) by [@lvisei](https://github.com/lvisei))
+
 ### Fixed
 
 - Fixed the grep tool's `glob` matching from the folder pi was started in instead of from `path`: with `path: "repo"`, `glob: "migrations/main/*.js"` returned `No matches found` even though `repo/migrations/main/a.js` exists. Globs are now relative to `path`, the same form grep prints its results in, also when `path` is a symlink. A leading `./` (`./src/*.ts`) is ignored instead of matching nothing ([#11807](https://github.com/earendil-works/pi/issues/11807), [#10998](https://github.com/earendil-works/pi/issues/10998))
