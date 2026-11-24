@@ -410,6 +410,7 @@ export const stream: StreamFunction<"openai-completions", OpenAICompletionsOptio
 			let textBlock: TextContent | null = null;
 			let thinkingBlock: ThinkingContent | null = null;
 			let hasFinishReason = false;
+			let nativeFinishReason: string | undefined;
 			const toolCallBlocksByIndex = new Map<number, ToolCall>();
 			const toolCallBlocksById = new Map<string, ToolCall>();
 			const toolCallStates = new Map<ToolCall, ToolCallState>();
@@ -564,9 +565,21 @@ export const stream: StreamFunction<"openai-completions", OpenAICompletionsOptio
 					output.usage = parseChunkUsage((choice as any).usage, model);
 				}
 
+				// OpenRouter extension (wire input, absent from the SDK types): the upstream provider's own
+				// finish reason. Kept across chunks so a trailing chunk that repeats finish_reason without it
+				// does not drop it.
+				const native = (choice as { native_finish_reason?: unknown }).native_finish_reason;
+				if (typeof native === "string" && native.length > 0) {
+					nativeFinishReason = native;
+				}
+
 				if (choice.finish_reason) {
-					output.rawStopReason = choice.finish_reason;
-					const finishReasonResult = mapStopReason(choice.finish_reason);
+					// Distinct native reasons only, e.g. "stop.MALFORMED_RESPONSE" (like openai-responses' "incomplete.max_output_tokens").
+					const distinctNative = nativeFinishReason !== choice.finish_reason ? nativeFinishReason : undefined;
+					output.rawStopReason = distinctNative
+						? `${choice.finish_reason}.${distinctNative}`
+						: choice.finish_reason;
+					const finishReasonResult = mapStopReason(choice.finish_reason, distinctNative);
 					output.stopReason = finishReasonResult.stopReason;
 					if (finishReasonResult.errorMessage) {
 						output.errorMessage = finishReasonResult.errorMessage;
@@ -1555,7 +1568,59 @@ function parseChunkUsage(
 	return usage;
 }
 
-function mapStopReason(reason: ChatCompletionChunk.Choice["finish_reason"] | string): {
+/**
+ * Upstream finish reasons that OpenRouter can collapse into a successful `finish_reason` such as
+ * `"stop"` while passing the original in `native_finish_reason` (#12407, #8499). Gemini values are the
+ * failures in `mapStopReason` of google-shared.ts plus `MALFORMED_RESPONSE`, which the Google SDK enum
+ * lacks; Anthropic values follow `mapStopReason` in anthropic-messages.ts. Unknown native values keep
+ * the `finish_reason` mapping, because their meaning is not documented.
+ */
+const NATIVE_FAILURE_FINISH_REASONS = new Set([
+	// Gemini
+	"MALFORMED_RESPONSE",
+	"MALFORMED_FUNCTION_CALL",
+	"UNEXPECTED_TOOL_CALL",
+	"TOO_MANY_TOOL_CALLS",
+	"FINISH_REASON_UNSPECIFIED",
+	"OTHER",
+	"LANGUAGE",
+	"SAFETY",
+	"RECITATION",
+	"BLOCKLIST",
+	"PROHIBITED_CONTENT",
+	"SPII",
+	"IMAGE_SAFETY",
+	"IMAGE_PROHIBITED_CONTENT",
+	"IMAGE_RECITATION",
+	"IMAGE_OTHER",
+	"NO_IMAGE",
+	// Anthropic
+	"refusal",
+	"sensitive",
+	// OpenRouter upstreams that fail on the request, e.g. a model without tool support (#8499)
+	"network_error",
+]);
+
+function mapStopReason(
+	reason: ChatCompletionChunk.Choice["finish_reason"] | string,
+	nativeReason: string | undefined,
+): {
+	stopReason: StopReason;
+	errorMessage?: string;
+} {
+	const result = mapFinishReason(reason);
+	if (nativeReason === undefined) return result;
+	if (result.stopReason === "error") {
+		// Keep the finish_reason message, which retry matching relies on, and add the upstream cause (#11931).
+		return { ...result, errorMessage: `${result.errorMessage} (native_finish_reason: ${nativeReason})` };
+	}
+	if (NATIVE_FAILURE_FINISH_REASONS.has(nativeReason)) {
+		return { stopReason: "error", errorMessage: `Provider native_finish_reason: ${nativeReason}` };
+	}
+	return result;
+}
+
+function mapFinishReason(reason: ChatCompletionChunk.Choice["finish_reason"] | string): {
 	stopReason: StopReason;
 	errorMessage?: string;
 } {
