@@ -1,10 +1,10 @@
 {
 	"name": "finecode-install-lock",
-	"version": "0.0.3",
+	"version": "0.0.1",
 	"private": true,
 	"description": "Lockfile root used by the FineCode installer and updater.",
 	"dependencies": {
-		"finecode": "0.0.3"
+		"finecode": "0.0.1"
 	},
 	"overrides": {
 		"protobufjs": "7.6.6"

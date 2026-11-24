@@ -1,6 +1,6 @@
 {
 	"name": "finecode",
-	"version": "0.0.3",
+	"version": "0.0.1",
 	"description": "Coding agent CLI with read, bash, edit, write tools and session management",
 	"type": "module",
 	"piConfig": {
