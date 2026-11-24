@@ -8,6 +8,7 @@
 
 ### Fixed
 
+- Fixed GitHub Copilot's available models not updating when an account gained access to new models until the token was refreshed; `Models.refresh()` now updates OAuth model access without exchanging the token ([#11006](https://github.com/earendil-works/pi/issues/11006), [#12325](https://github.com/earendil-works/pi/pull/12325))
 - Fixed Gemini 3+ models whose IDs carry a prefix, such as `vendor-gemini-4-argon`, being treated as older Gemini models in the `google-generative-ai` and `google-vertex` APIs: they now get strict tools, tool-call IDs, and images inside function responses ([#12321](https://github.com/earendil-works/pi/issues/12321))
 - Fixed `retryAssistantCall()` retaining an abort listener after each completed backoff, causing listener buildup across repeated retries ([#10506](https://github.com/earendil-works/pi/issues/10506))
 - Fixed Cloudflare's HTTP 525 (SSL handshake failed) not being retried like its 520 and 524 errors
