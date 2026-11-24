@@ -2260,7 +2260,36 @@ export class AgentSession {
 		} finally {
 			this._promptPreflightCount--;
 		}
-		if (trigger) await this._startRun(trigger, () => preflightResult?.("started"));
+		if (trigger) {
+			// A concurrent prompt that reached an idle session in the same tick may have started a run
+			// during the async preparation gap (#12186). If a run started meanwhile, queue according to
+			// streamingBehavior instead of throwing.
+			if (this.isStreaming) {
+				if (trigger.messageType === "user") {
+					await this._queuePromptMessage(trigger.prompt, trigger.images, options?.streamingBehavior);
+					preflightResult?.("queued");
+					return;
+				}
+			}
+			await this._startRun(trigger, () => preflightResult?.("started"));
+		}
+	}
+
+	private async _queuePromptMessage(
+		text: string,
+		images: ImageContent[] | undefined,
+		streamingBehavior?: "steer" | "followUp",
+	): Promise<void> {
+		if (!streamingBehavior) {
+			throw new Error(
+				"Agent is already processing. Specify streamingBehavior ('steer' or 'followUp') to queue the message.",
+			);
+		}
+		if (streamingBehavior === "followUp") {
+			await this._queueFollowUp(text, images);
+		} else {
+			await this._queueSteer(text, images);
+		}
 	}
 
 	/**
@@ -2293,16 +2322,7 @@ export class AgentSession {
 
 		// If streaming, queue via steer() or followUp() based on option
 		if (this.isStreaming) {
-			if (!options?.streamingBehavior) {
-				throw new Error(
-					"Agent is already processing. Specify streamingBehavior ('steer' or 'followUp') to queue the message.",
-				);
-			}
-			if (options.streamingBehavior === "followUp") {
-				await this._queueFollowUp(expandedText, currentImages);
-			} else {
-				await this._queueSteer(expandedText, currentImages);
-			}
+			await this._queuePromptMessage(expandedText, currentImages, options?.streamingBehavior);
 			preflightResult?.("queued");
 			return undefined;
 		}

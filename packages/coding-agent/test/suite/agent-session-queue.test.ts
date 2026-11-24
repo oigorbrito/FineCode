@@ -528,4 +528,28 @@ describe("AgentSession queue characterization", () => {
 
 		expect(getUserTexts(harness)).toEqual(["hello", "conflict report"]);
 	});
+
+	it("queues concurrent prompts reaching an idle session together into the first run (#12186)", async () => {
+		const harness = await createHarness();
+		harnesses.push(harness);
+
+		harness.setResponses([fauxAssistantMessage("first reply"), fauxAssistantMessage("second reply")]);
+
+		const verdicts: string[] = [];
+		await Promise.all([
+			harness.session.prompt("first", {
+				streamingBehavior: "followUp",
+				preflightResult: (v) => verdicts.push(v),
+			}),
+			harness.session.prompt("second", {
+				streamingBehavior: "followUp",
+				preflightResult: (v) => verdicts.push(v),
+			}),
+		]);
+
+		await harness.session.agent.waitForIdle();
+
+		expect(verdicts.sort()).toEqual(["queued", "started"]);
+		expect(getUserTexts(harness)).toEqual(["first", "second"]);
+	});
 });
