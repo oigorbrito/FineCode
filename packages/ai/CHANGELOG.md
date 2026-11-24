@@ -2,9 +2,17 @@
 
 ## [Unreleased]
 
+### Breaking Changes
+
+- Removed the `thinkingFormat: \`"ant-ling"\`` compat value. Use `thinkingFormat: \`"deepseek"\`` for Ant Ling models ([#10943](https://github.com/earendil-works/pi/pull/10943) by [@lvisei](https://github.com/lvisei))
+
 ### Added
 
 - Added `compat.supportsStrictMode` to the `google-generative-ai` and `google-vertex` APIs, so Gemini 3+ models served under IDs without the version can use strict tools (`VALIDATED` function calling); unset keeps the model ID detection ([#12321](https://github.com/earendil-works/pi/issues/12321))
+
+### Changed
+
+- Replaced the Ant Ling Ling 2.6 and Ring 2.6 models with Ling 3.1 Flash, Ling 3.0 Flash, and Ling 3.0 Flash VL. Ant Ling reasoning requests now use the DeepSeek-compatible `thinking` field instead of nested `reasoning`, with thinking either off or high and no reasoning effort parameter ([#10943](https://github.com/earendil-works/pi/pull/10943) by [@lvisei](https://github.com/lvisei))
 
 ### Fixed
 
