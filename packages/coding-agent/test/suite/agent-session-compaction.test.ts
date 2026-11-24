@@ -1211,4 +1211,23 @@ describe("AgentSession compaction characterization", () => {
 		expect(belowThresholdSpy).not.toHaveBeenCalled();
 		expect(disabledSpy).not.toHaveBeenCalled();
 	});
+
+	it("does not trigger threshold compaction when the selected model has an unknown or zero context window", async () => {
+		const harness = await createHarness({
+			settings: { compaction: { enabled: true, reserveTokens: 1000 } },
+			models: [{ id: "virtual-no-window", contextWindow: 0 }],
+		});
+		harnesses.push(harness);
+
+		const internals = harness.session as unknown as SessionWithCompactionInternals;
+		const spy = vi.spyOn(internals, "_runAutoCompaction").mockResolvedValue(false);
+
+		// Zero usage / aborted message with zero contextWindow
+		await internals._checkCompaction(
+			createAssistant(harness, { stopReason: "aborted", totalTokens: 0, timestamp: Date.now() }),
+			false,
+		);
+
+		expect(spy).not.toHaveBeenCalled();
+	});
 });
