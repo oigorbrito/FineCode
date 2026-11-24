@@ -13,6 +13,7 @@
 
 ### Fixed
 
+- Fixed an invalid settings file found by `/reload` or extension `ctx.reload()` never being reported. The warning is now shown in the TUI, or written to stderr in print, JSON and RPC modes, like after `/new` ([#12337](https://github.com/earendil-works/pi/pull/12337))
 - Fixed `/reload` and extension `ctx.reload()` leaving the scoped models stale after `enabledModels` changed, in interactive, print and RPC modes; `--models` still takes precedence ([#12277](https://github.com/earendil-works/pi/issues/12277), [#12278](https://github.com/earendil-works/pi/pull/12278))
 - Fixed `--mode json` exiting 0 when the final assistant response failed, was aborted, or was truncated at the output token limit; it now writes the error to stderr and exits 1 like text print mode ([#12208](https://github.com/earendil-works/pi/issues/12208), [#12356](https://github.com/earendil-works/pi/pull/12356))
 - Fixed sessions with very many entries after the last compaction (about 120k or more) failing to load with `RangeError: Maximum call stack size exceeded` when building the context ([#12154](https://github.com/earendil-works/pi/issues/12154))
@@ -84,23 +85,6 @@
 - Fixed exiting pi, `pi config` and the `--resume` and other startup pickers dropping terminal output still queued in stdout, such as the resets that turn off mouse tracking and Kitty keyboard reporting; the shell could then print mouse and key reports as text. pi now waits up to one second for queued output before exiting or continuing ([#12133](https://github.com/earendil-works/pi/issues/12133))
 - Fixed moving the cursor in a search field with Left, Right, Home or End moving the highlight back to the first entry in `/login`, `/logout`, `/model`, `/scoped-models`, `/resume`, `/settings`, the per-model settings model picker and `pi config` ([#12245](https://github.com/earendil-works/pi/issues/12245))
 - Fixed llama.cpp decision classifiers ignoring the image input that llama.cpp reports, such as Clef with its `mmproj`; `models.classify()` now sends their images to `/v1/systemone` ([#12282](https://github.com/earendil-works/pi/issues/12282))
-- Fixed `kill -TSTP` from outside pi stopping it without restoring the terminal, which left mouse tracking and the Kitty keyboard protocol on at the shell prompt and turned mouse movement into garbage input. pi now suspends as with Ctrl+Z and redraws on `fg` ([#12283](https://github.com/earendil-works/pi/pull/12283) by [@haoqixu](https://github.com/haoqixu))
-- Fixed changing the thinking level on the `openai-codex` provider invalidating the prompt cache on GPT-6 models ([#12269](https://github.com/earendil-works/pi/issues/12269))
-- Fixed unscoped syntax-highlighted text inheriting the terminal foreground and becoming unreadable on contrasting tool cards ([#11092](https://github.com/earendil-works/pi/issues/11092))
-- Fixed `/copy` saying "No agent messages to copy yet." after Esc during a tool call or after a provider error; it now copies the previous answer. RPC `get_last_assistant_text` skips the same messages ([#12119](https://github.com/earendil-works/pi/issues/12119), [#12121](https://github.com/earendil-works/pi/pull/12121) by [@acmerfight](https://github.com/acmerfight))
-- Fixed `pi.exec` reporting exit code 0 for commands ended by a signal, such as a timeout, an abort or a crash; it now reports 128 + the signal number, like a shell (143 for SIGTERM, 137 for SIGKILL) ([#12088](https://github.com/earendil-works/pi/issues/12088), [#12089](https://github.com/earendil-works/pi/pull/12089) by [@acmerfight](https://github.com/acmerfight))
-- Fixed GitHub Copilot Gemini and Kimi models (`gemini-4-argon`, `gemini-4-carbon`, `gemini-3.8-flash`, `kimi-k3`) ignoring the thinking level, and Copilot usage always reporting 0 reasoning tokens ([#12110](https://github.com/earendil-works/pi/pull/12110) by [@DenielC1](https://github.com/DenielC1))
-- Fixed provider errors that report only a Node socket error code, such as `read ECONNRESET`, `write EPIPE`, or `connect ETIMEDOUT`, not triggering automatic retries ([#12128](https://github.com/earendil-works/pi/issues/12128))
-- Fixed OpenAI rejecting requests with a 400 error when a tool's schema contains a node without a `type` (such as `items: {}` or `Type.Unknown()`); such tools are now sent in non-strict mode ([#12049](https://github.com/earendil-works/pi/issues/12049))
-- Fixed Mistral Large 4 tool calls stalling for minutes; Mistral models no longer receive strict tools unless `compat.supportsStrictMode` is set ([#12148](https://github.com/earendil-works/pi/issues/12148))
-- Fixed non-strict Anthropic tool schemas not telling the model that extra arguments are forbidden ([#12067](https://github.com/earendil-works/pi/issues/12067))
-- Fixed GitHub Copilot models on the Responses API (GPT, Grok, MAI-Code) filling omitted optional tool arguments with empty strings or invented values ([#12286](https://github.com/earendil-works/pi/issues/12286))
-- Fixed the OpenAI Codex WebSocket 60-minute connection limit failing the turn when it hit mid-stream, for example during long thinking; the request is now retried on a fresh connection ([#12124](https://github.com/earendil-works/pi/issues/12124))
-- Fixed the `openai-codex` provider getting almost no prompt cache hits for the system prompt on GPT-6.2 models ([#12273](https://github.com/earendil-works/pi/issues/12273))
-- Fixed the `openai-codex` provider ignoring a model's `maxTokens`
-- Fixed fullscreen Kitty images disappearing after a full redraw such as a window resize ([#12010](https://github.com/earendil-works/pi/issues/12010))
-- Fixed text after a multi-row inline image in Markdown drawing over the image ([#12017](https://github.com/earendil-works/pi/issues/12017))
-- Fixed Kitty and iTerm2 images covering overlays drawn over them ([#11584](https://github.com/earendil-works/pi/issues/11584))
 - Fixed Enter on a Tab path menu for an absolute path (`look at /tmp/fi`) or a slash command argument menu (`/open /tm`) submitting the prompt instead of accepting the completion ([#12309](https://github.com/earendil-works/pi/issues/12309), [#12312](https://github.com/earendil-works/pi/pull/12312) by [@acmerfight](https://github.com/acmerfight))
 
 ### Removed
