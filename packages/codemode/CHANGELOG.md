@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- Fixed scripts that declare local `tools` or `console` variables failing before calling any tool ([#11878](https://github.com/earendil-works/pi/pull/11878))
+
 ## [1.6.0] - 2026-11-20
 
 ## [1.5.2] - 2026-11-10
