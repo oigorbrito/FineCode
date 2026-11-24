@@ -2,6 +2,8 @@ import type {
 	Api,
 	AssistantMessage,
 	ImageContent,
+	JsonObject,
+	JsonValue,
 	Message,
 	Model,
 	TextContent,
@@ -57,6 +59,32 @@ function replaceImagesWithPlaceholder(content: (TextContent | ImageContent)[], p
 	}
 
 	return result;
+}
+
+function cleanObjectKeys(obj: JsonObject): JsonObject {
+	const result: JsonObject = {};
+	for (const [key, value] of Object.entries(obj)) {
+		if (key.length === 0) continue;
+		if (value !== null && typeof value === "object" && !Array.isArray(value)) {
+			result[key] = cleanObjectKeys(value as JsonObject);
+		} else if (Array.isArray(value)) {
+			result[key] = value.map((item) =>
+				item !== null && typeof item === "object" && !Array.isArray(item)
+					? cleanObjectKeys(item as JsonObject)
+					: (item as JsonValue),
+			);
+		} else {
+			result[key] = value as JsonValue;
+		}
+	}
+	return result;
+}
+
+function sanitizeToolCallArguments(args: unknown): JsonObject {
+	if (args === null || typeof args !== "object" || Array.isArray(args)) {
+		return {};
+	}
+	return cleanObjectKeys(args as JsonObject);
 }
 
 function downgradeUnsupportedImages<TApi extends Api>(messages: Message[], model: Model<TApi>): Message[] {
@@ -161,6 +189,11 @@ export function transformMessages<TApi extends Api>(
 							normalizedToolCall = { ...normalizedToolCall, id: normalizedId };
 						}
 					}
+
+					normalizedToolCall = {
+						...normalizedToolCall,
+						arguments: sanitizeToolCallArguments(normalizedToolCall.arguments),
+					};
 
 					return normalizedToolCall;
 				}

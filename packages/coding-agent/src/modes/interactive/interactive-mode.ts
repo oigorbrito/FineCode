@@ -4647,8 +4647,14 @@ export class InteractiveMode {
 			this.signalCleanupHandlers.push(() => process.off(signal, handler));
 		}
 
-		const terminalErrorHandler = (error: Error) => {
+		const terminalErrorHandler = (stream: NodeJS.ReadableStream | NodeJS.WritableStream) => (error: Error) => {
 			if (isDeadTerminalError(error)) {
+				// On Windows, ConPTY and Windows Terminal background tabs transiently report
+				// EPIPE/EIO on stdout/stderr (e.g. during tab switch, sleep/wake, or resize).
+				// Do not kill in-flight turns, subagents or the agent loop.
+				if (process.platform === "win32" && (stream === process.stdout || stream === process.stderr)) {
+					return;
+				}
 				this.emergencyTerminalExit();
 			}
 			throw error;
@@ -4657,8 +4663,9 @@ export class InteractiveMode {
 		// fail with EIO (orphaned background process group) or ENOTTY (revoked tty).
 		// Node emits these as stream errors, which are uncaught without a listener.
 		for (const stream of [process.stdin, process.stdout, process.stderr]) {
-			stream.on("error", terminalErrorHandler);
-			this.signalCleanupHandlers.push(() => stream.off("error", terminalErrorHandler));
+			const handler = terminalErrorHandler(stream);
+			stream.on("error", handler);
+			this.signalCleanupHandlers.push(() => stream.off("error", handler));
 		}
 
 		// Restore the terminal before the process dies on any uncaught throw.

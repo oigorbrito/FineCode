@@ -317,4 +317,17 @@ describe("dead terminal errors on stdin", () => {
 
 		expect(process.stdin.listenerCount("error")).toBe(before - 1);
 	});
+
+	test("on Windows, dead terminal errors on stdout and stderr are suppressed instead of exiting", () => {
+		const originalPlatform = process.platform;
+		try {
+			Object.defineProperty(process, "platform", { value: "win32" });
+			setup();
+			expect(() => process.stdout.emit("error", errnoError("write EPIPE", "EPIPE"))).not.toThrow();
+			expect(() => process.stderr.emit("error", errnoError("write EIO", "EIO"))).not.toThrow();
+			expect(process.exit).not.toHaveBeenCalled();
+		} finally {
+			Object.defineProperty(process, "platform", { value: originalPlatform });
+		}
+	});
 });
