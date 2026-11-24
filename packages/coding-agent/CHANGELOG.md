@@ -234,6 +234,7 @@
 - Fixed valid tool arguments being rejected when their schema combined local `$ref`s with a relative root `$id`, such as `schemas/tool.json` ([#11697](https://github.com/earendil-works/pi/issues/11697))
 - Fixed the find tool starting an untracked `fd` process when cancelled during its parent-directory lookup ([#11974](https://github.com/earendil-works/pi/pull/11974) by [@petrroll](https://github.com/petrroll))
 - Fixed the edit tool corrupting files that are not valid UTF-8, such as UTF-16 files or files in a legacy encoding like Windows-1252 or GBK: it replaced every byte it could not decode with U+FFFD, wrote the file back as UTF-8 and reported success. It now refuses to edit such files and leaves them unchanged ([#10349](https://github.com/earendil-works/pi/issues/10349))
+- Fixed UTF-16 files with a byte order mark: read and @file attachments now show them as text, edit edits them, and write overwrites them, keeping UTF-16 and the byte order mark. Custom tool operations need the new optional `EditOperations.writeFileBytes`, or `WriteOperations.readFileStart` and `writeFileBytes`; without them edit refuses such files and write writes UTF-8 as before ([#5797](https://github.com/earendil-works/pi/issues/5797))
 
 ## [1.5.0] - 2026-11-02
 
