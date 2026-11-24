@@ -13,6 +13,7 @@
 
 ### Fixed
 
+- Fixed `tool_search` reporting "No matching tools found." for MCP tools that are already active (such as `direct` MCP tools or tools loaded earlier); matching active MCP tools are now listed under "Already available, no need to load" ([#11921](https://github.com/earendil-works/pi/issues/11921), [#11957](https://github.com/earendil-works/pi/pull/11957))
 - Fixed `sendMessage` with `triggerTurn: true` during compaction starting a run on the branch compaction is replacing; the send is now deferred until compaction ends ([#10982](https://github.com/earendil-works/pi/issues/10982), [#12028](https://github.com/earendil-works/pi/pull/12028))
 - Fixed an invalid settings file found by `/reload` or extension `ctx.reload()` never being reported. The warning is now shown in the TUI, or written to stderr in print, JSON and RPC modes, like after `/new` ([#12337](https://github.com/earendil-works/pi/pull/12337))
 - Fixed `/reload` and extension `ctx.reload()` leaving the scoped models stale after `enabledModels` changed, in interactive, print and RPC modes; `--models` still takes precedence ([#12277](https://github.com/earendil-works/pi/issues/12277), [#12278](https://github.com/earendil-works/pi/pull/12278))
