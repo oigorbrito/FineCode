@@ -3199,10 +3199,13 @@ export class AgentSession {
 		// This handles the case where user switched from a smaller-context model (e.g. opus)
 		// to a larger-context model (e.g. codex) - the overflow error from the old model
 		// shouldn't trigger compaction for the new model. Under a virtual selection, the
-		// physical model that produced the message supplies the limits.
+		// physical model that produced the message supplies the limits. If no context window
+		// is known (contextWindow <= 0), skip compaction checks.
 		const messageModel = this._modelForMessage(assistantMessage);
 		const sameModel = messageModel !== undefined;
-		const contextWindow = (messageModel ?? this.model)?.contextWindow ?? 0;
+		const limitsModel = messageModel ?? this._limitsModel() ?? this.model;
+		const contextWindow = limitsModel?.contextWindow ?? 0;
+		if (contextWindow <= 0) return false;
 
 		// Skip compaction checks if this assistant message is older than the latest
 		// compaction boundary. This prevents a stale pre-compaction usage/error
