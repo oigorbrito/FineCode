@@ -6724,7 +6724,7 @@ export class InteractiveMode {
 		};
 
 		try {
-			const { modelScopeDiagnostics } = await this.session.reload({
+			const { modelScopeDiagnostics } = await this.runtimeHost.reload({
 				beforeSessionStart: restoreChatBeforeSessionStart,
 			});
 			restoreChatBeforeSessionStart();
@@ -6750,6 +6750,7 @@ export class InteractiveMode {
 				this.showError(`models.json error: ${modelsJsonError}`);
 			}
 			for (const diagnostic of modelScopeDiagnostics) this.showWarning(diagnostic.message);
+			this.showRuntimeDiagnostics(this.runtimeHost.takeUnreportedDiagnostics());
 			this.showStatus(
 				savedImplicitProjectTrust
 					? "Reloaded keybindings, extensions, skills, prompts, themes, and context files; saved project trust"
