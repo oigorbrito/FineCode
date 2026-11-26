@@ -49,7 +49,8 @@ PR_LABELS = {
 }
 
 CORE_PACKAGES = ("packages/", "src/")
-IGNORED_PREFIXES = (".github/", "docs/images/", "website/", "media/", ".discord")
+IGNORED_PREFIXES = (".github/", "docs/images/", "website/", "media/", ".discord", "apps/")
+EXCLUDE_APPLY_ARGS = [f"--exclude={prefix}*" for prefix in IGNORED_PREFIXES]
 
 
 def parse_patch_paths(patch_bytes):
@@ -349,8 +350,12 @@ def import_one(pr):
             return finish_import("conflict", "upstream history rewritten and source trees differ or cannot be verified")
         git("checkout", "-B", "finecode-upstream-working", actual_tip)
         delta = git("diff", "--binary", old_source, source_sha).stdout
-        applied = git("apply", "--3way", "--index", "-", ok=False, input_data=delta)
+        applied = git("apply", *EXCLUDE_APPLY_ARGS, "--3way", "--index", "-", ok=False, input_data=delta)
         if applied.returncode:
+            reverse_check = git("apply", *EXCLUDE_APPLY_ARGS, "--reverse", "--check", "-", ok=False, input_data=delta)
+            if reverse_check.returncode == 0:
+                print(f"ALREADY_APPLIED upstream #{number}: incremental delta is already present in FineCode", flush=True)
+                return finish_import("existing", "upstream delta is already applied in FineCode")
             print(f"CONFLICT upstream #{number}: incremental patch incompatible", flush=True)
             return finish_import("conflict", "linear upstream delta could not be applied cleanly")
         changed = git("diff", "--cached", "--quiet", ok=False).returncode != 0
@@ -372,8 +377,12 @@ def import_one(pr):
     if is_out_of_scope_patch(patch_paths):
         print(f"SKIPPED upstream #{number}: out of scope changes ({', '.join(sorted(patch_paths))})", flush=True)
         return finish_import("skipped", "patch only modifies ignored paths")
-    applied = git("apply", "--3way", "--index", "-", ok=False, input_data=patch)
+    applied = git("apply", *EXCLUDE_APPLY_ARGS, "--3way", "--index", "-", ok=False, input_data=patch)
     if applied.returncode:
+        reverse_check = git("apply", *EXCLUDE_APPLY_ARGS, "--reverse", "--check", "-", ok=False, input_data=patch)
+        if reverse_check.returncode == 0:
+            print(f"ALREADY_APPLIED upstream #{number}: relevant patch changes are already present in FineCode", flush=True)
+            return finish_import("existing", "upstream patch changes are already applied in FineCode")
         print(f"CONFLICT upstream #{number}: initial patch incompatible", flush=True)
         result = stage_conflict_review(full, branch)
         return finish_import(result, "initial patch incompatible; created review-only manifest without upstream code")
