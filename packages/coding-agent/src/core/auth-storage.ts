@@ -361,6 +361,10 @@ export class AuthStorage implements CredentialStore {
 		return AuthStorage.fromStorage(storage);
 	}
 
+	getAuthPath(): string | undefined {
+		return this.authPath;
+	}
+
 	private parseStorageData(content: string | undefined): AuthStorageData {
 		if (!content) {
 			return {};

@@ -1,6 +1,6 @@
 import type { AuthInteraction, AuthPrompt, AuthType, Provider } from "@earendil-works/pi-ai";
 import { replaceControlCharacters } from "@earendil-works/pi-tui";
-import { APP_NAME, getAuthPath } from "../config.ts";
+import { APP_NAME } from "../config.ts";
 import { CredentialSynchronizationError, type ModelRuntime } from "../core/model-runtime.ts";
 import { findMatchingProviders } from "../core/provider-matching.ts";
 import { RADIUS_PROVIDER_ID } from "../core/radius.ts";
@@ -83,8 +83,10 @@ export async function runAuthLogin(args: string[], options: AuthLoginOptions): P
 		return 1;
 	}
 
+	const authLocation = modelRuntime.getAuthPath();
+	const credentialsSaved = authLocation ? `Credentials saved to ${authLocation}` : "Credentials saved";
 	terminal.write(
-		`${authType.type === "oauth" ? `Logged in to ${provider.name}` : `Saved API key for ${provider.name}`}. Credentials saved to ${getAuthPath()}`,
+		`${authType.type === "oauth" ? `Logged in to ${provider.name}` : `Saved API key for ${provider.name}`}. ${credentialsSaved}`,
 	);
 	await refreshProviderCatalog(provider, modelRuntime, terminal, signal);
 	if (provider.id === RADIUS_PROVIDER_ID) configureRadiusMcpServer(provider, options);

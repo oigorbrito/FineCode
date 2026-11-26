@@ -61,7 +61,6 @@ import {
 	CONFIG_DIR_NAME,
 	detectInstallChange,
 	getAgentDir,
-	getAuthPath,
 	getDebugLogPath,
 	getDocsPath,
 	VERSION,
@@ -6385,11 +6384,13 @@ export class InteractiveMode {
 			await this.updateAvailableProviderCount();
 			this.footer.invalidate();
 			this.updateEditorBorderColor();
+			const authLocation = session.modelRuntime.getAuthPath();
+			const credentialsSaved = authLocation ? `Credentials saved to ${authLocation}` : "Credentials saved";
 			if (selectedModel) {
-				this.showStatus(`${actionLabel}. Selected ${selectedModel.id}. Credentials saved to ${getAuthPath()}`);
+				this.showStatus(`${actionLabel}. Selected ${selectedModel.id}. ${credentialsSaved}`);
 				void this.maybeWarnAboutAnthropicSubscriptionAuth(selectedModel);
 			} else {
-				this.showStatus(`${actionLabel}. Credentials saved to ${getAuthPath()}`);
+				this.showStatus(`${actionLabel}. ${credentialsSaved}`);
 				if (selectionError) {
 					this.showError(selectionError);
 				} else {
@@ -6398,7 +6399,9 @@ export class InteractiveMode {
 			}
 		};
 		if (deferSelection) {
-			this.showStatus(`${actionLabel}. Credentials saved to ${getAuthPath()}. Refreshing model catalog…`);
+			const authLocation = session.modelRuntime.getAuthPath();
+			const credentialsSaved = authLocation ? `Credentials saved to ${authLocation}` : "Credentials saved";
+			this.showStatus(`${actionLabel}. ${credentialsSaved}. Refreshing model catalog…`);
 		} else {
 			await finishAuthentication();
 		}

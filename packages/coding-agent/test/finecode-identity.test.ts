@@ -36,7 +36,7 @@ describe("FineCode identity compatibility", () => {
 			finecodeRuntimeRelease?: string;
 			dependencies: Record<string, string>;
 		};
-		expect(VERSION).toBe("0.0.3");
+		expect(VERSION).toBe("0.0.1");
 		expect(manifest.version).toBe(VERSION);
 		expect(manifest.finecodeRuntimeRelease).toBe(FINECODE_RUNTIME_RELEASE_MARKER);
 		expect(manifest.dependencies).toMatchObject({
