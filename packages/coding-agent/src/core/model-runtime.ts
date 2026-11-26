@@ -652,6 +652,14 @@ export class ModelRuntime implements Models {
 		return this.credentials.list(options);
 	}
 
+	getAuthPath(): string | undefined {
+		const store = this.credentials.getStore();
+		if (store instanceof DefaultAuthStorage) {
+			return store.getAuthPath();
+		}
+		return undefined;
+	}
+
 	getProviderAuthStatus(providerId: string): AuthStatus {
 		if (this.credentials.hasRuntimeApiKey(providerId)) return { configured: true, source: "runtime" };
 		if (this.snapshot.storedProviders.has(providerId)) return { configured: true, source: "stored" };
